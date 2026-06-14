@@ -6,6 +6,7 @@
 // ScheduleCalendarView.
 
 import SwiftUI
+import UniformTypeIdentifiers
 
 // MARK: - Marking mode
 
@@ -38,6 +39,9 @@ struct HomeView: View {
     @State private var changedDays: Set<String> = []
     @State private var showBanner = false
     @State private var flashChanged = false
+    @State private var showImporter = false
+    @State private var importResult: String?
+    @State private var importError: String?
 
     var body: some View {
         NavigationStack {
@@ -67,6 +71,10 @@ struct HomeView: View {
             .navigationTitle("BATMAN Watcher")
             .navigationBarTitleDisplayMode(.large)
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button { showImporter = true } label: { Image(systemName: "square.and.arrow.down") }
+                        .accessibilityLabel("Import schedule CSV")
+                }
                 ToolbarItem(placement: .topBarTrailing) { layerMenu }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { showTradeSettings = true } label: { Image(systemName: "gearshape") }
@@ -77,7 +85,67 @@ struct HomeView: View {
                 DayIntentEditor(target: target)
                     .presentationDetents([.medium, .large])
             }
+            .fileImporter(isPresented: $showImporter,
+                          allowedContentTypes: [.commaSeparatedText, .plainText, .text],
+                          allowsMultipleSelection: false) { handleImport($0) }
+            .alert("Import Error", isPresented: Binding(
+                get: { importError != nil }, set: { if !$0 { importError = nil } })) {
+                Button("OK", role: .cancel) {}
+            } message: { Text(importError ?? "") }
+            .alert("Schedule Imported", isPresented: Binding(
+                get: { importResult != nil }, set: { if !$0 { importResult = nil } })) {
+                Button("OK", role: .cancel) {}
+            } message: { Text(importResult ?? "") }
             .onAppear(perform: reconcileSnapshot)
+        }
+    }
+
+    // MARK: CSV import (admin publishes the shared master roster)
+
+    private func handleImport(_ result: Result<[URL], Error>) {
+        guard case .success(let urls) = result, let url = urls.first else {
+            if case .failure(let error) = result { importError = error.localizedDescription }
+            return
+        }
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        guard let data = try? Data(contentsOf: url),
+              let csv = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1) else {
+            importError = "Could not read the file as text."
+            return
+        }
+        let username = settings.username
+        Task {
+            do {
+                let workers = try await Task.detached { try ScheduleParser().parseAllWorkers(csv: csv) }.value
+                var lines: [String] = []
+                let mine = workers.first(where: { $0.id == username }) ?? (workers.count == 1 ? workers.first : nil)
+                if let mine {
+                    let diff = await ShiftStore.shared.save(mine.shifts)
+                    await AvailabilityManager.shared.buildFromSchedule()
+                    await NotificationManager.shared.scheduleAll(for: mine.shifts)
+                    let restored = EventKitManager.shared.resyncPersonalEvents(for: mine.shifts)
+                    lines.append("\(mine.shifts.filter { !$0.isOff }.count) of your working shifts imported. \(diff.summary)")
+                    if restored > 0 { lines.append("\(restored) calendar events restored.") }
+                }
+                if workers.count > 1 {
+                    let rows = await RosterStore.shared.importRoster(workers)
+                    lines.append("Roster: \(workers.count) dispatchers loaded for matching (\(rows) rows).")
+                    if DevAccess.shared.unlocked {
+                        let ok = await RosterStore.shared.publishMaster(csv: csv)
+                        lines.append(ok ? "Published as MASTER roster — all users get this on their next launch."
+                                        : "(Not published as master — turn on iCloud Trade Sync first.)")
+                    }
+                }
+                if lines.isEmpty {
+                    importError = "Couldn't find your employee ID (\(username)) in this file, and there's no roster to load."
+                } else {
+                    importResult = lines.joined(separator: "\n")
+                }
+                WidgetData.update()
+            } catch {
+                importError = error.localizedDescription
+            }
         }
     }
 

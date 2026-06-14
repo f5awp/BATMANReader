@@ -17,6 +17,8 @@
 		916E541B2FDE318D00A1CE2B /* TradeRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 916E541A2FDE318D00A1CE2B /* TradeRouter.swift */; };
 		916E541D2FDE323800A1CE2B /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 916E541C2FDE323800A1CE2B /* HomeView.swift */; };
 		916E541F2FDE328200A1CE2B /* HomeCalendar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 916E541E2FDE328200A1CE2B /* HomeCalendar.swift */; };
+		916E54212FDE32F800A1CE2B /* TradesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 916E54202FDE32F800A1CE2B /* TradesView.swift */; };
+		916E54232FDE332F00A1CE2B /* TradeIntentsFeed.swift in Sources */ = {isa = PBXBuildFile; fileRef = 916E54222FDE332F00A1CE2B /* TradeIntentsFeed.swift */; };
 		91D1B89D2FDA65050049CAF7 /* ShiftAvailability.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B8992FDA65050049CAF7 /* ShiftAvailability.swift */; };
 		91D1B89E2FDA65050049CAF7 /* AIScheduleSummaryIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B88A2FDA65050049CAF7 /* AIScheduleSummaryIntent.swift */; };
 		91D1B89F2FDA65050049CAF7 /* SettingsManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B8962FDA65050049CAF7 /* SettingsManager.swift */; };
@@ -86,6 +88,8 @@
 		916E541A2FDE318D00A1CE2B /* TradeRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TradeRouter.swift; sourceTree = "<group>"; };
 		916E541C2FDE323800A1CE2B /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
 		916E541E2FDE328200A1CE2B /* HomeCalendar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeCalendar.swift; sourceTree = "<group>"; };
+		916E54202FDE32F800A1CE2B /* TradesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TradesView.swift; sourceTree = "<group>"; };
+		916E54222FDE332F00A1CE2B /* TradeIntentsFeed.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TradeIntentsFeed.swift; sourceTree = "<group>"; };
 		91B5643C2FDA47E400D38BBE /* BATMANReader.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = BATMANReader.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		91D1B88A2FDA65050049CAF7 /* AIScheduleSummaryIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIScheduleSummaryIntent.swift; sourceTree = "<group>"; };
 		91D1B88B2FDA65050049CAF7 /* AvailabilityIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AvailabilityIntents.swift; sourceTree = "<group>"; };
@@ -225,6 +229,8 @@
 				916E541A2FDE318D00A1CE2B /* TradeRouter.swift */,
 				916E541C2FDE323800A1CE2B /* HomeView.swift */,
 				916E541E2FDE328200A1CE2B /* HomeCalendar.swift */,
+				916E54202FDE32F800A1CE2B /* TradesView.swift */,
+				916E54222FDE332F00A1CE2B /* TradeIntentsFeed.swift */,
 			);
 			sourceTree = "<group>";
 		};
@@ -354,6 +360,7 @@
 				91D1B8ED2FDC69DF0049CAF7 /* MessagingViews.swift in Sources */,
 				91D1B8C12FDC49AD0049CAF7 /* TradeProfile.swift in Sources */,
 				91D1B89F2FDA65050049CAF7 /* SettingsManager.swift in Sources */,
+				916E54212FDE32F800A1CE2B /* TradesView.swift in Sources */,
 				91D1B8A02FDA65050049CAF7 /* ShiftEntity.swift in Sources */,
 				916E54172FDE2F2B00A1CE2B /* DayIntentStore.swift in Sources */,
 				91D1B8A12FDA65050049CAF7 /* BATMANReaderApp.swift in Sources */,
@@ -367,6 +374,7 @@
 				91D1B8A52FDA65050049CAF7 /* ScheduleIntents.swift in Sources */,
 				91D1B8A62FDA65050049CAF7 /* ScheduleDiff.swift in Sources */,
 				91D1B8A72FDA65050049CAF7 /* EventKitManager.swift in Sources */,
+				916E54232FDE332F00A1CE2B /* TradeIntentsFeed.swift in Sources */,
 				916E541B2FDE318D00A1CE2B /* TradeRouter.swift in Sources */,
 				916E54042FDCF23700A1CE2B /* HelpView.swift in Sources */,
 				91D1B8A82FDA65050049CAF7 /* NotificationManager.swift in Sources */,

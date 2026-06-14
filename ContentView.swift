@@ -32,8 +32,8 @@ struct ContentView: View {
                 .tabItem { Label("Home", systemImage: "calendar") }
                 .tag(0)
 
-            AvailabilityView()
-                .tabItem { Label("Availability", systemImage: "person.2.fill") }
+            TradesView()
+                .tabItem { Label("Trades", systemImage: "arrow.left.arrow.right") }
                 .tag(1)
         }
         // Floating Inbox + Channel dock — top-right, below the nav bar, on every tab.

@@ -498,7 +498,7 @@ struct FindCandidatesSection: View {
         // you'd take), gated by the receiving side's openness + blacklist. The
         // give-away set is your year-round marks PLUS the days selected in this
         // search. Computed only for candidates who've published a profile.
-        let mySeeking = intent.seekingDayIDs
+        let mySeeking = DayIntentStore.shared.seekingDayIDs
         var giveByID: [String: Shift] = [:]
         for s in shifts { giveByID[s.id] = s }                                   // this search's selection
         for s in store.shifts where mySeeking.contains(s.id) { giveByID[s.id] = s } // year-round marks
@@ -955,7 +955,7 @@ struct TwoWaySheet: View {
         loading = true
         let myProfile    = TradeProfileStore.shared.myProfile()
         let theirSeeking = TradeProfileStore.shared.profile(forWorker: candidate.workerID)?.seekingDayIDs ?? []
-        let mySeeking    = TradeIntentStore.shared.seekingDayIDs
+        let mySeeking    = DayIntentStore.shared.seekingDayIDs
         let horizonEnd   = cal.date(byAdding: .month, value: TradeMatcher.twoWayHorizonMonths, to: today) ?? today
         full = await TradeMatcher.twoWayExplore(
             withWorker: candidate.workerID, name: candidate.name,
