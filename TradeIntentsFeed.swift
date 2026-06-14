@@ -74,7 +74,7 @@ struct TradeByIntentsFeed: View {
             }
             .padding(.bottom, 24)
         }
-        .sheet(item: $twoWayCandidate) { TwoWaySheet(candidate: $0) }
+        .fullScreenCover(item: $twoWayCandidate) { TwoWaySheet(candidate: $0) }
         .sheet(item: $execRoute) { ExecutionConfirmationView(route: $0) }
         .task { await reload() }
         .onChange(of: whatIf) { _, _ in Task { await reload() } }

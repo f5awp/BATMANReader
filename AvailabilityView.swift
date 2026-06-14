@@ -358,7 +358,7 @@ struct FindCandidatesSection: View {
             Divider()
             content
         }
-        .sheet(item: $twoWayCandidate) { c in
+        .fullScreenCover(item: $twoWayCandidate) { c in
             TwoWaySheet(candidate: c)
         }
     }
@@ -750,7 +750,11 @@ struct TwoWaySheet: View {
     @State private var sentConfirmation = false
     @State private var selectedTake: Set<String> = []       // their days you'll take
     @State private var selectedGive: Set<String> = []       // your days they'll take
+    @State private var theirSeeking: Set<String> = []       // days they want to trade away
     @State private var zoom: CGFloat = 1
+
+    private let youColor  = Color.blue
+    private let themColor = Color.orange
 
     private var glanceBaseHeight: CGFloat { hSize == .compact ? 360 : 176 }
 
@@ -847,9 +851,13 @@ struct TwoWaySheet: View {
                         : AnyLayout(HStackLayout(alignment: .top, spacing: 10))
                     layout {
                         MiniScheduleGrid(title: "You", days: myDays, month: monthAnchor(off),
-                                         highlight: selectedGive, gold: myGoldDays)
+                                         accent: youColor,
+                                         selfSelected: selectedGive, otherSelected: selectedTake,
+                                         otherColor: themColor, gold: myGoldDays, intent: myIntent)
                         MiniScheduleGrid(title: candidate.name, days: theirDays, month: monthAnchor(off),
-                                         highlight: selectedTake, gold: theirGoldDays)
+                                         accent: themColor,
+                                         selfSelected: selectedTake, otherSelected: selectedGive,
+                                         otherColor: youColor, gold: theirGoldDays, intent: theirIntent)
                     }
                     .padding(.horizontal, 2)
                     .tag(off)
@@ -868,6 +876,18 @@ struct TwoWaySheet: View {
     /// Steps the calendar zoom, clamped to 1×–3×.
     private func setZoom(_ value: CGFloat) {
         withAnimation { zoom = min(max(value, 1), 3) }
+    }
+
+    /// Your intents painted on the "You" calendar.
+    private func myIntent(_ day: String) -> Color? {
+        if let w = DayIntentStore.shared.workingIntent(forDay: day) { return w.brickColor.opacity(0.55) }
+        if let o = DayIntentStore.shared.offIntent(forDay: day) { return o.brickColor.opacity(0.55) }
+        return nil
+    }
+
+    /// Their published intent (days they want to trade away) on their calendar.
+    private func theirIntent(_ day: String) -> Color? {
+        theirSeeking.contains(day) ? BrickPalette.change.opacity(0.55) : nil
     }
 
     private var content: some View {
@@ -976,13 +996,14 @@ struct TwoWaySheet: View {
     private func load() async {
         loading = true
         let myProfile    = TradeProfileStore.shared.myProfile()
-        let theirSeeking = TradeProfileStore.shared.profile(forWorker: candidate.workerID)?.seekingDayIDs ?? []
+        let theirSeek    = TradeProfileStore.shared.profile(forWorker: candidate.workerID)?.seekingDayIDs ?? []
+        theirSeeking = theirSeek
         let mySeeking    = DayIntentStore.shared.seekingDayIDs
         let horizonEnd   = cal.date(byAdding: .month, value: TradeMatcher.twoWayHorizonMonths, to: today) ?? today
         full = await TradeMatcher.twoWayExplore(
             withWorker: candidate.workerID, name: candidate.name,
             windowStart: today, windowEnd: horizonEnd,
-            mySeeking: mySeeking, theirSeeking: theirSeeking,
+            mySeeking: mySeeking, theirSeeking: theirSeek,
             myProfile: myProfile, myID: SettingsManager.shared.username)
         myDays    = await TradeMatcher.dayLetters(forWorker: SettingsManager.shared.username)
         theirDays = await TradeMatcher.dayLetters(forWorker: candidate.workerID)
@@ -1020,37 +1041,43 @@ struct TwoWaySheet: View {
 /// for a quick glance at someone's schedule. No desks. Days outside the month dim.
 struct MiniScheduleGrid: View {
     let title: String
-    let days: [String: String]   // ISO "yyyy-MM-dd" → "A"/"P"/"M" ("" = off)
-    let month: Date              // any date within the month to display
-    var highlight: Set<String> = []   // proposed trade days → distinct box + larger
-    var gold: Set<String> = []        // mutually-wanted days → gold border
+    let days: [String: String]           // ISO "yyyy-MM-dd" → "A"/"P"/"M" ("" = off)
+    let month: Date
+    var accent: Color = .blue            // THIS side's color
+    var selfSelected: Set<String> = []   // selections on this side → bold border
+    var otherSelected: Set<String> = []  // selections on the OTHER side → filled with otherColor
+    var otherColor: Color = .orange
+    var gold: Set<String> = []           // mutually-wanted → gold border
+    var intent: (String) -> Color? = { _ in nil }   // intent overlay per ISO day
 
     private let cal = Calendar.current
-    private let tradeBox = Color.indigo.opacity(0.40)
-    private let goldBorder = Color(red: 0.80, green: 0.60, blue: 0.10)
+    private let goldBorder = Color(red: 0.85, green: 0.62, blue: 0.05)
     private static let headers = ["M", "T", "W", "Th", "F", "S", "Su"]
     private static let isoF: DateFormatter = {
         let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; return f
     }()
 
-    /// The Monday on or before the 1st of the month.
     private var gridStart: Date {
         let first = cal.date(from: cal.dateComponents([.year, .month], from: month)) ?? month
-        let wd = cal.component(.weekday, from: first)   // 1 = Sun … 7 = Sat
+        let wd = cal.component(.weekday, from: first)
         return cal.date(byAdding: .day, value: -((wd + 5) % 7), to: first) ?? first
     }
 
     var body: some View {
-        VStack(spacing: 2) {
-            Text(title).font(.caption2.bold()).lineLimit(1).frame(maxWidth: .infinity)
-            HStack(spacing: 1) {
+        VStack(spacing: 3) {
+            HStack(spacing: 5) {
+                Circle().fill(accent).frame(width: 9, height: 9)
+                Text(title).font(.subheadline.bold()).lineLimit(1)
+            }
+            .frame(maxWidth: .infinity)
+            HStack(spacing: 2) {
                 ForEach(Self.headers, id: \.self) { h in
-                    Text(h).font(.system(size: 8)).foregroundStyle(.secondary)
+                    Text(h).font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity)
                 }
             }
             ForEach(0..<6, id: \.self) { w in
-                HStack(spacing: 1) {
+                HStack(spacing: 2) {
                     ForEach(0..<7, id: \.self) { c in
                         cell(dayOffset: w * 7 + c)
                     }
@@ -1067,30 +1094,33 @@ struct MiniScheduleGrid: View {
         let working = !letter.isEmpty
         let inMonth = cal.isDate(date, equalTo: month, toGranularity: .month)
         let isToday = cal.isDateInToday(date)
+        let pickedHere  = selfSelected.contains(key)
+        let pickedOther = otherSelected.contains(key)
         let isGold  = gold.contains(key)
-        let isTrade = isGold || highlight.contains(key)
 
         return VStack(spacing: 0) {
             Text("\(cal.component(.day, from: date))")
-                .font(.system(size: isTrade ? 9 : 7, weight: isTrade ? .bold : .regular))
-                .foregroundStyle(.secondary)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.primary)
             Text(letter.isEmpty ? " " : letter)
-                .font(.system(size: isTrade ? 12 : 9, weight: isTrade ? .heavy : .bold))
+                .font(.system(size: 13, weight: .heavy))
+                .foregroundStyle(working ? accent : .secondary)
         }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, isTrade ? 2 : 1)
-        .background(cellBackground(isTrade: isTrade, working: working))
-        .clipShape(RoundedRectangle(cornerRadius: 3))
+        .frame(maxWidth: .infinity, minHeight: 30)
+        .background(background(key: key, working: working, pickedOther: pickedOther))
+        .clipShape(RoundedRectangle(cornerRadius: 5))
         .overlay {
-            if isGold { RoundedRectangle(cornerRadius: 3).stroke(goldBorder, lineWidth: 2) }
-            else if isToday { RoundedRectangle(cornerRadius: 3).stroke(Color.accentColor, lineWidth: 1) }
+            if pickedHere { RoundedRectangle(cornerRadius: 5).stroke(accent, lineWidth: 2.5) }
+            else if isGold { RoundedRectangle(cornerRadius: 5).stroke(goldBorder, lineWidth: 2) }
+            else if isToday { RoundedRectangle(cornerRadius: 5).stroke(Color.primary.opacity(0.5), lineWidth: 1) }
         }
-        .opacity(inMonth ? 1 : 0.25)
+        .opacity(inMonth ? 1 : 0.2)
     }
 
-    private func cellBackground(isTrade: Bool, working: Bool) -> Color {
-        if isTrade { return tradeBox }
-        return working ? Color.accentColor.opacity(0.15) : Color(.systemGray6)
+    private func background(key: String, working: Bool, pickedOther: Bool) -> Color {
+        if pickedOther { return otherColor.opacity(0.45) }          // the OTHER side's pick
+        if let tint = intent(key) { return tint }                  // intent overlay
+        return working ? accent.opacity(0.16) : Color(.systemGray5)
     }
 }
 
