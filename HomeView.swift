@@ -19,7 +19,6 @@ enum IntentMode: String, CaseIterable, Identifiable {
 
 /// Which optional overlays the calendar draws.
 struct LayerVisibility {
-    var shiftCircles = true   // AM/PM/MID on worked days
     var notes = true          // DayNote markers
     var intentOverlays = true // intent tints
     var availability = true   // AM/PM/MID pickup markers on off days
@@ -350,7 +349,6 @@ struct VisibilityToolbar: View {
 
     var body: some View {
         HStack(spacing: 2) {
-            toggle("circle.grid.2x2.fill", on: $layers.shiftCircles, label: "Shift circles")
             toggle("note.text", on: $layers.notes, label: "Notes")
             toggle("paintpalette.fill", on: $layers.intentOverlays, label: "Intent colors")
             toggle("a.circle.fill", on: $layers.availability, label: "Availability")

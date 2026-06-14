@@ -210,15 +210,8 @@ struct IntentCalendarView: View {
 
     @ViewBuilder private func dayContent(shift: Shift?, isWorking: Bool, isOff: Bool, dayID: String) -> some View {
         if isWorking, let shift {
-            if layers.shiftCircles {
-                Text(shift.shiftLetter)
-                    .font(.system(size: 11, weight: .heavy))
-                    .frame(width: 18, height: 18)
-                    .background(Circle().fill(Color.accentColor.opacity(0.22)))
-            } else {
-                Text(shift.shiftShortLabel)
-                    .font(.system(size: 11, weight: .heavy)).lineLimit(1).minimumScaleFactor(0.6)
-            }
+            Text(shift.shiftShortLabel)
+                .font(.system(size: 11, weight: .heavy)).lineLimit(1).minimumScaleFactor(0.6)
         } else if isOff, layers.availability {
             offAvailability(dayID)
         } else {
