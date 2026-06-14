@@ -59,6 +59,18 @@ enum IntentReason: String, Codable, Sendable, CaseIterable, Identifiable {
         case .fatigueBlock:  return "Fatigue Block"
         }
     }
+
+    /// How urgently the user needs the day off → ranks trade solutions. The AI
+    /// categorizes free text into one of these, so the categorization directly
+    /// influences match ranking.
+    var urgency: Int {
+        switch self {
+        case .medical, .fatigueBlock: return 3   // health / safety — highest
+        case .personalEvent:          return 2
+        case .vacation:               return 2
+        case .avoidWeekends:          return 1
+        }
+    }
 }
 
 // MARK: - Per-day intent states

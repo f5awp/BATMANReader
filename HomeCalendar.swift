@@ -333,9 +333,11 @@ struct DayIntentEditor: View {
                         }
                     } else {
                         Picker("Working shift", selection: Binding(
-                            get: { working ?? .neutralOpen },
+                            get: { working == .wantToWork ? .mustWork : (working ?? .neutralOpen) },
                             set: { working = $0 })) {
-                            ForEach(WorkingIntentState.allCases) { Text($0.label).tag($0) }
+                            ForEach(WorkingIntentState.allCases.filter { $0 != .wantToWork }) {
+                                Text($0 == .mustWork ? "Keep" : $0.label).tag($0)
+                            }
                         }
                     }
                 }

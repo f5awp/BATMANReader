@@ -16,10 +16,15 @@ struct TradeByIntentsFeed: View {
     @State private var twoWayCandidate: PlanCandidate?
     @State private var execRoute: NWayRoute?
     @State private var sentMessage: String?
+    @State private var selectedTier: SolutionTier = .matchingIntents
+
+    private func routes(_ tier: SolutionTier) -> [NWayRoute] {
+        tiers.first { $0.tier == tier }?.routes ?? []
+    }
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 12) {
                 if whatIf {
                     Label("What If? on — extended matches (toggle in Trade Search)",
                           systemImage: "wand.and.stars")
@@ -28,46 +33,41 @@ struct TradeByIntentsFeed: View {
                 }
 
                 if !packages.isEmpty {
-                    Text("Packages").font(.headline).padding(.horizontal).padding(.top, 4)
-                    Text("Cover all your give-away days — fewest people first.")
-                        .font(.caption).foregroundStyle(.secondary).padding(.horizontal)
+                    sectionHeader("Packages", "Cover all your give-away days — fewest people first")
                     ForEach(packages) { pkg in
                         PackageCard(package: pkg,
                                     onPropose: { Task { await propose(pkg) } },
                                     onExecute: { if let r = pkg.route { execRoute = r } })
                     }
-                    Divider().padding(.vertical, 6)
-                    Text("Individual swaps").font(.headline).padding(.horizontal)
                 }
+
+                sectionHeader("Individual swaps", "Browse by match quality")
 
                 if loading {
                     ProgressView("Finding intent matches…")
-                        .frame(maxWidth: .infinity).padding(.top, 40)
+                        .frame(maxWidth: .infinity).padding(.top, 30)
                 } else if tiers.allSatisfy(\.routes.isEmpty) {
                     ContentUnavailableView("No Intent Matches",
                         systemImage: "sparkles",
                         description: Text("Mark days to trade away on Home, or try What If? mode to widen the search."))
-                        .padding(.top, 40)
+                        .padding(.top, 20)
                 } else {
-                    ForEach(tiers, id: \.tier) { group in
-                        if !group.routes.isEmpty {
-                            DisclosureGroup {
-                                ForEach(group.routes) { route in
-                                    RouteCard(route: route,
-                                              onOpenSwap: { openSwap(route) },
-                                              onExecute: { execRoute = route })
-                                        .padding(.vertical, 4)
-                                }
-                            } label: {
-                                HStack {
-                                    Text(group.tier.label).font(.headline)
-                                    Spacer()
-                                    Text("\(group.routes.count)")
-                                        .font(.subheadline.monospacedDigit())
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-                            .padding(.horizontal)
+                    tierTabs
+                    let r = routes(selectedTier)
+                    HStack {
+                        Text(selectedTier.label).font(.headline)
+                        Spacer()
+                        Text("^[\(r.count) match](inflect: true)").font(.subheadline).foregroundStyle(.secondary)
+                    }
+                    .padding(.horizontal)
+                    if r.isEmpty {
+                        Text("No matches in this tier.").font(.caption).foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity).padding(.vertical, 20)
+                    } else {
+                        ForEach(r) { route in
+                            RouteCard(route: route,
+                                      onOpenSwap: { openSwap(route) },
+                                      onExecute: { execRoute = route })
                         }
                     }
                 }
@@ -82,6 +82,35 @@ struct TradeByIntentsFeed: View {
             get: { sentMessage != nil }, set: { if !$0 { sentMessage = nil } })) {
             Button("OK", role: .cancel) {}
         } message: { Text(sentMessage ?? "") }
+    }
+
+    /// Segmented tier selector with per-tier match counts.
+    private var tierTabs: some View {
+        Picker("Tier", selection: $selectedTier) {
+            ForEach(SolutionTier.allCases.sorted { $0.order < $1.order }) { t in
+                Text("\(tierShort(t)) \(routes(t).count)").tag(t)
+            }
+        }
+        .pickerStyle(.segmented)
+        .padding(.horizontal)
+    }
+
+    private func tierShort(_ t: SolutionTier) -> String {
+        switch t {
+        case .matchingIntents:     return "Intents"
+        case .intentsAndBookends:  return "Bookends"
+        case .neutralOptimization: return "Neutral"
+        case .globalPool:          return "All"
+        }
+    }
+
+    private func sectionHeader(_ title: String, _ subtitle: String) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(title).font(.title3.bold())
+            Text(subtitle).font(.caption).foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal).padding(.top, 4)
     }
 
     private func reload() async {

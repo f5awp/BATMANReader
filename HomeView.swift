@@ -295,7 +295,7 @@ struct MarkIntentsToolbar: View {
     private var workingPills: some View {
         HStack(spacing: 6) {
             brushPill(.dontWantToWork, "Trade away", BrickPalette.change)
-            brushPill(.mustWork, "Keep / want to work", BrickPalette.clear)
+            brushPill(.mustWork, "Keep", BrickPalette.clear)
             Spacer()
         }
         .padding(.horizontal)
@@ -401,7 +401,7 @@ struct IntentKeySheet: View {
             List {
                 Section("Working shifts") {
                     keyRow(BrickPalette.change, "Trade away", "You want to give this shift away")
-                    keyRow(BrickPalette.clear, "Keep / want to work", "You want to work this shift")
+                    keyRow(BrickPalette.clear, "Keep", "You want to work this shift")
                     keyRow(BrickPalette.neutral, "Neutral / open", "No strong preference")
                 }
                 Section("Days off") {

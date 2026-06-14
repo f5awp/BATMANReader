@@ -72,6 +72,7 @@ struct TradePackage: Sendable, Hashable, Identifiable {
     let methodology: TradeMethodology
     let assignments: [PackageAssignment]
     let route: NWayRoute?               // present for circular (drives Execute)
+    var urgency: Int = 0                // max reason-urgency over the days covered
     var peopleCount: Int { Set(assignments.map(\.workerID)).count }
     var allDayIDs: [String] { assignments.flatMap(\.dayIDs) }
 }
@@ -164,6 +165,11 @@ enum TradeRouter {
 
         var result: [TradePackage] = []
 
+        // Reason-urgency per day (AI-categorized) → ranks solutions.
+        func urgency(of dayIDs: [String]) -> Int {
+            dayIDs.map { DayIntentStore.shared.note(forDay: $0)?.reason?.urgency ?? 0 }.max() ?? 0
+        }
+
         // Greedy — primary.
         let covers = await minimalCover(block: ShiftBlock(shifts: giveShifts), excluding: selfID)
         for cover in covers {
@@ -171,7 +177,8 @@ enum TradeRouter {
                 PackageAssignment(workerID: $0.workerID, name: $0.name, dayIDs: $0.dayIDs)
             }
             result.append(TradePackage(id: "greedy-" + cover.id, methodology: .greedy,
-                                       assignments: assigns, route: nil))
+                                       assignments: assigns, route: nil,
+                                       urgency: urgency(of: assigns.flatMap(\.dayIDs))))
         }
 
         // Circular — secondary, only when greedy can't do it in ≤2 people.
@@ -185,12 +192,16 @@ enum TradeRouter {
                     PackageAssignment(workerID: $0.key, name: participantName($0.key), dayIDs: $0.value)
                 }
                 result.append(TradePackage(id: "circular-" + loop.id, methodology: .circular,
-                                           assignments: assigns, route: loop))
+                                           assignments: assigns, route: loop,
+                                           urgency: urgency(of: assigns.flatMap(\.dayIDs))))
             }
         }
 
+        // Sort: fewest people, then most urgent (AI-categorized reason), then
+        // greedy ahead of circular.
         return result.sorted {
             if $0.peopleCount != $1.peopleCount { return $0.peopleCount < $1.peopleCount }
+            if $0.urgency != $1.urgency { return $0.urgency > $1.urgency }
             return $0.methodology == .greedy && $1.methodology == .circular
         }
     }

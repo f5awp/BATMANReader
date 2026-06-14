@@ -768,7 +768,7 @@ struct TwoWaySheet: View {
     private let youColor  = Color.blue
     private let themColor = Color.orange
 
-    private var glanceBaseHeight: CGFloat { hSize == .compact ? 360 : 176 }
+    private var glanceBaseHeight: CGFloat { hSize == .compact ? 520 : 260 }
 
     private let bookendGreen = Color(red: 0.16, green: 0.46, blue: 0.22)
     private let seekingGold  = Color(red: 0.80, green: 0.60, blue: 0.10)

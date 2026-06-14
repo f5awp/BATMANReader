@@ -58,8 +58,8 @@ struct ContentView: View {
                 .allowsHitTesting(false)
             }
         }
-        .sheet(isPresented: $showInbox) { InboxView().presentationDetents([.large]) }
-        .sheet(isPresented: $showChannel) { ChannelView().presentationDetents([.large]) }
+        .fullScreenCover(isPresented: $showInbox) { InboxView() }
+        .fullScreenCover(isPresented: $showChannel) { ChannelView() }
         // First-run identity setup — until signed in with Apple AND an ID claimed.
         .fullScreenCover(isPresented: Binding(
             get: { settings.appleUserID.isEmpty || settings.username.trimmingCharacters(in: .whitespaces).isEmpty },
