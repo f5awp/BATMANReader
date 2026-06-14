@@ -67,6 +67,12 @@ struct TradeProfile: Sendable, Hashable, Codable, Identifiable {
     var personalEmail: String? = nil
     var aaEmail: String? = nil
     var phone: String? = nil
+    // v2 trade rules (all optional so older records still decode).
+    var statusBroadcast: String? = nil
+    var maxWeeklyHours: Int? = nil
+    var minWeeklyHours: Int? = nil
+    var prioritizeChaining: Bool? = nil
+    var isMercenaryMode: Bool? = nil
 
     var id: String { workerID }
     var bestEmail: String? {
@@ -202,11 +208,16 @@ final class TradeProfileStore {
             blacklistedDesks:      s.blacklistedDesks,
             blacklistedShiftTypes: s.blacklistedShiftTypes,
             blacklistedRegions:    s.blacklistedRegions,
-            seekingDayIDs:         TradeIntentStore.shared.seekingDayIDs,
+            seekingDayIDs:         DayIntentStore.shared.seekingDayIDs,
             updatedAt:             Date(),
             personalEmail:         s.personalEmail.isEmpty ? nil : s.personalEmail,
             aaEmail:               s.aaEmail.isEmpty ? nil : s.aaEmail,
-            phone:                 s.phone.isEmpty ? nil : s.phone
+            phone:                 s.phone.isEmpty ? nil : s.phone,
+            statusBroadcast:       s.statusBroadcast.isEmpty ? nil : s.statusBroadcast,
+            maxWeeklyHours:        s.maxWeeklyHours,
+            minWeeklyHours:        s.minWeeklyHours,
+            prioritizeChaining:    s.prioritizeChaining,
+            isMercenaryMode:       s.isMercenaryMode
         )
     }
 

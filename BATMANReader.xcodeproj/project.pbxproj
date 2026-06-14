@@ -13,6 +13,8 @@
 		916E54062FDCF7FF00A1CE2B /* AccountService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 916E54052FDCF7FF00A1CE2B /* AccountService.swift */; };
 		916E54152FDE2F0A00A1CE2B /* TradeEngineModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 916E54142FDE2F0A00A1CE2B /* TradeEngineModels.swift */; };
 		916E54172FDE2F2B00A1CE2B /* DayIntentStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 916E54162FDE2F2B00A1CE2B /* DayIntentStore.swift */; };
+		916E54192FDE314700A1CE2B /* TradeHistoryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 916E54182FDE314700A1CE2B /* TradeHistoryStore.swift */; };
+		916E541B2FDE318D00A1CE2B /* TradeRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 916E541A2FDE318D00A1CE2B /* TradeRouter.swift */; };
 		91D1B89D2FDA65050049CAF7 /* ShiftAvailability.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B8992FDA65050049CAF7 /* ShiftAvailability.swift */; };
 		91D1B89E2FDA65050049CAF7 /* AIScheduleSummaryIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B88A2FDA65050049CAF7 /* AIScheduleSummaryIntent.swift */; };
 		91D1B89F2FDA65050049CAF7 /* SettingsManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B8962FDA65050049CAF7 /* SettingsManager.swift */; };
@@ -78,6 +80,8 @@
 		916E54052FDCF7FF00A1CE2B /* AccountService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountService.swift; sourceTree = "<group>"; };
 		916E54142FDE2F0A00A1CE2B /* TradeEngineModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TradeEngineModels.swift; sourceTree = "<group>"; };
 		916E54162FDE2F2B00A1CE2B /* DayIntentStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DayIntentStore.swift; sourceTree = "<group>"; };
+		916E54182FDE314700A1CE2B /* TradeHistoryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TradeHistoryStore.swift; sourceTree = "<group>"; };
+		916E541A2FDE318D00A1CE2B /* TradeRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TradeRouter.swift; sourceTree = "<group>"; };
 		91B5643C2FDA47E400D38BBE /* BATMANReader.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = BATMANReader.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		91D1B88A2FDA65050049CAF7 /* AIScheduleSummaryIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIScheduleSummaryIntent.swift; sourceTree = "<group>"; };
 		91D1B88B2FDA65050049CAF7 /* AvailabilityIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AvailabilityIntents.swift; sourceTree = "<group>"; };
@@ -213,6 +217,8 @@
 				916E54052FDCF7FF00A1CE2B /* AccountService.swift */,
 				916E54142FDE2F0A00A1CE2B /* TradeEngineModels.swift */,
 				916E54162FDE2F2B00A1CE2B /* DayIntentStore.swift */,
+				916E54182FDE314700A1CE2B /* TradeHistoryStore.swift */,
+				916E541A2FDE318D00A1CE2B /* TradeRouter.swift */,
 			);
 			sourceTree = "<group>";
 		};
@@ -335,6 +341,7 @@
 			isa = PBXSourcesBuildPhase;
 			files = (
 				91D1B89D2FDA65050049CAF7 /* ShiftAvailability.swift in Sources */,
+				916E54192FDE314700A1CE2B /* TradeHistoryStore.swift in Sources */,
 				916E54022FDCE50200A1CE2B /* CloudPush.swift in Sources */,
 				91D1B89E2FDA65050049CAF7 /* AIScheduleSummaryIntent.swift in Sources */,
 				91D1B8B92FDBE47C0049CAF7 /* TradeMatcher.swift in Sources */,
@@ -352,6 +359,7 @@
 				91D1B8A52FDA65050049CAF7 /* ScheduleIntents.swift in Sources */,
 				91D1B8A62FDA65050049CAF7 /* ScheduleDiff.swift in Sources */,
 				91D1B8A72FDA65050049CAF7 /* EventKitManager.swift in Sources */,
+				916E541B2FDE318D00A1CE2B /* TradeRouter.swift in Sources */,
 				916E54042FDCF23700A1CE2B /* HelpView.swift in Sources */,
 				91D1B8A82FDA65050049CAF7 /* NotificationManager.swift in Sources */,
 				91D1B8EB2FDC67DD0049CAF7 /* WidgetData.swift in Sources */,

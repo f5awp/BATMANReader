@@ -487,3 +487,28 @@ enum TradeMatcher {
         }
     }
 }
+
+// MARK: - Reusable hard-gate helpers for the v2 router
+//
+// `rested`/`anchored`/`iso`/`dateFromISO` are `private` (file-scoped) above. This
+// same-file extension re-exposes them as internal wrappers so `TradeRouter` can
+// reuse the exact same gate logic instead of duplicating it.
+extension TradeMatcher {
+    /// 8-hour rest check vs the map owner's adjacent shifts.
+    static func isRested(map: [String: RosterEntry], day: Date, startHour: Int,
+                         cal: Calendar = .current) -> Bool {
+        rested(map: map, day: day, startHour: startHour, cal: cal)
+    }
+
+    /// Whether covering `day` attaches to existing work (no floating island).
+    static func isAnchored(day: Date, map: [String: RosterEntry], plan: Set<String>,
+                           cal: Calendar = .current) -> Bool {
+        anchored(day: day, map: map, plan: plan, cal: cal)
+    }
+
+    /// ISO "yyyy-MM-dd" for a date.
+    static func isoDay(_ date: Date) -> String { iso(date) }
+
+    /// Parse an ISO "yyyy-MM-dd" day string to a start-of-day Date.
+    static func dayDate(fromISO s: String) -> Date? { dateFromISO(s) }
+}

@@ -117,6 +117,32 @@ final class SettingsManager {
         didSet { defaults.set(tradeOpenness, forKey: Keys.tradeOpenness) }
     }
 
+    // ── v2 trade rules ───────────────────────────────────────────────
+    /// Weekly-hour caps used as hard limits by the matcher. nil = no cap.
+    var maxWeeklyHours: Int? {
+        didSet { defaults.set(maxWeeklyHours, forKey: Keys.maxWeeklyHours) }
+    }
+    var minWeeklyHours: Int? {
+        didSet { defaults.set(minWeeklyHours, forKey: Keys.minWeeklyHours) }
+    }
+    /// Soft preference: protect contiguous days off (bookend screening). Bypassed
+    /// by "What If?" mode. Default true = today's behavior.
+    var prioritizeChaining: Bool {
+        didSet { defaults.set(prioritizeChaining, forKey: Keys.prioritizeChaining) }
+    }
+    /// When on, the user takes any qualifying pickup regardless of soft prefs.
+    var isMercenaryMode: Bool {
+        didSet { defaults.set(isMercenaryMode, forKey: Keys.isMercenaryMode) }
+    }
+    /// Public 140-char status line shown under the user's name in trade views.
+    var statusBroadcast: String {
+        didSet { defaults.set(String(statusBroadcast.prefix(140)), forKey: Keys.statusBroadcast) }
+    }
+    /// Private 2000-char scratch notes — never published.
+    var privateNotes: String {
+        didSet { defaults.set(String(privateNotes.prefix(2000)), forKey: Keys.privateNotes) }
+    }
+
     /// When on, trade willingness syncs via the CloudKit public DB (real
     /// cross-user). Off = local-only (default until iCloud capability is wired).
     var useCloudKit: Bool {
@@ -152,6 +178,12 @@ final class SettingsManager {
         blacklistedRegions       = Set((defaults.array(forKey: Keys.blRegions) as? [String]) ?? [])
         tradeOpenness            = defaults.string(forKey: Keys.tradeOpenness) ?? "bookends"
         useCloudKit              = defaults.bool(forKey: Keys.useCloudKit)
+        maxWeeklyHours           = defaults.object(forKey: Keys.maxWeeklyHours) as? Int
+        minWeeklyHours           = defaults.object(forKey: Keys.minWeeklyHours) as? Int
+        prioritizeChaining       = defaults.object(forKey: Keys.prioritizeChaining) as? Bool ?? true
+        isMercenaryMode          = defaults.bool(forKey: Keys.isMercenaryMode)
+        statusBroadcast          = defaults.string(forKey: Keys.statusBroadcast) ?? ""
+        privateNotes             = defaults.string(forKey: Keys.privateNotes) ?? ""
     }
 
     // MARK: - Keys
@@ -170,6 +202,12 @@ final class SettingsManager {
         static let blRegions    = "batman.blacklistedRegions"
         static let tradeOpenness = "batman.tradeOpenness"
         static let useCloudKit   = "batman.useCloudKit"
+        static let maxWeeklyHours = "batman.maxWeeklyHours"
+        static let minWeeklyHours = "batman.minWeeklyHours"
+        static let prioritizeChaining = "batman.prioritizeChaining"
+        static let isMercenaryMode = "batman.isMercenaryMode"
+        static let statusBroadcast = "batman.statusBroadcast"
+        static let privateNotes  = "batman.privateNotes"
         static let appleUserID   = "batman.appleUserID"
         static let appearance    = "batman.appearance"
         static let firstName     = "batman.firstName"
