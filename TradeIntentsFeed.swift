@@ -218,6 +218,81 @@ struct TradeFeedKey: View {
     }
 }
 
+/// Stable per-trader calendar color (you are always blue). Same index → same color
+/// across the package card and the dual-calendar view.
+func traderColor(_ index: Int) -> Color {
+    BrickPalette.traderThemes[index % BrickPalette.traderThemes.count]
+}
+
+/// One trader's days in THEIR color, matching their calendar: a small color dot +
+/// name, then "Gives" (bordered chips = trades away) and "Gets" (filled chips = takes).
+struct TraderChips: View {
+    let name: String
+    let color: Color
+    let giveDays: [String]
+    let getDays: [String]
+    var maxChips = 5
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 5) {
+                Circle().fill(color).frame(width: 8, height: 8)
+                Text(name).font(.dsLabel).foregroundStyle(color).lineLimit(1)
+            }
+            if !giveDays.isEmpty { chipRow("Gives", giveDays, filled: false) }
+            if !getDays.isEmpty  { chipRow("Gets", getDays, filled: true) }
+        }
+    }
+
+    private func chipRow(_ lbl: String, _ days: [String], filled: Bool) -> some View {
+        HStack(spacing: 5) {
+            Text(lbl).font(.caption2).foregroundStyle(.secondary).frame(width: 36, alignment: .leading)
+            ForEach(days.prefix(maxChips), id: \.self) { iso in
+                Text(SwapChips.chipDay(iso)).font(.dsChip)
+                    .foregroundStyle(filled ? .white : color)
+                    .padding(.horizontal, 7).padding(.vertical, 2)
+                    .background(filled ? color : Color.clear, in: Capsule())
+                    .overlay(Capsule().stroke(color, lineWidth: filled ? 0 : 1.5))
+            }
+            if days.count > maxChips { Text("+\(days.count - maxChips)").font(.dsBadge).foregroundStyle(.secondary) }
+            Spacer(minLength: 0)
+        }
+        .padding(.leading, 13)
+    }
+}
+
+// MARK: - Handoff chain (for circular trades: who hands which day to whom)
+
+/// Renders a circular loop as explicit directed handoffs — "You → Denny: Jul 4",
+/// "Denny → Dimitry: Jul 8", "Dimitry → You: Jul 12" — so who gives/gets what is
+/// unambiguous in a 3-/4-person chain.
+struct HandoffChain: View {
+    let legs: [NWayLeg]
+    private var myID: String { SettingsManager.shared.username }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            ForEach(legs) { leg in
+                HStack(spacing: 6) {
+                    Text(label(leg.fromID)).font(.caption.weight(.semibold))
+                        .foregroundStyle(leg.fromID == myID ? BrickPalette.mineScheme : .primary)
+                    Image(systemName: "arrow.right").font(.caption2).foregroundStyle(.secondary)
+                    Text(label(leg.toID)).font(.caption.weight(.semibold))
+                        .foregroundStyle(leg.toID == myID ? BrickPalette.mineScheme : .primary)
+                    Spacer(minLength: 6)
+                    Text("\(SwapChips.chipDay(leg.dayID)) · \(leg.desk)")
+                        .font(.dsChip)
+                        .padding(.horizontal, 7).padding(.vertical, 2)
+                        .background(Color.indigo.opacity(DS.pillFill), in: Capsule())
+                        .foregroundStyle(.indigo)
+                }
+            }
+        }
+    }
+
+    private func label(_ id: String) -> String { id == myID ? "You" : firstName(participantName(id)) }
+}
+
 // MARK: - Swap day chips (give = blue, get = red) — shared by route & package cards
 
 /// Compact day chips for a swap: which days YOU give (blue) and get (red), matching
@@ -227,6 +302,7 @@ struct SwapChips: View {
     let getDays: [String]
     var giveLabel = "You give"
     var getLabel = "You get"
+    var labelWidth: CGFloat = 50
     var maxChips = 5
 
     var body: some View {
@@ -239,7 +315,7 @@ struct SwapChips: View {
     private func row(_ label: String, _ days: [String], _ color: Color) -> some View {
         HStack(spacing: DS.xs + 1) {
             Text(label).font(.dsLabel).foregroundStyle(color)
-                .frame(width: 50, alignment: .leading)
+                .frame(width: labelWidth, alignment: .leading)
             ForEach(days.prefix(maxChips), id: \.self) { iso in
                 Text(Self.chipDay(iso))
                     .font(.dsChip)
@@ -324,28 +400,10 @@ struct RouteCard: View {
                 Button("Execute", action: onExecute)
                     .buttonStyle(.borderedProminent).controlSize(.small)
             }
-            ForEach(Array(route.participants.enumerated()), id: \.offset) { idx, pid in
-                HStack(alignment: .top, spacing: 8) {
-                    Avatar(name: participantName(pid), id: pid, size: 28)
-                    VStack(alignment: .leading, spacing: 3) {
-                        HStack(spacing: 6) {
-                            Text(pid == myID ? "You" : participantName(pid)).font(.subheadline.weight(.semibold))
-                            if let status = participantStatus(pid) {
-                                Text(status).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
-                            }
-                        }
-                        // Each person gives one shift to the next and gets one from the previous.
-                        SwapChips(giveDays: legDays(from: pid), getDays: legDays(to: pid),
-                                  giveLabel: "Gives", getLabel: "Gets")
-                    }
-                    Spacer(minLength: 0)
-                }
-            }
+            // Explicit handoffs make the loop unambiguous: who gives which day to whom.
+            HandoffChain(legs: route.legs)
         }
     }
-
-    private func legDays(from pid: String) -> [String] { route.legs.filter { $0.fromID == pid }.map(\.dayID) }
-    private func legDays(to pid: String)   -> [String] { route.legs.filter { $0.toID == pid }.map(\.dayID) }
 }
 
 // MARK: - Package card (one card per deal)
@@ -395,20 +453,21 @@ struct PackageCard: View {
 
             Divider()
 
-            // One row per counterparty — avatar, name + status, this swap's days.
-            ForEach(package.assignments) { a in
-                HStack(alignment: .top, spacing: 10) {
-                    Avatar(name: a.name, id: a.workerID, size: 30)
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(spacing: 6) {
-                            Text(a.name).font(.subheadline.weight(.semibold))
-                            if let s = participantStatus(a.workerID) {
-                                Text(s).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
-                            }
-                        }
-                        SwapChips(giveDays: a.giveDayIDs, getDays: a.takeDayIDs)
+            if isCircular, let route = package.route {
+                // Circular loop: show the directed handoffs, not reciprocal pairs.
+                HandoffChain(legs: route.legs)
+            } else {
+                // Reciprocal: each pairing in its traders' colors (border = trades
+                // away, fill = takes) — the same colors as the calendars.
+                ForEach(Array(package.assignments.enumerated()), id: \.element.id) { idx, a in
+                    VStack(alignment: .leading, spacing: 8) {
+                        TraderChips(name: "You", color: BrickPalette.mineScheme,
+                                    giveDays: a.giveDayIDs, getDays: a.takeDayIDs)
+                        TraderChips(name: a.name, color: traderColor(idx),
+                                    giveDays: a.takeDayIDs, getDays: a.giveDayIDs)
                     }
-                    Spacer(minLength: 0)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    if idx < package.assignments.count - 1 { Divider() }
                 }
             }
 
@@ -496,6 +555,13 @@ struct PackageDetailView: View {
                     .pickerStyle(.segmented).padding(.horizontal)
                 }
 
+                if package.methodology == .circular, let route = package.route {
+                    HandoffChain(legs: route.legs)
+                        .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal)
+                } else if let a = current {
+                    swapSummary(a)
+                }
+
                 HStack {
                     Button { if monthIndex > 0 { monthIndex -= 1 } } label: { Image(systemName: "chevron.left").font(.headline) }
                         .disabled(monthIndex == 0)
@@ -531,11 +597,45 @@ struct PackageDetailView: View {
                 }
                 .buttonStyle(.borderedProminent).padding(.horizontal).padding(.bottom, 8)
             }
-            .navigationTitle("Package")
+            .navigationTitle(dateTitle)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } } }
             .task { await load() }
         }
+    }
+
+    /// The traded dates, used as the sheet title (e.g. "Jul 4 ⇄ Jul 11").
+    private var dateTitle: String {
+        let g = myGiveDays.sorted().map { SwapChips.chipDay($0) }
+        let t = myTakeDays.sorted().map { SwapChips.chipDay($0) }
+        if g.isEmpty && t.isEmpty { return "Swap" }
+        return g.joined(separator: ", ") + "  ⇄  " + t.joined(separator: ", ")
+    }
+
+    /// Both sides spelled out, in each trader's color (matches their calendar).
+    @ViewBuilder private func swapSummary(_ a: PackageAssignment) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            TraderChips(name: "You", color: youColor, giveDays: a.giveDayIDs, getDays: a.takeDayIDs)
+            TraderChips(name: a.name, color: traderColor(sel), giveDays: a.takeDayIDs, getDays: a.giveDayIDs)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal)
+    }
+
+    private var isCircular: Bool { package.methodology == .circular }
+    private var loopLegs: [NWayLeg] { package.route?.legs ?? [] }
+    private func days(_ legs: [NWayLeg]) -> Set<String> { Set(legs.map(\.dayID)) }
+
+    /// Each calendar reads in its OWNER's color: border = they trade away (give),
+    /// fill = they take (get). Days come from ALL of that person's legs — including
+    /// handoffs to/from a third party — so a circular loop is fully shown per person.
+    private var youGive: Set<String> { isCircular ? days(loopLegs.filter { $0.fromID == myID }) : myGiveDays }
+    private var youTake: Set<String> { isCircular ? days(loopLegs.filter { $0.toID == myID }) : myTakeDays }
+    private func peerGive(_ p: String) -> Set<String> {
+        isCircular ? days(loopLegs.filter { $0.fromID == p }) : Set(current?.takeDayIDs ?? [])
+    }
+    private func peerTake(_ p: String) -> Set<String> {
+        isCircular ? days(loopLegs.filter { $0.toID == p }) : Set(current?.giveDayIDs ?? [])
     }
 
     @ViewBuilder private func calendars(for off: Int) -> some View {
@@ -543,14 +643,14 @@ struct PackageDetailView: View {
             VStack(spacing: 16) {
                 MiniScheduleGrid(title: "You", days: myDays, month: monthAnchor(off),
                                  accent: youColor,
-                                 giveDays: myGiveDays, takeDays: myTakeDays,
+                                 giveDays: youGive, takeDays: youTake,
                                  intent: myIntent,
                                  topology: { DayIntentStore.shared.topology(forDay: $0) },
                                  eventName: { TwoWaySheet.eventText($0, topology: DayIntentStore.shared.topology(forDay: $0), includePrivate: true) })
                 if let a = current {
                     MiniScheduleGrid(title: a.name, days: peerDays[a.workerID] ?? [:], month: monthAnchor(off),
-                                     accent: themColor,
-                                     giveDays: Set(a.takeDayIDs), takeDays: Set(a.giveDayIDs),
+                                     accent: traderColor(sel),
+                                     giveDays: peerGive(a.workerID), takeDays: peerTake(a.workerID),
                                      intent: { peerIntent($0, workerID: a.workerID) },
                                      topology: TwoWaySheet.globalTopology, eventName: TwoWaySheet.globalEvent)
                 }
@@ -650,6 +750,11 @@ struct ExecutionConfirmationView: View {
 }
 
 // MARK: - Helpers
+
+/// "Last, First" / "First Last" → "First", for compact give/get labels.
+func firstName(_ name: String) -> String {
+    name.components(separatedBy: ",").last?.trimmingCharacters(in: .whitespaces) ?? name
+}
 
 func participantName(_ id: String) -> String {
     if id == SettingsManager.shared.username {

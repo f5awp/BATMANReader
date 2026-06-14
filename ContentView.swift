@@ -23,7 +23,6 @@ struct ContentView: View {
     @State private var selectedTab = 0
     @State private var showInbox = false
     @State private var showChannel = false
-    @State private var showDashboard = false
     private var dev = DevAccess.shared
     private var settings = SettingsManager.shared
 
@@ -38,17 +37,10 @@ struct ContentView: View {
                 .tag(1)
         }
         // Floating Inbox + Channel dock — top-right, below the nav bar, on every tab.
-        // On Home, the trade-status counters sit directly under the dock.
         .overlay(alignment: .topTrailing) {
-            VStack(alignment: .trailing, spacing: 6) {
-                MessagingDock(showInbox: $showInbox, showChannel: $showChannel)
-                if selectedTab == 0 {
-                    HomeStatusCounters { showDashboard = true }
-                    SyncTag()
-                }
-            }
-            .padding(.top, 52)
-            .padding(.trailing, 10)
+            MessagingDock(showInbox: $showInbox, showChannel: $showChannel)
+                .padding(.top, 52)
+                .padding(.trailing, 10)
         }
         // Developer mode: a thick red border so it's obvious you have moderation powers.
         .overlay {
@@ -68,7 +60,6 @@ struct ContentView: View {
         }
         .fullScreenCover(isPresented: $showInbox) { InboxView() }
         .fullScreenCover(isPresented: $showChannel) { ChannelView() }
-        .sheet(isPresented: $showDashboard) { TradeDashboardSheet() }
         // First-run identity setup — until signed in with Apple AND an ID claimed.
         .fullScreenCover(isPresented: Binding(
             get: { settings.appleUserID.isEmpty || settings.username.trimmingCharacters(in: .whitespaces).isEmpty },

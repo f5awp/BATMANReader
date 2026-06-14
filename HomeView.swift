@@ -79,9 +79,14 @@ struct HomeView: View {
                         onTap: handleTap,
                         onLongPress: { day, isOff in editTarget = DayEditTarget(dayID: day, isOff: isOff) })
                 }
+
+                // Last-synced line pinned to the very bottom of the page.
+                Divider()
+                HStack { SyncTag(); Spacer() }
+                    .padding(.horizontal).padding(.vertical, 4)
             }
             .navigationTitle("BATMAN Watcher")
-            .navigationBarTitleDisplayMode(.large)
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button { showImporter = true } label: { Image(systemName: "square.and.arrow.down") }

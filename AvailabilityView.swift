@@ -1004,18 +1004,18 @@ struct TwoWaySheet: View {
     }
 }
 
-/// One thin key bar under the paired trade calendars: give = border, get = fill;
-/// you read blue, they read red.
+/// One thin key bar under the trade calendars. Each calendar is in that person's
+/// own color; the cue is the same for everyone: border = trades away, fill = takes.
 struct MiniScheduleLegend: View {
     var body: some View {
-        HStack(spacing: 10) {
-            swatch("You give") { RoundedRectangle(cornerRadius: 3).stroke(BrickPalette.mineScheme, lineWidth: 2.5) }
-            swatch("You get")  { RoundedRectangle(cornerRadius: 3).fill(BrickPalette.mineScheme.opacity(0.5)) }
-            swatch("They give"){ RoundedRectangle(cornerRadius: 3).stroke(BrickPalette.peerScheme, lineWidth: 2.5) }
-            swatch("They get") { RoundedRectangle(cornerRadius: 3).fill(BrickPalette.peerScheme.opacity(0.5)) }
+        HStack(spacing: 12) {
+            swatch("Trades a shift away") { RoundedRectangle(cornerRadius: 3).stroke(.secondary, lineWidth: 2.5) }
+            swatch("Takes a shift") { RoundedRectangle(cornerRadius: 3).fill(Color.secondary.opacity(0.5)) }
+            Text("· each calendar is in that person's color")
+                .foregroundStyle(.secondary)
         }
         .font(.caption2)
-        .lineLimit(1).minimumScaleFactor(0.7)
+        .lineLimit(1).minimumScaleFactor(0.65)
         .frame(maxWidth: .infinity)
         .padding(.vertical, 6).padding(.horizontal, 12)
         .background(.bar, in: Capsule())
@@ -1042,6 +1042,7 @@ struct MiniScheduleGrid: View {
     var accent: Color = .blue            // THIS calendar owner's signature color (You=blue, peer=red)
     var giveDays: Set<String> = []       // owner GIVES these away → own-color border
     var takeDays: Set<String> = []       // owner RECEIVES these → own-color fill
+    var loopDays: Set<String> = []       // circular handoff between OTHERS → violet fill+border
     var gold: Set<String> = []           // mutually-wanted → gold border
     var intent: (String) -> Color? = { _ in nil }              // thick bottom bar (toggle-able by caller)
     var topology: (String) -> DayTopology = { _ in .standard } // high-impact / personal-day circle
@@ -1066,7 +1067,8 @@ struct MiniScheduleGrid: View {
 
     var body: some View {
         VStack(spacing: 4) {
-            Text(title).font(.headline).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
+            Text(title).font(.headline).foregroundStyle(accent).lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
             HStack(spacing: 3) {
                 ForEach(Self.headers, id: \.self) { h in
                     Text(h).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
@@ -1144,6 +1146,7 @@ struct MiniScheduleGrid: View {
     }
 
     private func background(key: String, working: Bool) -> Color {
+        if loopDays.contains(key) { return BrickPalette.loopTrade.opacity(0.5) }  // 3rd-party handoff
         if takeDays.contains(key) { return accent.opacity(0.5) }    // owner receives → own-color fill
         return working ? accent.opacity(0.16) : Color(.systemGray5)
     }
@@ -1171,8 +1174,9 @@ struct MiniScheduleGrid: View {
 
     @ViewBuilder private func border(key: String) -> some View {
         let shape = RoundedRectangle(cornerRadius: 7)
-        // Give = own-color border; get = fill only (handled in background, no border).
-        if giveDays.contains(key) { shape.stroke(accent, lineWidth: 3) }
+        // Give = own-color border; get = fill only. Loop handoff = violet fill+border.
+        if loopDays.contains(key) { shape.stroke(BrickPalette.loopTrade, lineWidth: 3) }
+        else if giveDays.contains(key) { shape.stroke(accent, lineWidth: 3) }
         else if gold.contains(key) { shape.stroke(goldBorder, lineWidth: 2) }
     }
 }

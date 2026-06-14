@@ -59,6 +59,17 @@ enum BrickPalette {
     // belongs to whichever schedule it lands on.
     static let mineScheme = Color(red: 0.13, green: 0.45, blue: 0.92)    // your schedule blue
     static let peerScheme = Color(red: 0.84, green: 0.25, blue: 0.28)    // their schedule red
+    static let loopTrade  = Color(red: 0.48, green: 0.31, blue: 0.84)    // violet
+    // Distinct per-trader calendar themes (you are always `mineScheme` blue). Each
+    // person's calendar reads in their own color: border = trades away, fill = takes.
+    // Hues chosen to stay distinguishable (no teal/green, for colorblindness).
+    static let traderThemes: [Color] = [
+        peerScheme,                                    // red
+        loopTrade,                                     // violet
+        Color(red: 0.90, green: 0.52, blue: 0.10),     // orange
+        Color(red: 0.80, green: 0.20, blue: 0.52),     // magenta
+        Color(red: 0.60, green: 0.42, blue: 0.12),     // amber-brown
+    ]
     // Day-marker circles, used identically on every calendar.
     static let highImpact = Color(red: 0.86, green: 0.65, blue: 0.12)    // gold — high-demand date
     static let personalDay = milestone                                  // pink — personal milestone
