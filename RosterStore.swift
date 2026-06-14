@@ -105,11 +105,26 @@ final class RosterStore {
         // enable it, and CloudKit sync requires every attribute be optional or
         // defaulted (which RosterShift's are not). Only TradeProfile/messages go
         // to CloudKit, via their own CKContainer services.
+        let config = ModelConfiguration(cloudKitDatabase: .none)
         do {
-            let config = ModelConfiguration(cloudKitDatabase: .none)
             container = try ModelContainer(for: RosterShift.self, configurations: config)
         } catch {
-            fatalError("Failed to create roster ModelContainer: \(error)")
+            // A corrupt or schema-incompatible on-disk store would otherwise crash
+            // the app on launch (blank screen / "won't load"). Never brick: wipe the
+            // store + its WAL/SHM sidecars and rebuild — the roster re-syncs from the
+            // master. Fall back to in-memory if even that fails, so the app launches.
+            let store = config.url
+            let dir = store.deletingLastPathComponent()
+            for name in [store.lastPathComponent, store.lastPathComponent + "-wal", store.lastPathComponent + "-shm"] {
+                try? FileManager.default.removeItem(at: dir.appendingPathComponent(name))
+            }
+            if let rebuilt = try? ModelContainer(for: RosterShift.self, configurations: config) {
+                container = rebuilt
+            } else {
+                let mem = ModelConfiguration(isStoredInMemoryOnly: true)
+                container = (try? ModelContainer(for: RosterShift.self, configurations: mem))
+                    ?? { fatalError("Roster ModelContainer unrecoverable: \(error)") }()
+            }
         }
         actor = RosterModelActor(modelContainer: container)
     }
