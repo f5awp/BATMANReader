@@ -269,6 +269,11 @@ struct PackageCard: View {
                     .foregroundStyle(tagColor)
                 Text("^[\(package.peopleCount) person](inflect: true) · ^[\(package.allDayIDs.count) day](inflect: true)")
                     .font(.caption).foregroundStyle(.secondary)
+                if package.urgency >= 3 {
+                    Label("Urgent", systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption2.bold()).foregroundStyle(BrickPalette.warning)
+                        .labelStyle(.titleAndIcon)
+                }
                 Spacer()
                 Button(package.methodology == .greedy ? "Propose" : "Execute") {
                     package.methodology == .greedy ? onPropose() : onExecute()
