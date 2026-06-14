@@ -78,3 +78,78 @@ struct HelpView: View {
         }
     }
 }
+
+// MARK: - Tester guide (in-app)
+
+/// The tester walkthrough, in the app for quick reference. Mirrors TESTING_GUIDE.md.
+struct TesterGuideView: View {
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    Text("Test it like a dispatcher: do the normal things, then **try to break it**. Report anything wrong, confusing, or broken in the **# feedback** channel (tap 📣, switch to # feedback).")
+                        .font(.subheadline)
+                }
+
+                section("First run", "person.crop.circle.badge.checkmark", [
+                    "Sign in with Apple, enter your **real Employee ID** + name.",
+                    "**Break it:** wrong ID; an ID already used by someone; kill the app mid-setup; airplane mode while signing in." ])
+
+                section("Schedule & intents", "calendar", [
+                    "Confirm your shifts, days off, and today look right; tap the ⓘ key.",
+                    "**Mark Intents** → mark shifts Trade away / Keep; set AM/PM/MID availability on days off.",
+                    "Long-press a day for the editor (reason, significant day, public/private note).",
+                    "**Break it:** mark/undo fast; mark a day already marked differently; 50-char notes." ])
+
+                section("Openness", "dial.min", [
+                    "Set Accepting: All / Bookends / Not accepting (calendar stays neutral for All & Bookends).",
+                    "Add a date-range override; toggle Mercenary mode.",
+                    "**Break it:** overlapping overrides; blacklist everything (expect no matches)." ])
+
+                section("Trades", "arrow.left.arrow.right", [
+                    "**Search:** pick days to trade away → Find; review Packages + Individual takers.",
+                    "**Intents tabs:** every tier is a real two-way swap; one-way trades are in ECB.",
+                    "Open a swap — **tap each step** to jump to that leg's two people; check who gives/gets what.",
+                    "**Break it:** does the loop come back to you? do the dates match the calendars?" ])
+
+                section("ECB (one-way)", "star.circle", [
+                    "Pick shifts you want taken, set the ECB, Request all; accept per shift, reply with employee #.",
+                    "**Break it:** two people accept the same shift; skip the #1 accepter; cancel mid-queue." ])
+
+                section("Inbox & chat", "tray.full", [
+                    "Each request shows the trade as a card (give/get in colors, or the full loop).",
+                    "Accept / Counter / Decline — and **message back and forth** to talk it out.",
+                    "**Break it:** long messages; reply to your own; go offline then back." ])
+
+                section("Reminders, widgets, Siri", "bell.badge", [
+                    "Set lead time; confirm a shift reminder fires; add the widgets.",
+                    "Ask Siri: \"Do I work tomorrow in BATMAN Watcher\", \"Who can trade with me…\".",
+                    "**Break it:** ask Siri before fetching a schedule." ])
+
+                section("General", "exclamationmark.triangle", [
+                    "Rotate the device; switch light/dark; bump Dynamic Type (Accessibility) — text should scale.",
+                    "Background the app, reopen; lose/regain network.",
+                    "Anything that looks wrong, confusing, or ugly → post it in **# feedback**." ])
+            }
+            .navigationTitle("Tester Guide")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+        }
+    }
+
+    private func section(_ title: String, _ symbol: String, _ points: [String]) -> some View {
+        Section {
+            ForEach(points, id: \.self) { p in
+                Label {
+                    Text(.init(p)).font(.subheadline)
+                } icon: {
+                    Image(systemName: "circle.fill").font(.system(size: 5)).foregroundStyle(.secondary)
+                }
+            }
+        } header: {
+            Label(title, systemImage: symbol)
+        }
+    }
+}

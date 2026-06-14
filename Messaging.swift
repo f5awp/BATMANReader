@@ -23,8 +23,10 @@ struct BroadcastPost: Sendable, Codable, Identifiable, Hashable {
     let text: String
     let createdAt: Date
     let expiresAt: Date
+    var channel: String? = nil   // "trades" (default) or "feedback"; nil = legacy = trades
 
     var isExpired: Bool { expiresAt < Date() }
+    var channelOrDefault: String { channel ?? "trades" }
 }
 
 /// A reply on a broadcast post. `isPublic` = everyone sees it; otherwise only the
@@ -269,14 +271,15 @@ final class MessagingStore {
 
     // MARK: Broadcast channel
 
-    func post(text: String, daysValid: Int = 21) async {
+    func post(text: String, channel: String = "trades", daysValid: Int = 21) async {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         let now = Date()
         let post = BroadcastPost(
             id: UUID().uuidString, authorID: myID, authorName: myName,
             text: trimmed, createdAt: now,
-            expiresAt: Calendar.current.date(byAdding: .day, value: daysValid, to: now) ?? now)
+            expiresAt: Calendar.current.date(byAdding: .day, value: daysValid, to: now) ?? now,
+            channel: channel)
         await service.postBroadcast(post)
         // Optimistic: show locally now (don't wait on a server round-trip, which
         // may need queryable indexes before fetch returns).

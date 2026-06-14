@@ -20,6 +20,7 @@ struct SettingsView: View {
     @State private var debugPwDraft = ""
     @State private var checkingCloudKit = false
     @State private var showHelp = false
+    @State private var showTesterGuide = false
     private var dev = DevAccess.shared
     @Environment(\.dismiss) private var dismiss
 
@@ -31,6 +32,9 @@ struct SettingsView: View {
                 Section {
                     Button { showHelp = true } label: {
                         Label("How to use BATMAN Watcher", systemImage: "questionmark.circle")
+                    }
+                    Button { showTesterGuide = true } label: {
+                        Label("Tester guide", systemImage: "checklist")
                     }
                 }
 
@@ -374,6 +378,7 @@ struct SettingsView: View {
                 }
             }
             .sheet(isPresented: $showHelp) { HelpView() }
+            .sheet(isPresented: $showTesterGuide) { TesterGuideView() }
             .alert("Password saved", isPresented: $showPasswordSaved) {
                 Button("OK", role: .cancel) {}
             }

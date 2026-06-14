@@ -387,49 +387,7 @@ struct MarkIntentsToolbar: View {
 /// A compact horizontal strip of icon toggles controlling which calendar layers
 /// are drawn — modeled on the dispatch desk's icon toolbar, with Slack-grade
 /// spacing and clear on/off states.
-/// Compact trade-status counters for the Home header — accepted / pending / denied
-/// (green / yellow / red) plus trade-requests-awaiting-you. Tap to open the dashboard.
-struct HomeStatusCounters: View {
-    private var messaging = MessagingStore.shared
-    private var history = TradeHistoryStore.shared
-    let action: () -> Void
-
-    init(action: @escaping () -> Void) { self.action = action }
-
-    private var counts: DashboardCounts {
-        DashboardCounts.from(requests: messaging.requests,
-                             responses: messaging.responses,
-                             unread: messaging.pendingIncoming.count,
-                             pendingLedger: history.pendingCount)
-    }
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 9) {
-                badge(counts.accepted, BrickPalette.clear, "checkmark.seal.fill", "Accepted")
-                badge(counts.pending, BrickPalette.caution, "clock.fill", "Pending")
-                badge(counts.denied, BrickPalette.critical, "xmark.octagon.fill", "Denied")
-                badge(counts.unread, BrickPalette.info, "bubble.left.fill", "Trade requests")
-            }
-            .frame(height: 26)
-            .padding(.horizontal, 8).padding(.vertical, 3)
-            .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 9))
-        }
-        .buttonStyle(.plain)
-    }
-
-    private func badge(_ n: Int, _ tint: Color, _ symbol: String, _ label: String) -> some View {
-        HStack(spacing: 3) {
-            Image(systemName: symbol).font(.system(size: 12, weight: .semibold)).foregroundStyle(tint)
-            Text("\(n)").font(.footnote.monospacedDigit().weight(.semibold))
-                .foregroundStyle(n > 0 ? .primary : .secondary)
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(label): \(n)")
-    }
-}
-
-/// Compact "last synced" line, shown under the Home status counters.
+/// Compact "last synced" line, shown at the bottom of the Home page.
 struct SyncTag: View {
     private var store = ShiftStore.shared
 

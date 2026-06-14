@@ -371,32 +371,47 @@ struct ThreadView: View {
                         .font(.subheadline).foregroundStyle(.orange)
                 }
             }
-            Section(request.chain != nil ? "\((request.chain?.count ?? 0) + 1)-way trade" : "Proposal") {
-                if let chain = request.chain, !chain.isEmpty {
-                    // Multi-person loop — the full chain of handoffs (your legs in blue).
-                    HandoffChain(chain: chain)
-                } else {
-                    // 1-to-1 / one-way: each party in their color, border = trades
-                    // away, fill = takes (same language as the trade cards).
-                    let fromColor = request.fromID == myID ? BrickPalette.mineScheme : BrickPalette.peerScheme
-                    let toColor   = request.toID == myID ? BrickPalette.mineScheme : BrickPalette.peerScheme
-                    let fromLabel = request.fromID == myID ? "You" : request.fromName
-                    let toLabel   = request.toID == myID ? "You" : request.toName
-                    TraderChips(name: fromLabel, color: fromColor,
-                                giveDays: request.giveDayIDs, getDays: request.takeDayIDs)
-                    if !(request.takeDayIDs.isEmpty && request.giveDayIDs.isEmpty) {
-                        TraderChips(name: toLabel, color: toColor,
-                                    giveDays: request.takeDayIDs, getDays: request.giveDayIDs)
+            // The trade as a card — same language as the feed's package card.
+            Section {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack {
+                        let kind = request.chain != nil ? "\((request.chain?.count ?? 0) + 1)-way trade"
+                            : (request.isECB ? "One-way · ECB" : "1-to-1 swap")
+                        Label(kind, systemImage: request.chain != nil ? "arrow.triangle.2.circlepath"
+                            : (request.isECB ? "star.circle.fill" : "arrow.left.arrow.right"))
+                            .font(.subheadline.bold())
+                        Spacer()
+                        StatusBadge(status: status)
+                    }
+                    Divider()
+                    if let chain = request.chain, !chain.isEmpty {
+                        HandoffChain(chain: chain)
+                    } else {
+                        // Each party in their color, border = trades away, fill = takes.
+                        let fromColor = request.fromID == myID ? BrickPalette.mineScheme : BrickPalette.peerScheme
+                        let toColor   = request.toID == myID ? BrickPalette.mineScheme : BrickPalette.peerScheme
+                        let fromLabel = request.fromID == myID ? "You" : request.fromName
+                        let toLabel   = request.toID == myID ? "You" : request.toName
+                        TraderChips(name: fromLabel, color: fromColor,
+                                    giveDays: request.giveDayIDs, getDays: request.takeDayIDs)
+                        if !(request.takeDayIDs.isEmpty && request.giveDayIDs.isEmpty) {
+                            TraderChips(name: toLabel, color: toColor,
+                                        giveDays: request.takeDayIDs, getDays: request.giveDayIDs)
+                        }
+                    }
+                    if request.isECB, let ecb = request.ecb {
+                        Label("\(ecb) ECB offered", systemImage: "star.circle.fill")
+                            .font(.subheadline.weight(.semibold)).foregroundStyle(.orange)
+                    }
+                    if !request.note.isEmpty {
+                        Text(request.note).font(.subheadline)
                     }
                 }
-                if request.isECB, let ecb = request.ecb {
-                    Label("\(ecb) ECB offered", systemImage: "star.circle.fill")
-                        .font(.subheadline.weight(.semibold)).foregroundStyle(.orange)
-                }
-                if !request.note.isEmpty {
-                    Text(request.note).font(.subheadline)
-                }
-                HStack { Spacer(); StatusBadge(status: status) }
+                .padding(DS.cardPadding)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.bar, in: RoundedRectangle(cornerRadius: DS.cardRadius))
+                .listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
+                .listRowBackground(Color.clear)
             }
 
             if let p = otherProfile, (p.phone != nil || p.bestEmail != nil) {
@@ -592,21 +607,34 @@ struct ChannelView: View {
     @State private var expanded: Set<String> = []
     @State private var respondedNote: String?
     @State private var editingPost: BroadcastPost?
+    @State private var channel = "trades"
 
     private var myID: String { SettingsManager.shared.username }
+    private var isFeedback: Bool { channel == "feedback" }
+    private var posts: [BroadcastPost] { store.broadcasts.filter { $0.channelOrDefault == channel } }
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                ChannelHeader(name: "trades", subtitle: "What you're trading away — everyone sees it")
+                Picker("Channel", selection: $channel) {
+                    Text("# trades").tag("trades")
+                    Text("# feedback").tag("feedback")
+                }
+                .pickerStyle(.segmented).padding(.horizontal).padding(.vertical, 6)
+                ChannelHeader(name: channel,
+                              subtitle: isFeedback ? "Bugs & ideas for the app — the builder reads these"
+                                                   : "What you're trading away — everyone sees it")
                 Divider()
-                if store.broadcasts.isEmpty {
-                    ContentUnavailableView("No Posts Yet", systemImage: "megaphone",
-                        description: Text("Post what you're looking to trade away — everyone sees it. Posts expire on their own; delete yours anytime."))
+                if posts.isEmpty {
+                    ContentUnavailableView(isFeedback ? "No Feedback Yet" : "No Posts Yet",
+                        systemImage: isFeedback ? "exclamationmark.bubble" : "megaphone",
+                        description: Text(isFeedback
+                            ? "Report a bug or suggest an improvement — start your message with what you did and what happened."
+                            : "Post what you're looking to trade away — everyone sees it. Posts expire on their own; delete yours anytime."))
                         .frame(maxHeight: .infinity)
                 } else {
                     List {
-                        ForEach(store.broadcasts) { post in
+                        ForEach(posts) { post in
                             postRow(post)
                                 .listRowSeparator(.hidden)
                                 .listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
@@ -616,12 +644,12 @@ struct ChannelView: View {
                     .refreshable { await store.refresh() }
                 }
                 Divider()
-                SlackComposer(placeholder: "Message #trades", text: $draft) {
+                SlackComposer(placeholder: "Message #\(channel)", text: $draft) {
                     let text = draft; draft = ""
-                    Task { await store.post(text: text) }
+                    Task { await store.post(text: text, channel: channel) }
                 }
             }
-            .navigationTitle("Trade Channel")
+            .navigationTitle(isFeedback ? "Feedback" : "Trade Channel")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
             .task { await store.refresh() }
