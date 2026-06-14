@@ -11,7 +11,7 @@ import UniformTypeIdentifiers
 // MARK: - Marking mode
 
 enum IntentMode: String, CaseIterable, Identifiable {
-    case off = "View"
+    case off = "Main View"
     case workingShifts = "Working Shifts"
     case daysOff = "Days Off"
     var id: String { rawValue }
@@ -273,21 +273,55 @@ struct MarkIntentsToolbar: View {
     @Binding var workBrush: WorkingIntentState
 
     var body: some View {
-        VStack(spacing: 8) {
-            Picker("Mode", selection: $mode.animation(.easeInOut)) {
-                ForEach(IntentMode.allCases) { Text($0.rawValue).tag($0) }
+        Group {
+            if mode == .off {
+                restingBar
+            } else {
+                editPanel.transition(.move(edge: .top).combined(with: .opacity))
             }
-            .pickerStyle(.segmented)
+        }
+    }
+
+    /// Main View's resting state — clean, with one secondary entry into editing.
+    private var restingBar: some View {
+        HStack {
+            Spacer()
+            Button { withAnimation(.snappy) { mode = .workingShifts } } label: {
+                Label("Mark Intents", systemImage: "pencil.and.list.clipboard")
+                    .font(.subheadline.weight(.semibold))
+                    .padding(.horizontal, 14).padding(.vertical, 7)
+                    .background(Color.accentColor.opacity(0.14), in: Capsule())
+            }
+            .buttonStyle(.plain).tint(.accentColor)
+        }
+        .padding(.horizontal).padding(.vertical, 6)
+    }
+
+    /// Secondary edit panel: a two-way Working/Days-Off switch + brushes + Done.
+    private var editPanel: some View {
+        VStack(spacing: 10) {
+            HStack(spacing: 10) {
+                Picker("", selection: $mode.animation(.easeInOut)) {
+                    Text("Working Shifts").tag(IntentMode.workingShifts)
+                    Text("Days Off").tag(IntentMode.daysOff)
+                }
+                .pickerStyle(.segmented)
+                Button { withAnimation(.snappy) { mode = .off } } label: {
+                    Text("Done").font(.subheadline.weight(.bold))
+                }
+            }
             .padding(.horizontal)
 
             if mode == .workingShifts {
-                workingPills.transition(.move(edge: .top).combined(with: .opacity))
+                workingPills
             } else if mode == .daysOff {
-                availabilityPills.transition(.move(edge: .top).combined(with: .opacity))
+                availabilityPills
             }
         }
-        .padding(.vertical, 8)
-        .background(.bar)
+        .padding(.vertical, 10)
+        .background(Color(.secondarySystemBackground))
+        .overlay(alignment: .top) { Divider() }
+        .overlay(alignment: .bottom) { Divider() }
     }
 
     /// Working-shift intent brush: Trade away / Keep / Want to work.
