@@ -606,6 +606,10 @@ struct PlanCandidateCell: View {
                     smallBook
                     flameOrUnknown
                 }
+                if let s = TradeProfileStore.shared.profile(forWorker: candidate.workerID)?.statusBroadcast,
+                   !s.isEmpty {
+                    Text(s).font(.system(size: 10)).foregroundStyle(.tertiary).lineLimit(1)
+                }
             }
             Spacer(minLength: 4)
             selectionCheck
@@ -641,13 +645,20 @@ struct PlanCandidateCell: View {
                     .font(.system(size: 11)).foregroundStyle(.secondary)
             }
             Spacer(minLength: 4)
-            if candidate.week.isEmpty {
-                CoverageStrip(shifts: selectedShifts, covered: candidate.coveredShiftIDs)
-            } else {
-                MiniSchedule(week: candidate.week)
-            }
+            statusMessage
             selectionCheck
             enterButton
+        }
+    }
+
+    /// The candidate's public status line (replaces the mini-schedule).
+    @ViewBuilder private var statusMessage: some View {
+        if let s = TradeProfileStore.shared.profile(forWorker: candidate.workerID)?.statusBroadcast,
+           !s.isEmpty {
+            Text(s)
+                .font(.system(size: 11)).foregroundStyle(.secondary)
+                .lineLimit(2).multilineTextAlignment(.trailing)
+                .frame(maxWidth: 130, alignment: .trailing)
         }
     }
 

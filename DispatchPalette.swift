@@ -30,10 +30,9 @@ extension WorkingIntentState {
     /// Calendar fill hue for a worked day with this intent.
     var brickColor: Color {
         switch self {
-        case .dontWantToWork: return BrickPalette.change    // trading it away (a "change")
-        case .mustWork:       return BrickPalette.critical  // locked — do not trade
-        case .wantToWork:     return BrickPalette.clear      // happy to work it
-        case .neutralOpen:    return BrickPalette.neutral
+        case .dontWantToWork:        return BrickPalette.change  // trading it away
+        case .mustWork, .wantToWork: return BrickPalette.clear   // keeping / happy to work it
+        case .neutralOpen:           return BrickPalette.neutral
         }
     }
 }

@@ -295,8 +295,7 @@ struct MarkIntentsToolbar: View {
     private var workingPills: some View {
         HStack(spacing: 6) {
             brushPill(.dontWantToWork, "Trade away", BrickPalette.change)
-            brushPill(.mustWork, "Keep", BrickPalette.critical)
-            brushPill(.wantToWork, "Want to work", BrickPalette.clear)
+            brushPill(.mustWork, "Keep / want to work", BrickPalette.clear)
             Spacer()
         }
         .padding(.horizontal)
@@ -402,13 +401,12 @@ struct IntentKeySheet: View {
             List {
                 Section("Working shifts") {
                     keyRow(BrickPalette.change, "Trade away", "You want to give this shift away")
-                    keyRow(BrickPalette.critical, "Keep", "Locked — don't trade this shift")
-                    keyRow(BrickPalette.clear, "Want to work", "Happy to work it")
+                    keyRow(BrickPalette.clear, "Keep / want to work", "You want to work this shift")
                     keyRow(BrickPalette.neutral, "Neutral / open", "No strong preference")
                 }
                 Section("Days off") {
-                    keyRow(BrickPalette.availableOff, "Want to work", "Available to pick up a shift")
-                    keyRow(BrickPalette.lockedOff, "Must be off", "Hard do-not-schedule")
+                    keyRow(BrickPalette.availableOff, "Available (AM/PM/MID)", "Legal pickup types you'll work")
+                    iconRow("xmark.circle.fill", BrickPalette.critical, "Unavailable (deselected all)")
                 }
                 Section("Markers & borders") {
                     borderRow(BrickPalette.warning, "High-Demand date")
