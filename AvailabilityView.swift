@@ -1043,6 +1043,7 @@ struct MiniScheduleGrid: View {
     var giveDays: Set<String> = []       // owner GIVES these away → own-color border
     var takeDays: Set<String> = []       // owner RECEIVES these → own-color fill
     var loopDays: Set<String> = []       // circular handoff between OTHERS → violet fill+border
+    var focusDay: String? = nil          // the selected step's day → bold focus ring
     var gold: Set<String> = []           // mutually-wanted → gold border
     var intent: (String) -> Color? = { _ in nil }              // thick bottom bar (toggle-able by caller)
     var topology: (String) -> DayTopology = { _ in .standard } // high-impact / personal-day circle
@@ -1174,8 +1175,9 @@ struct MiniScheduleGrid: View {
 
     @ViewBuilder private func border(key: String) -> some View {
         let shape = RoundedRectangle(cornerRadius: 7)
-        // Give = own-color border; get = fill only. Loop handoff = violet fill+border.
-        if loopDays.contains(key) { shape.stroke(BrickPalette.loopTrade, lineWidth: 3) }
+        // Focus (selected step) wins — a bold high-contrast ring on top of any fill.
+        if focusDay == key { shape.stroke(.primary, lineWidth: 3.5) }
+        else if loopDays.contains(key) { shape.stroke(BrickPalette.loopTrade, lineWidth: 3) }
         else if giveDays.contains(key) { shape.stroke(accent, lineWidth: 3) }
         else if gold.contains(key) { shape.stroke(goldBorder, lineWidth: 2) }
     }

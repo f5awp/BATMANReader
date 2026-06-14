@@ -255,7 +255,7 @@ enum StagingState: String, Codable, Sendable, CaseIterable, Identifiable {
     /// Best-effort mapping from the existing request status.
     init(requestStatus: TradeRequestStatus) {
         switch requestStatus {
-        case .pending, .countered: self = .pendingNegotiation
+        case .pending, .countered, .message: self = .pendingNegotiation
         case .accepted:            self = .acceptedInApp
         case .declined, .cancelled: self = .denied
         }

@@ -263,24 +263,44 @@ struct TraderChips: View {
 
 // MARK: - Handoff chain (for circular trades: who hands which day to whom)
 
-/// Renders a circular loop as explicit directed handoffs — "You → Denny: Jul 4",
+/// One directed handoff in a chain, names included so it renders offline (inbox).
+struct HandoffStep: Identifiable, Hashable {
+    let id: String
+    let fromID: String, fromName: String
+    let toID: String, toName: String
+    let dayID: String
+    var desk: String? = nil
+}
+
+/// Renders a multi-person loop as explicit directed handoffs — "You → Denny: Jul 4",
 /// "Denny → Dimitry: Jul 8", "Dimitry → You: Jul 12" — so who gives/gets what is
-/// unambiguous in a 3-/4-person chain.
+/// unambiguous. Works from route legs (feed) or a request's chain (inbox).
 struct HandoffChain: View {
-    let legs: [NWayLeg]
+    let steps: [HandoffStep]
     private var myID: String { SettingsManager.shared.username }
+
+    init(steps: [HandoffStep]) { self.steps = steps }
+    init(legs: [NWayLeg]) {
+        self.steps = legs.map { HandoffStep(id: $0.id, fromID: $0.fromID, fromName: participantName($0.fromID),
+                                            toID: $0.toID, toName: participantName($0.toID), dayID: $0.dayID, desk: $0.desk) }
+    }
+    init(chain: [TradeLeg]) {
+        self.steps = chain.enumerated().map { i, l in
+            HandoffStep(id: "\(i)|\(l.dayID)", fromID: l.fromID, fromName: l.fromName,
+                        toID: l.toID, toName: l.toName, dayID: l.dayID, desk: l.desk) }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
-            ForEach(legs) { leg in
+            ForEach(steps) { s in
                 HStack(spacing: 6) {
-                    Text(label(leg.fromID)).font(.caption.weight(.semibold))
-                        .foregroundStyle(leg.fromID == myID ? BrickPalette.mineScheme : .primary)
+                    Text(label(s.fromID, s.fromName)).font(.caption.weight(.semibold))
+                        .foregroundStyle(s.fromID == myID ? BrickPalette.mineScheme : .primary)
                     Image(systemName: "arrow.right").font(.caption2).foregroundStyle(.secondary)
-                    Text(label(leg.toID)).font(.caption.weight(.semibold))
-                        .foregroundStyle(leg.toID == myID ? BrickPalette.mineScheme : .primary)
+                    Text(label(s.toID, s.toName)).font(.caption.weight(.semibold))
+                        .foregroundStyle(s.toID == myID ? BrickPalette.mineScheme : .primary)
                     Spacer(minLength: 6)
-                    Text("\(SwapChips.chipDay(leg.dayID)) · \(leg.desk)")
+                    Text(SwapChips.chipDay(s.dayID) + (s.desk.map { " · \($0)" } ?? ""))
                         .font(.dsChip)
                         .padding(.horizontal, 7).padding(.vertical, 2)
                         .background(Color.indigo.opacity(DS.pillFill), in: Capsule())
@@ -290,7 +310,7 @@ struct HandoffChain: View {
         }
     }
 
-    private func label(_ id: String) -> String { id == myID ? "You" : firstName(participantName(id)) }
+    private func label(_ id: String, _ name: String) -> String { id == myID ? "You" : firstName(name) }
 }
 
 // MARK: - Swap day chips (give = blue, get = red) — shared by route & package cards
@@ -518,25 +538,49 @@ struct PackageDetailView: View {
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.horizontalSizeClass) private var hSize
-    @State private var sel = 0                       // selected other-trader tab
+    @State private var selectedStep = 0
     @State private var monthIndex = 0
-    @State private var myDays: [String: String] = [:]
-    @State private var peerDays: [String: [String: String]] = [:]
+    @State private var schedules: [String: [String: String]] = [:]   // workerID → day labels
     @State private var showIntents = true
 
     private let cal = Calendar.current
     private let youColor = BrickPalette.mineScheme
-    private let themColor = BrickPalette.peerScheme
     private let monthOffsets = Array(0...12)
     private static let monthF: DateFormatter = { let f = DateFormatter(); f.dateFormat = "MMMM yyyy"; return f }()
     private var myID: String { SettingsManager.shared.username }
+    private var isCircular: Bool { package.methodology == .circular }
 
-    private var assignments: [PackageAssignment] { package.assignments }
-    private var current: PackageAssignment? { assignments.indices.contains(sel) ? assignments[sel] : nil }
-
-    /// My give-days (blue) and take-days (orange) across the whole package.
-    private var myGiveDays: Set<String> { Set(package.assignments.flatMap(\.giveDayIDs)) }
-    private var myTakeDays: Set<String> { Set(package.assignments.flatMap(\.takeDayIDs)) }
+    /// One tappable step per handoff. Circular = the loop legs; reciprocal = legs
+    /// synthesized from each assignment (you→them for your gives, them→you for theirs).
+    struct Step: Identifiable {
+        let id: String
+        let fromID: String, toID: String, dayID: String
+        var desk: String? = nil
+    }
+    private var steps: [Step] {
+        if isCircular, let legs = package.route?.legs {
+            return legs.map { Step(id: $0.id, fromID: $0.fromID, toID: $0.toID, dayID: $0.dayID, desk: $0.desk) }
+        }
+        var out: [Step] = []
+        for a in package.assignments {
+            for d in a.giveDayIDs { out.append(Step(id: "\(myID)>\(a.workerID)@\(d)", fromID: myID, toID: a.workerID, dayID: d)) }
+            for d in a.takeDayIDs { out.append(Step(id: "\(a.workerID)>\(myID)@\(d)", fromID: a.workerID, toID: myID, dayID: d)) }
+        }
+        return out
+    }
+    private var participants: [String] {
+        if isCircular, let route = package.route { return route.participants }
+        var ids = [myID]
+        for a in package.assignments where !ids.contains(a.workerID) { ids.append(a.workerID) }
+        return ids
+    }
+    private func colorFor(_ id: String) -> Color {
+        if id == myID { return youColor }
+        return traderColor(participants.filter { $0 != myID }.firstIndex(of: id) ?? 0)
+    }
+    private func name(_ id: String) -> String { id == myID ? "You" : participantName(id) }
+    private func gives(_ id: String) -> Set<String> { Set(steps.filter { $0.fromID == id }.map(\.dayID)) }
+    private func gets(_ id: String) -> Set<String> { Set(steps.filter { $0.toID == id }.map(\.dayID)) }
 
     private var thisMonthStart: Date {
         cal.date(from: cal.dateComponents([.year, .month], from: Date())) ?? Date()
@@ -544,23 +588,22 @@ struct PackageDetailView: View {
     private func monthAnchor(_ offset: Int) -> Date {
         cal.date(byAdding: .month, value: offset, to: thisMonthStart) ?? thisMonthStart
     }
+    private func monthOffset(for dayID: String) -> Int {
+        guard let d = TradeMatcher.dayDate(fromISO: dayID) else { return 0 }
+        let comps = cal.dateComponents([.month], from: thisMonthStart,
+                                       to: cal.date(from: cal.dateComponents([.year, .month], from: d)) ?? d)
+        return max(0, min(monthOffsets.count - 1, comps.month ?? 0))
+    }
+    private func select(_ i: Int) {
+        guard steps.indices.contains(i) else { return }
+        selectedStep = i
+        monthIndex = monthOffset(for: steps[i].dayID)
+    }
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 12) {
-                if assignments.count > 1 {
-                    Picker("Trader", selection: $sel) {
-                        ForEach(assignments.indices, id: \.self) { i in Text(assignments[i].name).tag(i) }
-                    }
-                    .pickerStyle(.segmented).padding(.horizontal)
-                }
-
-                if package.methodology == .circular, let route = package.route {
-                    HandoffChain(legs: route.legs)
-                        .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal)
-                } else if let a = current {
-                    swapSummary(a)
-                }
+                stepsList
 
                 HStack {
                     Button { if monthIndex > 0 { monthIndex -= 1 } } label: { Image(systemName: "chevron.left").font(.headline) }
@@ -580,7 +623,7 @@ struct PackageDetailView: View {
 
                 TabView(selection: $monthIndex) {
                     ForEach(monthOffsets, id: \.self) { off in
-                        calendars(for: off).tag(off).padding(.horizontal)
+                        stepCalendars(for: off).tag(off).padding(.horizontal)
                     }
                 }
                 .tabViewStyle(.page(indexDisplayMode: .never))
@@ -588,11 +631,11 @@ struct PackageDetailView: View {
                 MiniScheduleLegend().padding(.horizontal)
 
                 Button {
-                    package.methodology == .greedy ? onPropose() : onExecute()
+                    isCircular ? onExecute() : onPropose()
                     dismiss()
                 } label: {
-                    Label(package.methodology == .greedy ? "Propose package" : "Execute trade",
-                          systemImage: package.methodology == .greedy ? "paperplane.fill" : "arrow.triangle.2.circlepath")
+                    Label(isCircular ? "Execute trade" : "Propose package",
+                          systemImage: isCircular ? "arrow.triangle.2.circlepath" : "paperplane.fill")
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent).padding(.horizontal).padding(.bottom, 8)
@@ -604,58 +647,71 @@ struct PackageDetailView: View {
         }
     }
 
-    /// The traded dates, used as the sheet title (e.g. "Jul 4 ⇄ Jul 11").
+    /// Your traded dates, used as the sheet title (e.g. "Jul 4 ⇄ Jul 11").
     private var dateTitle: String {
-        let g = myGiveDays.sorted().map { SwapChips.chipDay($0) }
-        let t = myTakeDays.sorted().map { SwapChips.chipDay($0) }
-        if g.isEmpty && t.isEmpty { return "Swap" }
+        let g = gives(myID).sorted().map { SwapChips.chipDay($0) }
+        let t = gets(myID).sorted().map { SwapChips.chipDay($0) }
+        if g.isEmpty && t.isEmpty { return "\(participants.count)-person trade" }
         return g.joined(separator: ", ") + "  ⇄  " + t.joined(separator: ", ")
     }
 
-    /// Both sides spelled out, in each trader's color (matches their calendar).
-    @ViewBuilder private func swapSummary(_ a: PackageAssignment) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            TraderChips(name: "You", color: youColor, giveDays: a.giveDayIDs, getDays: a.takeDayIDs)
-            TraderChips(name: a.name, color: traderColor(sel), giveDays: a.takeDayIDs, getDays: a.giveDayIDs)
+    /// Tappable handoff steps — tap one to jump the calendars to those two people
+    /// and that date. Works for any size (the top calendar isn't always yours).
+    private var stepsList: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(Array(steps.enumerated()), id: \.element.id) { i, s in
+                Button { withAnimation(.snappy) { select(i) } } label: { stepRow(i, s) }
+                    .buttonStyle(.plain)
+            }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal)
     }
 
-    private var isCircular: Bool { package.methodology == .circular }
-    private var loopLegs: [NWayLeg] { package.route?.legs ?? [] }
-    private func days(_ legs: [NWayLeg]) -> Set<String> { Set(legs.map(\.dayID)) }
-
-    /// Each calendar reads in its OWNER's color: border = they trade away (give),
-    /// fill = they take (get). Days come from ALL of that person's legs — including
-    /// handoffs to/from a third party — so a circular loop is fully shown per person.
-    private var youGive: Set<String> { isCircular ? days(loopLegs.filter { $0.fromID == myID }) : myGiveDays }
-    private var youTake: Set<String> { isCircular ? days(loopLegs.filter { $0.toID == myID }) : myTakeDays }
-    private func peerGive(_ p: String) -> Set<String> {
-        isCircular ? days(loopLegs.filter { $0.fromID == p }) : Set(current?.takeDayIDs ?? [])
+    private func stepRow(_ i: Int, _ s: Step) -> some View {
+        let on = i == selectedStep
+        return HStack(spacing: 6) {
+            Text(name(s.fromID)).foregroundStyle(colorFor(s.fromID)).font(.caption.weight(.semibold)).lineLimit(1)
+            Image(systemName: "arrow.right").font(.caption2).foregroundStyle(.secondary)
+            Text(name(s.toID)).foregroundStyle(colorFor(s.toID)).font(.caption.weight(.semibold)).lineLimit(1)
+            Spacer(minLength: 6)
+            Text(SwapChips.chipDay(s.dayID) + (s.desk.map { " · \($0)" } ?? ""))
+                .font(.dsChip).foregroundStyle(.indigo)
+        }
+        .padding(.vertical, 6).padding(.horizontal, 10)
+        .background(on ? Color.indigo.opacity(0.12) : Color(.secondarySystemBackground),
+                    in: RoundedRectangle(cornerRadius: DS.rowRadius))
+        .overlay(RoundedRectangle(cornerRadius: DS.rowRadius).stroke(on ? Color.indigo : .clear, lineWidth: 1.5))
     }
-    private func peerTake(_ p: String) -> Set<String> {
-        isCircular ? days(loopLegs.filter { $0.toID == p }) : Set(current?.giveDayIDs ?? [])
-    }
 
-    @ViewBuilder private func calendars(for off: Int) -> some View {
+    /// The two people in the selected step, stacked (giver above, receiver below),
+    /// each in their own color with the step's day focused.
+    @ViewBuilder private func stepCalendars(for off: Int) -> some View {
         ScrollView {
-            VStack(spacing: 16) {
-                MiniScheduleGrid(title: "You", days: myDays, month: monthAnchor(off),
-                                 accent: youColor,
-                                 giveDays: youGive, takeDays: youTake,
-                                 intent: myIntent,
-                                 topology: { DayIntentStore.shared.topology(forDay: $0) },
-                                 eventName: { TwoWaySheet.eventText($0, topology: DayIntentStore.shared.topology(forDay: $0), includePrivate: true) })
-                if let a = current {
-                    MiniScheduleGrid(title: a.name, days: peerDays[a.workerID] ?? [:], month: monthAnchor(off),
-                                     accent: traderColor(sel),
-                                     giveDays: peerGive(a.workerID), takeDays: peerTake(a.workerID),
-                                     intent: { peerIntent($0, workerID: a.workerID) },
-                                     topology: TwoWaySheet.globalTopology, eventName: TwoWaySheet.globalEvent)
+            VStack(spacing: 10) {
+                if steps.indices.contains(selectedStep) {
+                    let s = steps[selectedStep]
+                    personCalendar(s.fromID, off: off, focus: s.dayID)
+                    Image(systemName: "arrow.down").font(.headline).foregroundStyle(.secondary)
+                    personCalendar(s.toID, off: off, focus: s.dayID)
                 }
             }
         }
+    }
+
+    private func personCalendar(_ id: String, off: Int, focus: String) -> some View {
+        let isMe = id == myID
+        let intentClosure: (String) -> Color? = { isMe ? myIntent($0) : peerIntent($0, workerID: id) }
+        let topoClosure: (String) -> DayTopology = {
+            isMe ? DayIntentStore.shared.topology(forDay: $0) : TwoWaySheet.globalTopology($0)
+        }
+        let eventClosure: (String) -> String? = {
+            isMe ? TwoWaySheet.eventText($0, topology: DayIntentStore.shared.topology(forDay: $0), includePrivate: true)
+                 : TwoWaySheet.globalEvent($0)
+        }
+        return MiniScheduleGrid(
+            title: name(id), days: schedules[id] ?? [:], month: monthAnchor(off),
+            accent: colorFor(id), giveDays: gives(id), takeDays: gets(id), focusDay: focus,
+            intent: intentClosure, topology: topoClosure, eventName: eventClosure)
     }
 
     /// My intents on the "You" calendar (hidden when the overlay toggle is off).
@@ -674,10 +730,10 @@ struct PackageDetailView: View {
     }
 
     private func load() async {
-        myDays = await TradeMatcher.dayLabels(forWorker: myID)
-        for a in assignments where peerDays[a.workerID] == nil {
-            peerDays[a.workerID] = await TradeMatcher.dayLabels(forWorker: a.workerID)
+        for id in participants where schedules[id] == nil {
+            schedules[id] = await TradeMatcher.dayLabels(forWorker: id)
         }
+        select(0)
     }
 }
 
@@ -736,13 +792,14 @@ struct ExecutionConfirmationView: View {
     private func execute() async {
         sending = true
         let myID = SettingsManager.shared.username
-        let chain = route.legs
-            .map { "\(participantName($0.fromID))→\(participantName($0.toID)) [\(prettyDay($0.dayID))]" }
-            .joined(separator: ", ")
+        let legs = route.legs.map {
+            TradeLeg(fromID: $0.fromID, fromName: participantName($0.fromID),
+                     toID: $0.toID, toName: participantName($0.toID), dayID: $0.dayID, desk: $0.desk)
+        }
         for pid in route.participants where pid != myID {
             await messaging.sendRequest(to: pid, toName: participantName(pid),
-                                        note: "Circular trade (\(route.participants.count)-way): \(chain)",
-                                        take: [], give: [])
+                                        note: "\(route.participants.count)-way trade — your part is highlighted.",
+                                        take: [], give: [], chain: legs)
         }
         sending = false
         sent = true

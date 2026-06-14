@@ -35,6 +35,7 @@ struct StatusBadge: View {
         case .declined:  return .red
         case .countered: return .blue
         case .cancelled: return .gray
+        case .message:   return .secondary
         }
     }
 }
@@ -47,6 +48,7 @@ extension TradeRequestStatus {
         case .declined:  return "xmark.circle.fill"
         case .countered: return "arrow.uturn.left.circle.fill"
         case .cancelled: return "slash.circle"
+        case .message:   return "bubble.left.fill"
         }
     }
     var tint: Color {
@@ -56,6 +58,7 @@ extension TradeRequestStatus {
         case .declined:  return .red
         case .countered: return .blue
         case .cancelled: return .gray
+        case .message:   return .secondary
         }
     }
 }
@@ -313,6 +316,16 @@ struct RequestRow: View {
                 }
                 Text(mine ? "You proposed a swap" : "Proposed a swap with you")
                     .font(.caption).foregroundStyle(.secondary)
+                if let chain = request.chain, !chain.isEmpty {
+                    Label("\(chain.count + 1)-way trade · tap to view", systemImage: "arrow.triangle.2.circlepath")
+                        .font(.caption2.weight(.semibold)).foregroundStyle(.indigo)
+                } else if !(request.giveDayIDs.isEmpty && request.takeDayIDs.isEmpty) {
+                    // Your side of the deal, in the same give/get language as the cards.
+                    TraderChips(name: "You", color: BrickPalette.mineScheme,
+                                giveDays: mine ? request.giveDayIDs : request.takeDayIDs,
+                                getDays: mine ? request.takeDayIDs : request.giveDayIDs,
+                                maxChips: 3)
+                }
                 if !request.note.isEmpty {
                     mdText(request.note).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                 }
@@ -337,6 +350,7 @@ struct ThreadView: View {
     let request: TradeRequest
     private var store = MessagingStore.shared
     @State private var replyNote = ""
+    @State private var chatDraft = ""
     @State private var ecbSelectedDays: Set<String> = []
     @State private var staleDays: Set<String> = []
     @State private var otherProfile: TradeProfile?
@@ -357,14 +371,27 @@ struct ThreadView: View {
                         .font(.subheadline).foregroundStyle(.orange)
                 }
             }
-            Section("Proposal") {
-                LabeledContent("From", value: request.fromName)
-                LabeledContent("To", value: request.toName)
-                if !request.takeDayIDs.isEmpty {
-                    leg("\(request.fromName) takes", DayFmt.list(request.takeDayIDs))
+            Section(request.chain != nil ? "\((request.chain?.count ?? 0) + 1)-way trade" : "Proposal") {
+                if let chain = request.chain, !chain.isEmpty {
+                    // Multi-person loop — the full chain of handoffs (your legs in blue).
+                    HandoffChain(chain: chain)
+                } else {
+                    // 1-to-1 / one-way: each party in their color, border = trades
+                    // away, fill = takes (same language as the trade cards).
+                    let fromColor = request.fromID == myID ? BrickPalette.mineScheme : BrickPalette.peerScheme
+                    let toColor   = request.toID == myID ? BrickPalette.mineScheme : BrickPalette.peerScheme
+                    let fromLabel = request.fromID == myID ? "You" : request.fromName
+                    let toLabel   = request.toID == myID ? "You" : request.toName
+                    TraderChips(name: fromLabel, color: fromColor,
+                                giveDays: request.giveDayIDs, getDays: request.takeDayIDs)
+                    if !(request.takeDayIDs.isEmpty && request.giveDayIDs.isEmpty) {
+                        TraderChips(name: toLabel, color: toColor,
+                                    giveDays: request.takeDayIDs, getDays: request.giveDayIDs)
+                    }
                 }
-                if !request.giveDayIDs.isEmpty {
-                    leg("\(request.toName) takes", DayFmt.list(request.giveDayIDs))
+                if request.isECB, let ecb = request.ecb {
+                    Label("\(ecb) ECB offered", systemImage: "star.circle.fill")
+                        .font(.subheadline.weight(.semibold)).foregroundStyle(.orange)
                 }
                 if !request.note.isEmpty {
                     Text(request.note).font(.subheadline)
@@ -378,14 +405,21 @@ struct ThreadView: View {
                 }
             }
 
-            Section("Audit trail") {
+            Section("Conversation") {
                 auditRow(icon: "paperplane.fill", tint: .blue,
                          who: request.fromName, what: "proposed this trade", when: request.createdAt,
                          note: request.note)
                 ForEach(store.responses(for: request.id).sorted { $0.createdAt < $1.createdAt }) { r in
-                    auditRow(icon: r.statusValue.icon, tint: r.statusValue.tint,
-                             who: r.responderID == myID ? "You" : r.responderName,
-                             what: r.statusValue.label.lowercased(), when: r.createdAt, note: r.note)
+                    if r.statusValue == .message {
+                        // Free-form chat — render as a message, not an audit event.
+                        SlackMessageRow(name: r.responderID == myID ? "You" : r.responderName,
+                                        authorID: r.responderID, timestamp: r.createdAt, message: r.note,
+                                        avatarSize: 26) { EmptyView() }
+                    } else {
+                        auditRow(icon: r.statusValue.icon, tint: r.statusValue.tint,
+                                 who: r.responderID == myID ? "You" : r.responderName,
+                                 what: r.statusValue.label.lowercased(), when: r.createdAt, note: r.note)
+                    }
                 }
             }
 
@@ -465,6 +499,14 @@ struct ThreadView: View {
         }
         .navigationTitle("Swap with \(isIncoming ? request.fromName : request.toName)")
         .navigationBarTitleDisplayMode(.inline)
+        // Chat is always available — talk it out regardless of accept/decline state.
+        .safeAreaInset(edge: .bottom) {
+            SlackComposer(placeholder: "Message \(isIncoming ? request.fromName : request.toName)",
+                          text: $chatDraft, showFormatBar: false) {
+                let text = chatDraft; chatDraft = ""
+                Task { await store.postMessage(to: request, text: text) }
+            }
+        }
         .task {
             staleDays = await TradeMatcher.staleDays(
                 fromID: request.fromID, toID: request.toID,
@@ -491,13 +533,6 @@ struct ThreadView: View {
             }
         }
         .padding(.vertical, 2)
-    }
-
-    private func leg(_ title: String, _ value: String) -> some View {
-        VStack(alignment: .leading, spacing: 1) {
-            Text(title).font(.caption).foregroundStyle(.secondary)
-            Text(value).font(.subheadline)
-        }
     }
 
     /// The sender posted an "ECB CONFIRMED" response → they're submitting the form.

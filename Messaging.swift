@@ -52,6 +52,7 @@ struct HiddenItem: Sendable, Codable, Identifiable, Hashable {
 
 enum TradeRequestStatus: String, Codable, Sendable, CaseIterable {
     case pending, accepted, declined, countered, cancelled
+    case message   // a plain chat message — does NOT change the trade's accept/decline state
 
     var label: String {
         switch self {
@@ -60,6 +61,7 @@ enum TradeRequestStatus: String, Codable, Sendable, CaseIterable {
         case .declined:  return "Declined"
         case .countered: return "Counter-offer"
         case .cancelled: return "Cancelled"
+        case .message:   return "Message"
         }
     }
 }
@@ -78,10 +80,22 @@ struct TradeRequest: Sendable, Codable, Identifiable, Hashable {
     let expiresAt: Date
     var ecb: Int? = nil        // ECB points offered for a one-way (ECB) trade
     var offerID: String? = nil // shared across the broadcast (first accepter wins)
+    var chain: [TradeLeg]? = nil // present for multi-person (circular) trades: the full loop
 
     var isExpired: Bool { expiresAt < Date() }
     /// A one-way ECB offer = sender gives days, takes nothing back, offers points.
     var isECB: Bool { ecb != nil && takeDayIDs.isEmpty }
+}
+
+/// One handoff in a multi-person trade — carried in a request so the inbox can show
+/// the whole loop (who hands which day to whom), names included for offline display.
+struct TradeLeg: Sendable, Codable, Hashable {
+    let fromID: String
+    let fromName: String
+    let toID: String
+    let toName: String
+    let dayID: String
+    var desk: String? = nil
 }
 
 /// A reply to a `TradeRequest`, authored by whoever is responding.
@@ -303,14 +317,14 @@ final class MessagingStore {
 
     func sendRequest(to toID: String, toName: String, note: String,
                      take: [String], give: [String], daysValid: Int = 21,
-                     ecb: Int? = nil, offerID: String? = nil) async {
+                     ecb: Int? = nil, offerID: String? = nil, chain: [TradeLeg]? = nil) async {
         let now = Date()
         let req = TradeRequest(
             id: UUID().uuidString, fromID: myID, fromName: myName,
             toID: toID, toName: toName, note: note,
             takeDayIDs: take, giveDayIDs: give, createdAt: now,
             expiresAt: Calendar.current.date(byAdding: .day, value: daysValid, to: now) ?? now,
-            ecb: ecb, offerID: offerID)
+            ecb: ecb, offerID: offerID, chain: chain)
         await service.sendRequest(req)
         requests = ([req] + requests.filter { $0.id != req.id })
             .filter { !$0.isExpired }.sorted { $0.createdAt > $1.createdAt }
@@ -337,9 +351,17 @@ final class MessagingStore {
         responses.filter { $0.requestID == requestID }
     }
 
-    /// The latest status of a request (from its newest response, else pending).
+    /// The latest decision on a request (newest non-chat response, else pending).
+    /// Plain chat messages don't change accept/decline state.
     func status(of request: TradeRequest) -> TradeRequestStatus {
-        responses(for: request.id).last?.statusValue ?? .pending
+        responses(for: request.id).last { $0.statusValue != .message }?.statusValue ?? .pending
+    }
+
+    /// Post a free-form chat message on a request thread (either party, anytime).
+    func postMessage(to request: TradeRequest, text: String) async {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty else { return }
+        await respond(to: request, status: .message, note: t)
     }
 
     var incoming: [TradeRequest] { requests.filter { $0.toID == myID } }

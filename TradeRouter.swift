@@ -58,7 +58,12 @@ struct TradePackage: Sendable, Hashable, Identifiable {
     let route: NWayRoute?               // present for circular (drives Execute)
     var urgency: Int = 0                // max reason-urgency over the days covered
     var isOptimal: Bool = false         // true = provably fewest people; false = fast heuristic
-    var peopleCount: Int { Set(assignments.map(\.workerID)).count }
+    // Total counterparties: the whole loop for circular (assignments only capture
+    // people who trade directly with you), else the unique assignees.
+    var peopleCount: Int {
+        if let route { return max(0, route.participants.count - 1) }
+        return Set(assignments.map(\.workerID)).count
+    }
     var allDayIDs: [String] { assignments.flatMap(\.dayIDs) }
 }
 
@@ -174,58 +179,66 @@ enum TradeRouter {
             return true
         }
 
-        // OPTIMAL tier: provably fewest counterparties (branch-and-bound + min-cost
-        // flow), rejecting break-fragmenting assignments. nil → greedy fallback.
-        let cands = peerSwaps.map {
-            OptimalMatcher.Cand(id: $0.id, name: $0.name, canTake: Set($0.canTake), givesBack: $0.givesBack)
-        }
-        if let opt = OptimalMatcher.minPeopleReciprocal(giveDayIDs: Array(giveDayIDs), peers: cands, contiguous: contiguityOK) {
-            let a = opt.map { PackageAssignment(workerID: $0.id, name: $0.name,
-                                                giveDayIDs: $0.giveDayIDs, takeDayIDs: $0.takeDayIDs) }
-            result.append(TradePackage(
-                id: "optimal-" + a.map(\.workerID).sorted().joined(separator: ","),
-                methodology: .greedy, assignments: a, route: nil,
-                urgency: urgency(of: a.flatMap(\.giveDayIDs)), isOptimal: true))
+        // We aim to surface a fuller SET of real options (target ~5) — but only
+        // FEASIBLE ones; an empty pool can't be padded with fake trades.
+        let targetCount = 5
+        let giveAll = Array(giveDayIDs)
+        func asOpt(_ a: [PackageAssignment]) -> [OptimalMatcher.Assignment] {
+            a.map { OptimalMatcher.Assignment(id: $0.workerID, name: $0.name,
+                                              giveDayIDs: $0.giveDayIDs, takeDayIDs: $0.takeDayIDs) }
         }
 
-        // Greedy balanced cover (fallback / alternative): repeatedly take the peer
-        // who reciprocally clears the most remaining give-days, until fully covered.
-        var uncovered = giveDayIDs
-        var usedBack = Set<String>()
-        var assigns: [PackageAssignment] = []
-        var pool = peerSwaps
-        while result.isEmpty, !uncovered.isEmpty {
-            let best = pool.compactMap { ps -> (PeerSwap, [String], [String])? in
-                let gives = ps.canTake.filter { uncovered.contains($0) }
-                let backs = ps.givesBack.filter { !usedBack.contains($0) }
-                let k = min(gives.count, backs.count)
-                guard k > 0 else { return nil }
-                return (ps, Array(gives.prefix(k)), Array(backs.prefix(k)))
-            }.max { l, r in
-                // 1) clears the most give-days, then 2) clears the most-urgent days
-                // (milestones / high-demand / reasons), then 3) seniority — lower
-                // employee number = more senior (AA numbers are seniority-ordered).
-                if l.1.count != r.1.count { return l.1.count < r.1.count }
-                let lu = urgencyWeight(l.1), ru = urgencyWeight(r.1)
-                if lu != ru { return lu < ru }
-                return l.0.id > r.0.id
+        // 1) Single-person full swaps — EVERY peer who can reciprocally cover all
+        //    your give-days alone is its own clean 1-person option. This is the main
+        //    source of variety (you often have several people who could each do it).
+        for ps in peerSwaps where Set(ps.canTake).isSuperset(of: giveDayIDs) && ps.givesBack.count >= giveAll.count {
+            let a = [PackageAssignment(workerID: ps.id, name: ps.name,
+                                       giveDayIDs: giveAll, takeDayIDs: Array(ps.givesBack.prefix(giveAll.count)))]
+            if contiguityOK(asOpt(a)) {
+                result.append(TradePackage(id: "solo-" + ps.id, methodology: .greedy, assignments: a,
+                                           route: nil, urgency: urgency(of: giveAll), isOptimal: true))
             }
-            guard let (ps, gives, takes) = best else { break }
-            assigns.append(PackageAssignment(workerID: ps.id, name: ps.name,
-                                             giveDayIDs: gives, takeDayIDs: takes))
-            uncovered.subtract(gives)
-            usedBack.formUnion(takes)
-            pool.removeAll { $0.id == ps.id }
         }
-        // Emit the greedy package ONLY if it passes the same no-split contiguity
-        // check the optimal path uses — so a break-fragmenting assignment is never
-        // proposed even on instances too large for the optimizer. Better to offer
-        // nothing than a package that splits someone's break.
-        if result.isEmpty, uncovered.isEmpty, !assigns.isEmpty {
-            let asOpt = assigns.map { OptimalMatcher.Assignment(
-                id: $0.workerID, name: $0.name,
-                giveDayIDs: $0.giveDayIDs, takeDayIDs: $0.takeDayIDs) }
-            if contiguityOK(asOpt) {
+
+        // 2) If nobody can do it alone, find the fewest-people multi-person cover
+        //    (optimal), else a greedy balanced cover.
+        if result.isEmpty {
+            let cands = peerSwaps.map {
+                OptimalMatcher.Cand(id: $0.id, name: $0.name, canTake: Set($0.canTake), givesBack: $0.givesBack)
+            }
+            if let opt = OptimalMatcher.minPeopleReciprocal(giveDayIDs: giveAll, peers: cands, contiguous: contiguityOK) {
+                let a = opt.map { PackageAssignment(workerID: $0.id, name: $0.name,
+                                                    giveDayIDs: $0.giveDayIDs, takeDayIDs: $0.takeDayIDs) }
+                result.append(TradePackage(
+                    id: "optimal-" + a.map(\.workerID).sorted().joined(separator: ","),
+                    methodology: .greedy, assignments: a, route: nil,
+                    urgency: urgency(of: a.flatMap(\.giveDayIDs)), isOptimal: true))
+            }
+            var uncovered = giveDayIDs
+            var usedBack = Set<String>()
+            var assigns: [PackageAssignment] = []
+            var pool = peerSwaps
+            while result.isEmpty, !uncovered.isEmpty {
+                let best = pool.compactMap { ps -> (PeerSwap, [String], [String])? in
+                    let gives = ps.canTake.filter { uncovered.contains($0) }
+                    let backs = ps.givesBack.filter { !usedBack.contains($0) }
+                    let k = min(gives.count, backs.count)
+                    guard k > 0 else { return nil }
+                    return (ps, Array(gives.prefix(k)), Array(backs.prefix(k)))
+                }.max { l, r in
+                    if l.1.count != r.1.count { return l.1.count < r.1.count }
+                    let lu = urgencyWeight(l.1), ru = urgencyWeight(r.1)
+                    if lu != ru { return lu < ru }
+                    return l.0.id > r.0.id
+                }
+                guard let (ps, gives, takes) = best else { break }
+                assigns.append(PackageAssignment(workerID: ps.id, name: ps.name,
+                                                 giveDayIDs: gives, takeDayIDs: takes))
+                uncovered.subtract(gives)
+                usedBack.formUnion(takes)
+                pool.removeAll { $0.id == ps.id }
+            }
+            if result.isEmpty, uncovered.isEmpty, !assigns.isEmpty, contiguityOK(asOpt(assigns)) {
                 result.append(TradePackage(
                     id: "recip-" + assigns.map(\.workerID).sorted().joined(separator: ","),
                     methodology: .greedy, assignments: assigns, route: nil,
@@ -233,11 +246,10 @@ enum TradeRouter {
             }
         }
 
-        // N-way circular fallback when pairwise can't fully reciprocate (or to
-        // offer a smaller-headcount loop). The loop is inherently balanced.
-        if result.first?.peopleCount ?? Int.max > 1 || result.isEmpty {
+        // 3) Circular loops — add variety until we reach the target (or run out).
+        if result.count < targetCount {
             let loops = await nWayRoutes(seedShifts: giveShifts, excluding: selfID)
-            for loop in loops.prefix(6) {
+            for loop in loops.prefix(targetCount * 2) {
                 var gv: [String: [String]] = [:]   // peer → my days they cover
                 var tk: [String: [String]] = [:]   // peer → their days I cover
                 for leg in loop.legs {
