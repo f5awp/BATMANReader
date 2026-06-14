@@ -44,6 +44,7 @@ struct HomeView: View {
     @State private var importResult: String?
     @State private var importError: String?
     @State private var offBrush: ShiftAvailabilityType?   // nil = generic "want to work"
+    @State private var workBrush: WorkingIntentState = .dontWantToWork
     @State private var pendingConflict: PendingConflict?
     @State private var showKey = false
 
@@ -59,7 +60,7 @@ struct HomeView: View {
                     VisibilityToolbar(layers: $layers)
                 }
                 .padding(.horizontal).padding(.top, 2)
-                MarkIntentsToolbar(mode: $mode, offBrush: $offBrush)
+                MarkIntentsToolbar(mode: $mode, offBrush: $offBrush, workBrush: $workBrush)
                 Divider()
 
                 if store.shifts.isEmpty {
@@ -220,17 +221,12 @@ struct HomeView: View {
             editTarget = DayEditTarget(dayID: day, isOff: isOff)
         case .workingShifts:
             guard !isOff else { return }
-            let current = intents.workingIntent(forDay: day)
-            if let current, current != .dontWantToWork {
-                pendingConflict = PendingConflict(dayID: day, existing: current.label) {
-                    intents.setWorkingIntent(.dontWantToWork, forDay: day)
-                }
-                return
-            }
-            intents.setWorkingIntent(current == .dontWantToWork ? nil : .dontWantToWork, forDay: day)
+            applyWorking(workBrush, on: day)
         case .daysOff:
             guard isOff else { return }
             if let brush = offBrush {                       // AM/PM/MID pill brush
+                // Only legal pickup types can be set.
+                guard Legality.legalTypes(forDayID: day, shifts: store.shifts).contains(brush) else { return }
                 intents.toggleAvailability(brush, forDay: day)
                 return
             }
@@ -243,6 +239,20 @@ struct HomeView: View {
             }
             intents.setOffIntent(current == .wantToWork ? nil : .wantToWork, forDay: day)
         }
+    }
+
+    /// Apply the selected working-shift brush to a day (toggle off if same;
+    /// confirm if it would overwrite a different intent).
+    private func applyWorking(_ brush: WorkingIntentState, on day: String) {
+        let current = intents.workingIntent(forDay: day)
+        if current == brush { intents.setWorkingIntent(nil, forDay: day); return }
+        if let current {
+            pendingConflict = PendingConflict(dayID: day, existing: current.label) {
+                intents.setWorkingIntent(brush, forDay: day)
+            }
+            return
+        }
+        intents.setWorkingIntent(brush, forDay: day)
     }
 
     /// On appear: clear intent for any date whose worked/off status flipped since
@@ -261,6 +271,7 @@ struct HomeView: View {
 struct MarkIntentsToolbar: View {
     @Binding var mode: IntentMode
     @Binding var offBrush: ShiftAvailabilityType?
+    @Binding var workBrush: WorkingIntentState
 
     var body: some View {
         VStack(spacing: 8) {
@@ -270,36 +281,42 @@ struct MarkIntentsToolbar: View {
             .pickerStyle(.segmented)
             .padding(.horizontal)
 
-            if mode != .off {
-                legend
-                    .transition(.move(edge: .top).combined(with: .opacity))
-            }
-            if mode == .daysOff {
-                availabilityPills
-                    .transition(.move(edge: .top).combined(with: .opacity))
+            if mode == .workingShifts {
+                workingPills.transition(.move(edge: .top).combined(with: .opacity))
+            } else if mode == .daysOff {
+                availabilityPills.transition(.move(edge: .top).combined(with: .opacity))
             }
         }
         .padding(.vertical, 8)
         .background(.bar)
     }
 
-    @ViewBuilder private var legend: some View {
-        HStack(spacing: 14) {
-            if mode == .workingShifts {
-                swatch(BrickPalette.change, "Trade away")
-                swatch(BrickPalette.critical, "Keep")
-            } else {
-                swatch(BrickPalette.availableOff, "Want to work")
-                swatch(BrickPalette.lockedOff, "Must be off")
-            }
+    /// Working-shift intent brush: Trade away / Keep / Want to work.
+    private var workingPills: some View {
+        HStack(spacing: 6) {
+            brushPill(.dontWantToWork, "Trade away", BrickPalette.change)
+            brushPill(.mustWork, "Keep", BrickPalette.critical)
+            brushPill(.wantToWork, "Want to work", BrickPalette.clear)
             Spacer()
-            Text("Tap to set · long-press for options")
-                .font(.caption2).foregroundStyle(.secondary)
         }
         .padding(.horizontal)
     }
 
-    /// AM/PM/MID "brush" — pick one and tap off days to set that availability.
+    private func brushPill(_ state: WorkingIntentState, _ label: String, _ color: Color) -> some View {
+        let on = workBrush == state
+        return Button { workBrush = state } label: {
+            HStack(spacing: 4) {
+                Circle().fill(color).frame(width: 9, height: 9)
+                Text(label).font(.caption2.weight(on ? .bold : .regular))
+            }
+            .padding(.horizontal, 10).padding(.vertical, 5)
+            .background(on ? color.opacity(0.22) : Color(.tertiarySystemFill), in: Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// AM/PM/MID availability brush — pick one and tap off days. Deselecting every
+    /// type on a day marks it unavailable (red ⊗).
     private var availabilityPills: some View {
         HStack(spacing: 6) {
             Text("Pick up:").font(.caption2).foregroundStyle(.secondary)
@@ -311,25 +328,16 @@ struct MarkIntentsToolbar: View {
                     Text(type.rawValue)
                         .font(.caption2.weight(.bold))
                         .padding(.horizontal, 10).padding(.vertical, 4)
-                        .background(on ? BrickPalette.clear : Color(.tertiarySystemFill),
-                                    in: Capsule())
+                        .background(on ? BrickPalette.availableOff : Color(.tertiarySystemFill), in: Capsule())
                         .foregroundStyle(on ? .white : .primary)
                 }
                 .buttonStyle(.plain)
             }
             Spacer()
-            if offBrush != nil {
-                Text("Tap off days to set").font(.caption2).foregroundStyle(.secondary)
-            }
+            Text(offBrush == nil ? "Pick a type, tap off days" : "Tap off days to set")
+                .font(.caption2).foregroundStyle(.secondary)
         }
         .padding(.horizontal)
-    }
-
-    private func swatch(_ color: Color, _ label: String) -> some View {
-        HStack(spacing: 4) {
-            Circle().fill(color).frame(width: 10, height: 10)
-            Text(label).font(.caption2)
-        }
     }
 }
 

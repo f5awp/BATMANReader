@@ -5,6 +5,80 @@
 
 import SwiftUI
 
+// MARK: - Off-day legality
+
+/// Which shift types you could LEGALLY pick up on an off day, given the 8-hour
+/// rest rule versus the shifts you work on the adjacent days.
+enum Legality {
+    private static let isoF: DateFormatter = {
+        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; return f
+    }()
+    private static let minRest: TimeInterval = 8 * 3600
+    private static let shiftLen: TimeInterval = 9 * 3600
+
+    static func legalTypes(forDayID dayID: String, shifts: [Shift]) -> Set<ShiftAvailabilityType> {
+        let cal = Calendar.current
+        guard let day = isoF.date(from: dayID).map({ cal.startOfDay(for: $0) }) else { return [] }
+        let byDay = Dictionary(shifts.map { (isoF.string(from: $0.date), $0) }, uniquingKeysWith: { a, _ in a })
+        func shift(_ offset: Int) -> Shift? {
+            guard let d = cal.date(byAdding: .day, value: offset, to: day) else { return nil }
+            return byDay[isoF.string(from: d)]
+        }
+        let prev = shift(-1), next = shift(1)
+
+        var legal = Set<ShiftAvailabilityType>()
+        for t in ShiftAvailabilityType.allCases {
+            guard let coverStart = cal.date(byAdding: .hour, value: t.startHour, to: day) else { continue }
+            let coverEnd = coverStart.addingTimeInterval(shiftLen)
+            var ok = true
+            if let p = prev, !p.isOff {
+                let pStart = cal.date(byAdding: .hour, value: p.startHour, to: cal.startOfDay(for: p.date)) ?? p.date
+                if coverStart.timeIntervalSince(pStart.addingTimeInterval(shiftLen)) < minRest { ok = false }
+            }
+            if let n = next, !n.isOff {
+                let nStart = cal.date(byAdding: .hour, value: n.startHour, to: cal.startOfDay(for: n.date)) ?? n.date
+                if nStart.timeIntervalSince(coverEnd) < minRest { ok = false }
+            }
+            if ok { legal.insert(t) }
+        }
+        return legal
+    }
+}
+
+// MARK: - Tappable, color-coded note marker
+
+/// A note icon on a calendar day — blue = public, orange = private — that shows
+/// the note text in a popover when tapped.
+struct NoteMarker: View {
+    let note: DayNote
+    @State private var show = false
+
+    var body: some View {
+        Button { show = true } label: {
+            Image(systemName: note.isPrivate ? "lock.doc.fill" : "note.text")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(note.isPrivate ? BrickPalette.warning : BrickPalette.info)
+        }
+        .buttonStyle(.plain)
+        .popover(isPresented: $show) {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 5) {
+                    Image(systemName: note.isPrivate ? "lock.fill" : "globe")
+                    Text(note.isPrivate ? "Private note" : "Public note").font(.caption.bold())
+                }
+                .foregroundStyle(note.isPrivate ? BrickPalette.warning : BrickPalette.info)
+                Text(note.message).font(.subheadline)
+                if let r = note.reason {
+                    Text("Reason: \(r.label)").font(.caption2).foregroundStyle(.secondary)
+                }
+            }
+            .padding(14)
+            .frame(minWidth: 180)
+            .presentationCompactAdaptation(.popover)
+        }
+    }
+}
+
 // MARK: - Interactive month calendar with intent overlays
 
 struct IntentCalendarView: View {
@@ -140,24 +214,40 @@ struct IntentCalendarView: View {
                 Text(shift.shiftShortLabel)
                     .font(.system(size: 11, weight: .heavy)).lineLimit(1).minimumScaleFactor(0.6)
             }
-        } else if isOff, layers.availability, !intents.availability(forDay: dayID).isEmpty {
-            HStack(spacing: 1) {
-                ForEach(ShiftAvailabilityType.allCases.filter { intents.availability(forDay: dayID).contains($0) }, id: \.self) { t in
-                    Text(String(t.rawValue.prefix(1)))
-                        .font(.system(size: 9, weight: .black))
-                        .foregroundStyle(BrickPalette.clear)
-                }
-            }
+        } else if isOff, layers.availability {
+            offAvailability(dayID)
         } else {
             Color.clear.frame(height: 14)
         }
     }
 
+    /// Off-day availability: legal pickup types (faint), your chosen ones solid;
+    /// a red ⊗ when you've marked yourself unavailable (deselected everything).
+    @ViewBuilder private func offAvailability(_ dayID: String) -> some View {
+        if intents.offIntent(forDay: dayID) == .mustBeOff {
+            Image(systemName: "xmark.circle.fill")
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(BrickPalette.critical)
+        } else {
+            let legal = Legality.legalTypes(forDayID: dayID, shifts: shifts)
+            let marked = intents.availability(forDay: dayID)
+            if legal.isEmpty {
+                Color.clear.frame(height: 14)
+            } else {
+                HStack(spacing: 1) {
+                    ForEach(ShiftAvailabilityType.allCases.filter { legal.contains($0) }, id: \.self) { t in
+                        Text(String(t.rawValue.prefix(1)))
+                            .font(.system(size: 9, weight: .black))
+                            .foregroundStyle(marked.contains(t) ? BrickPalette.availableOff : Color.secondary.opacity(0.35))
+                    }
+                }
+            }
+        }
+    }
+
     @ViewBuilder private func noteDot(_ dayID: String) -> some View {
-        if layers.notes, intents.note(forDay: dayID) != nil {
-            Image(systemName: "note.text")
-                .font(.system(size: 9, weight: .bold))
-                .foregroundStyle(BrickPalette.info)
+        if layers.notes, let note = intents.note(forDay: dayID) {
+            NoteMarker(note: note)
         } else {
             Color.clear.frame(height: 9)
         }
@@ -187,7 +277,8 @@ struct IntentCalendarView: View {
             guard let s = intents.workingIntent(forDay: dayID) else { return nil }
             return s.brickColor.opacity(0.62)
         } else {
-            guard let s = intents.offIntent(forDay: dayID) else { return nil }
+            // must-be-off is shown by the red ⊗ marker, not a fill.
+            guard let s = intents.offIntent(forDay: dayID), s != .mustBeOff else { return nil }
             return s.brickColor.opacity(0.58)
         }
     }
@@ -195,14 +286,12 @@ struct IntentCalendarView: View {
     private func borderColor(dayID: String, isToday: Bool, isOff: Bool, hasShift: Bool) -> Color {
         if flashDays.contains(dayID) { return BrickPalette.warning }
         if isToday { return BrickPalette.warning }
-        if hasShift, isOff, intents.offIntent(forDay: dayID) == .mustBeOff { return BrickPalette.lockedOff }
         let topo = intents.topology(forDay: dayID)
         if topo != .standard { return topo.accent }
         return .clear
     }
 
     private func borderWidth(dayID: String, isOff: Bool) -> CGFloat {
-        if isOff, intents.offIntent(forDay: dayID) == .mustBeOff { return 1.5 }
         if intents.topology(forDay: dayID) != .standard { return 1.5 }
         return 0
     }

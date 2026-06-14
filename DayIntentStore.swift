@@ -96,8 +96,9 @@ final class DayIntentStore {
         var set = offAvailability[dayID] ?? []
         if set.contains(type) { set.remove(type) } else { set.insert(type) }
         if set.isEmpty {
+            // Deselecting every shift type marks the day unavailable (red ⊗).
             offAvailability[dayID] = nil
-            if offIntent(forDay: dayID) == .wantToWork { offIntents[dayID] = nil }
+            offIntents[dayID] = .mustBeOff
         } else {
             offAvailability[dayID] = set
             offIntents[dayID] = .wantToWork
