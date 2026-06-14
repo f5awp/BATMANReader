@@ -10,10 +10,12 @@ struct TradeByIntentsFeed: View {
 
     @Binding var whatIf: Bool
 
+    @State private var packages: [TradePackage] = []
     @State private var tiers: [(tier: SolutionTier, routes: [NWayRoute])] = []
     @State private var loading = true
     @State private var twoWayCandidate: PlanCandidate?
     @State private var execRoute: NWayRoute?
+    @State private var sentMessage: String?
 
     var body: some View {
         ScrollView {
@@ -23,6 +25,19 @@ struct TradeByIntentsFeed: View {
                           systemImage: "wand.and.stars")
                         .font(.caption).foregroundStyle(.purple)
                         .padding(.horizontal).padding(.top, 8)
+                }
+
+                if !packages.isEmpty {
+                    Text("Packages").font(.headline).padding(.horizontal).padding(.top, 4)
+                    Text("Cover all your give-away days — fewest people first.")
+                        .font(.caption).foregroundStyle(.secondary).padding(.horizontal)
+                    ForEach(packages) { pkg in
+                        PackageCard(package: pkg,
+                                    onPropose: { Task { await propose(pkg) } },
+                                    onExecute: { if let r = pkg.route { execRoute = r } })
+                    }
+                    Divider().padding(.vertical, 6)
+                    Text("Individual swaps").font(.headline).padding(.horizontal)
                 }
 
                 if loading {
@@ -63,13 +78,31 @@ struct TradeByIntentsFeed: View {
         .sheet(item: $execRoute) { ExecutionConfirmationView(route: $0) }
         .task { await reload() }
         .onChange(of: whatIf) { _, _ in Task { await reload() } }
+        .alert("Package sent", isPresented: Binding(
+            get: { sentMessage != nil }, set: { if !$0 { sentMessage = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: { Text(sentMessage ?? "") }
     }
 
     private func reload() async {
         loading = true
         await TradeProfileStore.shared.refreshOthers()
+        let myID = SettingsManager.shared.username
+        packages = await TradeRouter.packages(excluding: myID)
         tiers = await TradeRouter.tieredSolutions(isWhatIfModeActive: whatIf)
         loading = false
+    }
+
+    /// Greedy package: send a cover request to each assigned dispatcher.
+    private func propose(_ pkg: TradePackage) async {
+        for a in pkg.assignments {
+            await MessagingStore.shared.sendRequest(
+                to: a.workerID, toName: a.name,
+                note: "Please cover my shift(s): \(a.dayIDs.map { prettyDay($0) }.joined(separator: ", "))",
+                take: [], give: a.dayIDs)
+        }
+        WidgetData.update()
+        sentMessage = "Sent to ^[\(pkg.assignments.count) dispatcher](inflect: true). Track replies in your Inbox."
     }
 
     /// 2-participant routes reopen the rich two-way sheet (it re-explores by ID).
@@ -185,6 +218,52 @@ struct RouteCard: View {
                 }
             }
         }
+    }
+}
+
+// MARK: - Package card (one card per deal)
+
+struct PackageCard: View {
+    let package: TradePackage
+    let onPropose: () -> Void
+    let onExecute: () -> Void
+
+    private var tagColor: Color { package.methodology == .greedy ? BrickPalette.clear : .indigo }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Text(package.methodology.rawValue)
+                    .font(.caption2.bold())
+                    .padding(.horizontal, 8).padding(.vertical, 3)
+                    .background(tagColor.opacity(0.20), in: Capsule())
+                    .foregroundStyle(tagColor)
+                Text("^[\(package.peopleCount) person](inflect: true) · ^[\(package.allDayIDs.count) day](inflect: true)")
+                    .font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Button(package.methodology == .greedy ? "Propose" : "Execute") {
+                    package.methodology == .greedy ? onPropose() : onExecute()
+                }
+                .buttonStyle(.borderedProminent).controlSize(.small)
+            }
+            ForEach(package.assignments) { a in
+                HStack(alignment: .top, spacing: 8) {
+                    Avatar(name: a.name, id: a.workerID, size: 26)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(a.name).font(.caption.weight(.semibold))
+                        if let s = participantStatus(a.workerID) {
+                            Text(s).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
+                        }
+                        Text("covers " + a.dayIDs.map { prettyDay($0) }.joined(separator: ", "))
+                            .font(.system(size: 11)).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                }
+            }
+        }
+        .padding(12)
+        .background(.bar, in: RoundedRectangle(cornerRadius: 12))
+        .padding(.horizontal)
     }
 }
 

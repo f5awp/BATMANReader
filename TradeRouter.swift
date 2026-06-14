@@ -50,6 +50,32 @@ struct BlockCover: Sendable, Hashable, Identifiable {
     }
 }
 
+// MARK: - Packaged solution (one card per deal)
+
+enum TradeMethodology: String, Sendable {
+    case greedy   = "Fewest people"
+    case circular = "Circular swap"
+}
+
+/// One coverer and the days of yours they'd take.
+struct PackageAssignment: Sendable, Hashable, Identifiable {
+    let workerID: String
+    let name: String
+    let dayIDs: [String]
+    var id: String { workerID }
+}
+
+/// A complete, proposable deal: either a greedy give-away (you → coverers) or a
+/// circular swap loop. Rendered as a single card with one action button.
+struct TradePackage: Sendable, Hashable, Identifiable {
+    let id: String
+    let methodology: TradeMethodology
+    let assignments: [PackageAssignment]
+    let route: NWayRoute?               // present for circular (drives Execute)
+    var peopleCount: Int { Set(assignments.map(\.workerID)).count }
+    var allDayIDs: [String] { assignments.flatMap(\.dayIDs) }
+}
+
 // MARK: - Router
 
 @MainActor
@@ -124,6 +150,49 @@ enum TradeRouter {
                 if $0.uniquePeople != $1.uniquePeople { return $0.uniquePeople < $1.uniquePeople }
                 return $0.coveredDayIDs.count > $1.coveredDayIDs.count
             }
+    }
+
+    // MARK: Packaged solutions (greedy first, circular as a >2-person alternative)
+
+    /// Build proposable packages for the user's give-away days. Greedy "fewest
+    /// people" covers come first; if the best greedy needs >2 coverers, circular
+    /// swap loops are offered alongside (not instead). Sorted fewest-people first.
+    static func packages(excluding selfID: String) async -> [TradePackage] {
+        let (start, end) = horizon
+        let giveShifts = await selfSeekingShifts(myID: selfID, start: start, end: end)
+        guard !giveShifts.isEmpty else { return [] }
+
+        var result: [TradePackage] = []
+
+        // Greedy — primary.
+        let covers = await minimalCover(block: ShiftBlock(shifts: giveShifts), excluding: selfID)
+        for cover in covers {
+            let assigns = cover.assignments.map {
+                PackageAssignment(workerID: $0.workerID, name: $0.name, dayIDs: $0.dayIDs)
+            }
+            result.append(TradePackage(id: "greedy-" + cover.id, methodology: .greedy,
+                                       assignments: assigns, route: nil))
+        }
+
+        // Circular — secondary, only when greedy can't do it in ≤2 people.
+        let bestGreedy = covers.map(\.uniquePeople).min()
+        if bestGreedy == nil || bestGreedy! > 2 {
+            let loops = await nWayRoutes(seedShifts: giveShifts, excluding: selfID)
+            for loop in loops.prefix(8) {
+                var byWorker: [String: [String]] = [:]
+                for leg in loop.legs where leg.toID != selfID { byWorker[leg.toID, default: []].append(leg.dayID) }
+                let assigns = byWorker.map {
+                    PackageAssignment(workerID: $0.key, name: participantName($0.key), dayIDs: $0.value)
+                }
+                result.append(TradePackage(id: "circular-" + loop.id, methodology: .circular,
+                                           assignments: assigns, route: loop))
+            }
+        }
+
+        return result.sorted {
+            if $0.peopleCount != $1.peopleCount { return $0.peopleCount < $1.peopleCount }
+            return $0.methodology == .greedy && $1.methodology == .circular
+        }
     }
 
     // MARK: Tiered two-way solutions (the "Trade by Intents" feed)
