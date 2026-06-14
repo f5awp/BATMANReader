@@ -40,6 +40,10 @@ final class DayIntentStore {
     private(set) var offAvailability: [String: Set<ShiftAvailabilityType>] {
         didSet { persist(offAvailability, Keys.availability) }
     }
+    /// Off days the user customized by hand — the openness shortcut won't overwrite these.
+    private(set) var manualOffDays: Set<String> {
+        didSet { UserDefaults.standard.set(Array(manualOffDays), forKey: Keys.manualOff) }
+    }
 
     // MARK: Derived (drop-in replacement for TradeIntentStore.seekingDayIDs)
 
@@ -57,6 +61,7 @@ final class DayIntentStore {
         topologies      = Self.load(Keys.topology) ?? [:]
         notes           = Self.load(Keys.notes) ?? [:]
         offAvailability = Self.load(Keys.availability) ?? [:]
+        manualOffDays   = Set(UserDefaults.standard.stringArray(forKey: Keys.manualOff) ?? [])
         migrateFromTradeIntentStoreIfNeeded()
     }
 
@@ -78,6 +83,7 @@ final class DayIntentStore {
     }
 
     func setOffIntent(_ state: OffIntentState?, forDay dayID: String) {
+        manualOffDays.insert(dayID)   // hand-edited → preserve from the openness shortcut
         if let state { offIntents[dayID] = state } else { offIntents[dayID] = nil }
     }
 
@@ -93,6 +99,7 @@ final class DayIntentStore {
     /// Toggle one shift type in an off-day's availability. Sets/clears the day's
     /// `.wantToWork` intent to stay consistent with whether any type is selected.
     func toggleAvailability(_ type: ShiftAvailabilityType, forDay dayID: String) {
+        manualOffDays.insert(dayID)   // hand-edited → preserve from the openness shortcut
         var set = offAvailability[dayID] ?? []
         if set.contains(type) { set.remove(type) } else { set.insert(type) }
         if set.isEmpty {
@@ -105,18 +112,83 @@ final class DayIntentStore {
         }
     }
 
+    /// Openness is a SHORTCUT that bulk-sets the per-day availability pills (the
+    /// pills are what matching uses), preserving any day you've hand-edited. It
+    /// NEVER paints "want to work" — openness is about what matching may find, not
+    /// an active desire to work, so the calendar stays NEUTRAL either way:
+    ///   • .all      → mark every legal pickup type; matching accepts any pickup.
+    ///   • .bookends → mark every legal pickup type; matching accepts only pickups
+    ///                 that don't split the break (the NO-SPLIT rule is enforced at
+    ///                 match time in `wouldPickUp`, not by hiding days here).
+    ///   • .none     → every off day unavailable → all matches fail in the engine.
+    /// Only manual per-day edits or Mercenary mode paint "want to work".
+    func applyOpenness(_ level: TradeOpenness, shifts: [Shift]) {
+        let cal = Calendar.current
+        let today = cal.startOfDay(for: Date())
+        let overrides = SettingsManager.shared.opennessOverrides
+
+        for s in shifts where s.isOff && s.date >= today {
+            let dayID = s.id
+            if manualOffDays.contains(dayID) { continue }   // preserve manual edits
+            // A date-range override wins over the base openness for its span.
+            let effective = overrides.first { $0.covers(dayID) }?.openness ?? level
+            switch effective {
+            case .none:
+                offAvailability[dayID] = nil
+                offIntents[dayID] = .mustBeOff
+            case .all, .bookends:
+                let legal = Legality.legalTypes(forDayID: dayID, shifts: shifts)
+                offAvailability[dayID] = legal.isEmpty ? nil : legal
+                offIntents[dayID] = .neutralOpen   // neutral for both .all and .bookends
+            }
+        }
+    }
+
+    /// The future off days whose EFFECTIVE openness (base + range overrides) is
+    /// `.bookends` — published so peers' matching can gate those days per-day.
+    func bookendGatedDays(base: TradeOpenness, shifts: [Shift]) -> [String] {
+        let cal = Calendar.current
+        let today = cal.startOfDay(for: Date())
+        let overrides = SettingsManager.shared.opennessOverrides
+        return shifts.filter { $0.isOff && $0.date >= today }.compactMap { s in
+            let eff = overrides.first { $0.covers(s.id) }?.openness ?? base
+            return eff == .bookends ? s.id : nil
+        }
+    }
+
+    /// Mercenary mode is an aggressive override: when ON, paint every future off day
+    /// "want to work" with all legal pills (you'll take anything — bookends don't
+    /// matter; the match engine bypasses the soft gates entirely). When OFF, revert
+    /// to the standard openness shortcut. Hand-edited days are preserved either way.
+    func applyMercenary(_ on: Bool, openness level: TradeOpenness, shifts: [Shift]) {
+        guard on else { applyOpenness(level, shifts: shifts); return }
+        let cal = Calendar.current
+        let today = cal.startOfDay(for: Date())
+        for s in shifts where s.isOff && s.date >= today {
+            let dayID = s.id
+            if manualOffDays.contains(dayID) { continue }   // preserve manual edits
+            let legal = Legality.legalTypes(forDayID: dayID, shifts: shifts)
+            offAvailability[dayID] = legal.isEmpty ? nil : legal
+            offIntents[dayID] = legal.isEmpty ? .neutralOpen : .wantToWork
+        }
+    }
+
     /// Removes the worked/off intent for a date (keeps topology + note).
     func clearIntent(forDay dayID: String) {
         workingIntents[dayID] = nil
         offIntents[dayID] = nil
         offAvailability[dayID] = nil
+        manualOffDays.remove(dayID)   // back under the openness shortcut's control
     }
 
     // MARK: Reads
 
     func workingIntent(forDay dayID: String) -> WorkingIntentState? { workingIntents[dayID] }
     func offIntent(forDay dayID: String) -> OffIntentState? { offIntents[dayID] }
-    func topology(forDay dayID: String) -> DayTopology { topologies[dayID] ?? .standard }
+    func topology(forDay dayID: String) -> DayTopology {
+        if let t = topologies[dayID] { return t }            // user override wins
+        return Holidays.isHighDemand(dayID) ? .highDemand : .standard
+    }
     func note(forDay dayID: String) -> DayNote? { notes[dayID] }
     func availability(forDay dayID: String) -> Set<ShiftAvailabilityType> { offAvailability[dayID] ?? [] }
 
@@ -157,6 +229,7 @@ final class DayIntentStore {
         static let topology = "batman.v2.topologies"
         static let notes    = "batman.v2.dayNotes"
         static let availability = "batman.v2.offAvailability"
+        static let manualOff = "batman.v2.manualOffDays"
         static let migrated = "batman.v2.intentMigrated"
     }
 

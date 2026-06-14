@@ -23,6 +23,7 @@ struct ContentView: View {
     @State private var selectedTab = 0
     @State private var showInbox = false
     @State private var showChannel = false
+    @State private var showDashboard = false
     private var dev = DevAccess.shared
     private var settings = SettingsManager.shared
 
@@ -37,10 +38,17 @@ struct ContentView: View {
                 .tag(1)
         }
         // Floating Inbox + Channel dock — top-right, below the nav bar, on every tab.
+        // On Home, the trade-status counters sit directly under the dock.
         .overlay(alignment: .topTrailing) {
-            MessagingDock(showInbox: $showInbox, showChannel: $showChannel)
-                .padding(.top, 52)
-                .padding(.trailing, 10)
+            VStack(alignment: .trailing, spacing: 6) {
+                MessagingDock(showInbox: $showInbox, showChannel: $showChannel)
+                if selectedTab == 0 {
+                    HomeStatusCounters { showDashboard = true }
+                    SyncTag()
+                }
+            }
+            .padding(.top, 52)
+            .padding(.trailing, 10)
         }
         // Developer mode: a thick red border so it's obvious you have moderation powers.
         .overlay {
@@ -60,6 +68,7 @@ struct ContentView: View {
         }
         .fullScreenCover(isPresented: $showInbox) { InboxView() }
         .fullScreenCover(isPresented: $showChannel) { ChannelView() }
+        .sheet(isPresented: $showDashboard) { TradeDashboardSheet() }
         // First-run identity setup — until signed in with Apple AND an ID claimed.
         .fullScreenCover(isPresented: Binding(
             get: { settings.appleUserID.isEmpty || settings.username.trimmingCharacters(in: .whitespaces).isEmpty },
@@ -315,197 +324,6 @@ struct OnboardingView: View {
                 working = false
                 errorMsg = "Couldn't reach iCloud. Check your connection and that you're signed into iCloud, then try again."
             }
-        }
-    }
-}
-
-// MARK: - Schedule tab
-
-struct ScheduleTab: View {
-
-    private let controller = WebController.shared
-    private let store      = ShiftStore.shared
-    private let settings   = SettingsManager.shared
-
-    @State private var showSettings = false
-    @State private var showError    = false
-    @State private var errorMessage = ""
-    @State private var showImporter = false
-    @State private var importResult: String?
-
-    var body: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
-
-                statusBar
-                    .padding(.horizontal)
-                    .padding(.vertical, 10)
-                    .background(.bar)
-
-                Divider()
-
-                #if DEBUG
-                if settings.showDebugWebView {
-                    DebugWebView(webView: controller.makeWebView())
-                        .frame(height: 320)
-                        .border(.separator)
-                        .padding(.horizontal)
-                        .padding(.top, 8)
-                }
-                #endif
-
-                if store.shifts.isEmpty {
-                    ContentUnavailableView(
-                        "No Schedule Loaded",
-                        systemImage: "calendar.badge.exclamationmark",
-                        description: Text("Tap Import to load your schedule CSV.")
-                    )
-                } else {
-                    ScheduleCalendarView(shifts: store.shifts)
-                }
-            }
-            .navigationTitle("BATMAN Watcher")
-            .navigationBarTitleDisplayMode(.large)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button { showImporter = true } label: {
-                        Image(systemName: "square.and.arrow.down")
-                    }
-                    .accessibilityLabel("Import schedule CSV")
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button { showSettings = true } label: {
-                        Image(systemName: "gear")
-                    }
-                }
-            }
-            .sheet(isPresented: $showSettings) { SettingsView() }
-            .fileImporter(
-                isPresented: $showImporter,
-                allowedContentTypes: [.commaSeparatedText, .plainText, .text],
-                allowsMultipleSelection: false
-            ) { result in
-                handleImport(result)
-            }
-            .alert("Error", isPresented: $showError) {
-                Button("OK", role: .cancel) {}
-            } message: {
-                Text(errorMessage)
-            }
-            .alert("Schedule Imported", isPresented: Binding(
-                get: { importResult != nil },
-                set: { if !$0 { importResult = nil } }
-            )) {
-                Button("OK", role: .cancel) {}
-            } message: {
-                Text(importResult ?? "")
-            }
-            .onChange(of: controller.lastError) { _, newError in
-                if let msg = newError {
-                    errorMessage = msg
-                    showError    = true
-                }
-            }
-        }
-    }
-
-    // MARK: - CSV import
-
-    private func handleImport(_ result: Result<[URL], Error>) {
-        switch result {
-        case .failure(let error):
-            errorMessage = error.localizedDescription
-            showError = true
-        case .success(let urls):
-            guard let url = urls.first else { return }
-            let scoped = url.startAccessingSecurityScopedResource()
-            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-            do {
-                let data = try Data(contentsOf: url)
-                guard let csv = String(data: data, encoding: .utf8)
-                            ?? String(data: data, encoding: .isoLatin1) else {
-                    errorMessage = "Could not read the file as text."
-                    showError = true
-                    return
-                }
-                let username = settings.username
-                Task {
-                    do {
-                        // Parse off the main thread (a roster file is large).
-                        let workers = try await Task.detached {
-                            try ScheduleParser().parseAllWorkers(csv: csv)
-                        }.value
-
-                        var lines: [String] = []
-
-                        // Set YOUR own schedule (+ calendar) from your row if present.
-                        // For a single-dispatcher file, that's simply the one worker.
-                        let mine = workers.first(where: { $0.id == username })
-                                   ?? (workers.count == 1 ? workers.first : nil)
-                        if let mine {
-                            let diff = await ShiftStore.shared.save(mine.shifts)
-                            await AvailabilityManager.shared.buildFromSchedule()
-                            await NotificationManager.shared.scheduleAll(for: mine.shifts)
-                            let restored = EventKitManager.shared.resyncPersonalEvents(for: mine.shifts)
-                            let working = mine.shifts.filter { !$0.isOff }.count
-                            lines.append("\(working) of your working shifts imported. \(diff.summary)")
-                            if restored > 0 { lines.append("\(restored) calendar events restored.") }
-                        }
-
-                        // Load the full roster (matching only) — never added to your calendar.
-                        if workers.count > 1 {
-                            let rows = await RosterStore.shared.importRoster(workers)
-                            lines.append("Roster: \(workers.count) dispatchers loaded for matching (\(rows) rows — not on your calendar).")
-                            // Admin (developer access) publishes it as the shared master.
-                            if DevAccess.shared.unlocked {
-                                let ok = await RosterStore.shared.publishMaster(csv: csv)
-                                lines.append(ok
-                                    ? "Published as MASTER roster — all users get this on their next launch."
-                                    : "(Not published as master — turn on iCloud Trade Sync first.)")
-                            }
-                        }
-
-                        if lines.isEmpty {
-                            errorMessage = "Couldn't find your employee ID (\(username)) in this file, and there's no roster to load."
-                            showError = true
-                        } else {
-                            importResult = lines.joined(separator: "\n")
-                        }
-                        WidgetData.update()
-                    } catch {
-                        errorMessage = error.localizedDescription
-                        showError = true
-                    }
-                }
-            } catch {
-                errorMessage = error.localizedDescription
-                showError = true
-            }
-        }
-    }
-
-    // MARK: - Status bar
-
-    private var statusBar: some View {
-        // Fetch (live ARIS/WorkNet login) is hidden until it's workable — import
-        // the CSV via the toolbar ⬇️ for now.
-        HStack(spacing: 10) {
-            Image(systemName: "square.and.arrow.down")
-                .foregroundStyle(.secondary)
-            Text("Import your schedule CSV with the ⬇️ button above.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .lineLimit(2)
-            Spacer()
-        }
-    }
-
-    private var statusColor: Color {
-        switch controller.phase {
-        case .idle:     return .gray
-        case .complete: return .green
-        case .failed:   return .red
-        default:        return .orange
         }
     }
 }

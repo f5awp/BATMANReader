@@ -14,11 +14,14 @@ struct TradesView: View {
     @State private var segment = 0
     @State private var showDashboard = false
     @State private var whatIf = false
+    @State private var showTradeSettings = false
+    @State private var showAppSettings = false
 
     private var counts: DashboardCounts {
         DashboardCounts.from(requests: messaging.requests,
                              responses: messaging.responses,
-                             unread: messaging.pendingIncoming.count)
+                             unread: messaging.pendingIncoming.count,
+                             pendingLedger: history.pendingCount)
     }
 
     var body: some View {
@@ -29,23 +32,36 @@ struct TradesView: View {
                     .padding(.horizontal).padding(.vertical, 8)
 
                 Picker("", selection: $segment) {
-                    Text("Trade by Intents").tag(0)
-                    Text("Trade Search").tag(1)
+                    Text("Intents").tag(0)
+                    Text("Search").tag(1)
+                    Text("ECB").tag(2)
                 }
                 .pickerStyle(.segmented)
                 .padding(.horizontal).padding(.bottom, 8)
 
                 Divider()
 
-                if segment == 0 {
-                    TradeByIntentsFeed(whatIf: $whatIf)
-                } else {
-                    FindCandidatesSection(whatIf: $whatIf)
+                switch segment {
+                case 0: TradeByIntentsFeed(whatIf: $whatIf)
+                case 1: FindCandidatesSection(whatIf: $whatIf)
+                default: ECBTradesView()
                 }
             }
             .navigationTitle("Trades")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        Button { showTradeSettings = true } label: { Label("Trade Settings", systemImage: "arrow.left.arrow.right") }
+                        Button { showAppSettings = true } label: { Label("App Settings", systemImage: "gearshape") }
+                    } label: {
+                        Image(systemName: "gearshape")
+                    }
+                }
+            }
             .sheet(isPresented: $showDashboard) { TradeDashboardSheet() }
+            .sheet(isPresented: $showTradeSettings) { TradeSettingsSheet() }
+            .sheet(isPresented: $showAppSettings) { SettingsView() }
             .task { await messaging.refresh() }
         }
     }
@@ -68,7 +84,7 @@ struct StatusAnchorButton: View {
                 Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary)
             }
             .padding(.horizontal, 14).padding(.vertical, 10)
-            .background(.bar, in: RoundedRectangle(cornerRadius: 12))
+            .background(.bar, in: RoundedRectangle(cornerRadius: DS.cardRadius))
         }
         .buttonStyle(.plain)
     }
@@ -196,13 +212,34 @@ private struct HistoryZone: View {
     private var history = TradeHistoryStore.shared
     var body: some View {
         if history.entries.isEmpty {
-            ZoneEmpty("No history yet", "Trades you mark official are archived here as a permanent ledger.")
+            ZoneEmpty("No history yet", "Settled trades — and pending ECB transfers — are recorded here.")
         } else {
             List(history.entries) { e in
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(e.summary).font(.subheadline)
+                    HStack {
+                        Text(e.summary).font(.subheadline)
+                        Spacer()
+                        if e.pending {
+                            Text("PENDING").font(.caption2.bold())
+                                .padding(.horizontal, 6).padding(.vertical, 2)
+                                .background(BrickPalette.caution.opacity(0.25), in: Capsule())
+                                .foregroundStyle(.orange)
+                        } else {
+                            Text("DONE").font(.caption2.bold())
+                                .padding(.horizontal, 6).padding(.vertical, 2)
+                                .background(BrickPalette.clear.opacity(0.22), in: Capsule())
+                                .foregroundStyle(.green)
+                        }
+                    }
                     Text("\(e.participants.joined(separator: " · ")) — \(e.completedAt.formatted(date: .abbreviated, time: .omitted))")
                         .font(.caption).foregroundStyle(.secondary)
+                    if e.pending {
+                        Button { history.markComplete(id: e.id, at: Date()) } label: {
+                            Label("Mark transfer complete", systemImage: "checkmark.seal.fill")
+                                .font(.caption.weight(.semibold))
+                        }
+                        .buttonStyle(.borderless)
+                    }
                 }
                 .padding(.vertical, 2)
             }

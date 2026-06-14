@@ -76,8 +76,12 @@ struct TradeRequest: Sendable, Codable, Identifiable, Hashable {
     let giveDayIDs: [String]   // sender's work days the recipient would take (ISO)
     let createdAt: Date
     let expiresAt: Date
+    var ecb: Int? = nil        // ECB points offered for a one-way (ECB) trade
+    var offerID: String? = nil // shared across the broadcast (first accepter wins)
 
     var isExpired: Bool { expiresAt < Date() }
+    /// A one-way ECB offer = sender gives days, takes nothing back, offers points.
+    var isECB: Bool { ecb != nil && takeDayIDs.isEmpty }
 }
 
 /// A reply to a `TradeRequest`, authored by whoever is responding.
@@ -89,6 +93,8 @@ struct TradeResponse: Sendable, Codable, Identifiable, Hashable {
     let status: String         // TradeRequestStatus rawValue
     let note: String
     let createdAt: Date
+    var offerID: String? = nil      // copied from the ECB offer so the queue is public
+    var acceptedDayIDs: [String]? = nil  // ECB: which shifts this person accepted
 
     var statusValue: TradeRequestStatus { TradeRequestStatus(rawValue: status) ?? .pending }
 }
@@ -216,6 +222,8 @@ final class MessagingStore {
         requests   = reqs.filter { !$0.isExpired }.sorted { $0.createdAt > $1.createdAt }
         responses  = resps.sorted { $0.createdAt < $1.createdAt }
         replies    = reps.sorted { $0.createdAt < $1.createdAt }
+        // ECB maintenance (sender side): auto-complete ledger on receipt.
+        reconcileECBLedger()
     }
 
     /// Replies visible to YOU on a post: public ones, plus private ones you wrote
@@ -294,13 +302,15 @@ final class MessagingStore {
     // MARK: Trade requests
 
     func sendRequest(to toID: String, toName: String, note: String,
-                     take: [String], give: [String], daysValid: Int = 21) async {
+                     take: [String], give: [String], daysValid: Int = 21,
+                     ecb: Int? = nil, offerID: String? = nil) async {
         let now = Date()
         let req = TradeRequest(
             id: UUID().uuidString, fromID: myID, fromName: myName,
             toID: toID, toName: toName, note: note,
             takeDayIDs: take, giveDayIDs: give, createdAt: now,
-            expiresAt: Calendar.current.date(byAdding: .day, value: daysValid, to: now) ?? now)
+            expiresAt: Calendar.current.date(byAdding: .day, value: daysValid, to: now) ?? now,
+            ecb: ecb, offerID: offerID)
         await service.sendRequest(req)
         requests = ([req] + requests.filter { $0.id != req.id })
             .filter { !$0.isExpired }.sorted { $0.createdAt > $1.createdAt }
@@ -310,7 +320,8 @@ final class MessagingStore {
         let resp = TradeResponse(
             id: UUID().uuidString, requestID: request.id,
             responderID: myID, responderName: myName,
-            status: status.rawValue, note: note, createdAt: Date())
+            status: status.rawValue, note: note, createdAt: Date(),
+            offerID: request.offerID)
         await service.sendResponse(resp)
         responses = (responses.filter { $0.id != resp.id } + [resp]).sorted { $0.createdAt < $1.createdAt }
     }
@@ -337,6 +348,74 @@ final class MessagingStore {
     /// Incoming requests still awaiting your reply — drives the inbox badge.
     var pendingIncoming: [TradeRequest] {
         incoming.filter { status(of: $0) == .pending }
+    }
+
+    // MARK: ECB broadcast offers (sender side)
+
+    /// Your outgoing ECB broadcasts, grouped by offerID, newest first.
+    var ecbOffers: [(offerID: String, requests: [TradeRequest])] {
+        let ecb = outgoing.filter { $0.isECB && $0.offerID != nil }
+        return Dictionary(grouping: ecb, by: { $0.offerID! })
+            .map { ($0.key, $0.value.sorted { $0.toName < $1.toName }) }
+            .sorted { ($0.requests.first?.createdAt ?? .distantPast) > ($1.requests.first?.createdAt ?? .distantPast) }
+    }
+
+    /// Keep up to 3 accepters queued per shift in case earlier ones fall through.
+    static let ecbQueueCap = 3
+
+    /// Distinct shift days in an ECB offer (across all recipients' requests).
+    func ecbDays(offerID: String) -> [String] {
+        var seen = Set<String>(), out: [String] = []
+        for req in requests where req.offerID == offerID {
+            for d in req.giveDayIDs where seen.insert(d).inserted { out.append(d) }
+        }
+        return out.sorted()
+    }
+
+    /// Accepters for ONE shift of an ECB offer, first-come-first-served (one per
+    /// responder). Public — derived from response `offerID` + `acceptedDayIDs`.
+    func ecbQueue(offerID: String, dayID: String) -> [TradeResponse] {
+        var seen = Set<String>()
+        return responses
+            .filter { $0.offerID == offerID && $0.statusValue == .accepted
+                      && ($0.acceptedDayIDs?.contains(dayID) ?? false) }
+            .sorted { $0.createdAt < $1.createdAt }
+            .filter { seen.insert($0.responderID).inserted }
+    }
+    func acceptCount(offerID: String, dayID: String) -> Int { ecbQueue(offerID: offerID, dayID: dayID).count }
+    func isECBFull(offerID: String, dayID: String) -> Bool { acceptCount(offerID: offerID, dayID: dayID) >= Self.ecbQueueCap }
+
+    /// My 1-based position in a shift's queue (nil if I haven't accepted it).
+    func myQueuePosition(offerID: String, dayID: String) -> Int? {
+        guard let i = ecbQueue(offerID: offerID, dayID: dayID).firstIndex(where: { $0.responderID == myID }) else { return nil }
+        return i + 1
+    }
+
+    /// Total acceptances across the offer (any shift) — the public count for the list.
+    func acceptCount(offerID: String) -> Int {
+        Set(responses.filter { $0.offerID == offerID && $0.statusValue == .accepted }.map(\.responderID)).count
+    }
+
+    /// Recipient: accept specific shifts of an ECB offer (employee # auto-included).
+    func acceptECB(_ request: TradeRequest, days: [String]) async {
+        let note = "Employee #\(myID). Accepting: " + days.map { DayFmt.nice($0) }.joined(separator: ", ")
+        let resp = TradeResponse(
+            id: UUID().uuidString, requestID: request.id, responderID: myID, responderName: myName,
+            status: TradeRequestStatus.accepted.rawValue, note: note, createdAt: Date(),
+            offerID: request.offerID, acceptedDayIDs: days)
+        await service.sendResponse(resp)
+        responses = (responses.filter { $0.id != resp.id } + [resp]).sorted { $0.createdAt < $1.createdAt }
+    }
+
+    /// Sender maintenance: auto-complete pending ledger rows when the recipient
+    /// posts an "ECB RECEIVED" reply (no shared record needed).
+    func reconcileECBLedger() {
+        for e in TradeHistoryStore.shared.pending {
+            guard let emp = e.employeeID else { continue }
+            if responses.contains(where: { $0.responderID == emp && $0.note.localizedCaseInsensitiveContains("received") }) {
+                TradeHistoryStore.shared.markComplete(id: e.id, at: Date())
+            }
+        }
     }
 
     #if DEBUG

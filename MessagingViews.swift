@@ -126,15 +126,46 @@ struct FormatBar: View {
 struct InboxView: View {
     private var store = MessagingStore.shared
     @Environment(\.dismiss) private var dismiss
+    @State private var filter = 0   // 0 = all, 1 = ECB only
 
     private var myID: String { SettingsManager.shared.username }
 
+    /// Incoming one-way ECB offers, sorted by most ECB offered.
+    private var ecbRequests: [TradeRequest] {
+        store.requests.filter { $0.isECB }.sorted { ($0.ecb ?? 0) > ($1.ecb ?? 0) }
+    }
+
     var body: some View {
         NavigationStack {
-            Group {
+            VStack(spacing: 0) {
+                Picker("", selection: $filter) {
+                    Text("All").tag(0)
+                    Text("ECB (\(ecbRequests.count))").tag(1)
+                }
+                .pickerStyle(.segmented).padding()
+
                 if store.requests.isEmpty {
                     ContentUnavailableView("No Trade Requests", systemImage: "tray",
                         description: Text("Swaps you propose or receive show up here."))
+                } else if filter == 1 {
+                    let incomingECB = store.incoming.filter { $0.isECB }.sorted { ($0.ecb ?? 0) > ($1.ecb ?? 0) }
+                    if store.ecbOffers.isEmpty && incomingECB.isEmpty {
+                        ContentUnavailableView("No ECB Offers", systemImage: "star.circle",
+                            description: Text("One-way ECB trade offers show here, sorted by most ECB offered."))
+                    } else {
+                        List {
+                            if !store.ecbOffers.isEmpty {
+                                Section("Your ECB offers · first to accept each shift gets it") {
+                                    ForEach(store.ecbOffers, id: \.offerID) { offer in
+                                        NavigationLink { ECBOfferView(offerID: offer.offerID) } label: { ECBOfferRow(offer: offer) }
+                                    }
+                                }
+                            }
+                            if !incomingECB.isEmpty {
+                                Section("Offers to you · highest ECB first") { ForEach(incomingECB) { row($0) } }
+                            }
+                        }
+                    }
                 } else {
                     List {
                         if !store.pendingIncoming.isEmpty {
@@ -165,6 +196,100 @@ struct InboxView: View {
     }
 }
 
+// MARK: - ECB offer (sender side: ordered acceptance queue)
+
+struct ECBOfferRow: View {
+    let offer: (offerID: String, requests: [TradeRequest])
+    private var store = MessagingStore.shared
+
+    var body: some View {
+        let first = offer.requests.first
+        let count = store.acceptCount(offerID: offer.offerID)
+        return VStack(alignment: .leading, spacing: 3) {
+            HStack {
+                Label("\(first?.ecb ?? 0) ECB", systemImage: "star.circle.fill")
+                    .font(.subheadline.bold()).foregroundStyle(.orange)
+                Spacer()
+                Text("\(offer.requests.count) sent").font(.caption2).foregroundStyle(.secondary)
+            }
+            if let f = first, !f.giveDayIDs.isEmpty {
+                Text("Shifts: " + DayFmt.list(f.giveDayIDs)).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            }
+            Text(count == 0 ? "No acceptances yet" : "^[\(count) accepted](inflect: true) · tap to confirm")
+                .font(.caption.bold()).foregroundStyle(count > 0 ? .green : .secondary)
+        }
+        .padding(.vertical, 2)
+    }
+}
+
+/// Sender's view of one ECB broadcast: a table of shifts, each with a row of
+/// numbered dots (the per-shift acceptance queue). Tap a dot to confirm or skip.
+struct ECBOfferView: View {
+    let offerID: String
+    private var store = MessagingStore.shared
+    private var history = TradeHistoryStore.shared
+    @Environment(\.dismiss) private var dismiss
+
+    private var siblings: [TradeRequest] { store.requests.filter { $0.offerID == offerID } }
+    private var ecb: Int { siblings.first?.ecb ?? 0 }
+    private var days: [String] { store.ecbDays(offerID: offerID) }
+
+    var body: some View {
+        List {
+            Section {
+                LabeledContent("ECB offered") { Text("\(ecb)").bold() }
+                LabeledContent("Sent to") { Text("\(siblings.count)") }
+            } footer: {
+                Text("Each shift has its own line. Numbered dots are the people who accepted, in order — #1 is next. Tap a dot to confirm that person (then submit their ECB form), or skip them to pass it to the next person in line.")
+            }
+            Section("Shifts") {
+                ForEach(days, id: \.self) { day in shiftRow(day) }
+            }
+        }
+        .navigationTitle("ECB Offer")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func shiftRow(_ day: String) -> some View {
+        let queue = Array(store.ecbQueue(offerID: offerID, dayID: day).prefix(MessagingStore.ecbQueueCap))
+        return HStack(spacing: 10) {
+            Text(DayFmt.nice(day)).font(.subheadline.bold()).frame(width: 110, alignment: .leading)
+            if queue.isEmpty {
+                Text("no accepters").font(.caption).foregroundStyle(.tertiary)
+            } else {
+                HStack(spacing: 6) {
+                    ForEach(Array(queue.enumerated()), id: \.element.id) { idx, r in
+                        Menu {
+                            Text("\(r.responderName) · Emp #\(r.responderID)")
+                            Button { confirm(day: day, r: r) } label: { Label("Confirm — submit ECB form", systemImage: "checkmark.seal.fill") }
+                        } label: {
+                            Text("\(idx + 1)")
+                                .font(.caption.bold()).foregroundStyle(.white)
+                                .frame(width: 26, height: 26)
+                                .background(idx == 0 ? Color.green : Color.blue, in: Circle())
+                        }
+                    }
+                }
+            }
+            Spacer()
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func confirm(day: String, r: TradeResponse) {
+        history.record(TradeHistoryEntry(
+            summary: "ECB \(ecb) → \(r.responderName) (Emp #\(r.responderID)) for \(DayFmt.nice(day))",
+            participants: [r.responderName], dayIDs: [day], completedAt: Date(),
+            pending: true, ecb: ecb, employeeID: r.responderID))
+        Task {
+            if let req = siblings.first(where: { $0.toID == r.responderID }) {
+                await store.respond(to: req, status: .accepted,
+                    note: "ECB CONFIRMED for \(DayFmt.nice(day)) — submitting the \(ecb)-ECB form. Confirm receipt in the app once you have it.")
+            }
+        }
+    }
+}
+
 struct RequestRow: View {
     let request: TradeRequest
     let myID: String
@@ -182,7 +307,7 @@ struct RequestRow: View {
             Avatar(name: otherName, id: otherID, size: 40)
             VStack(alignment: .leading, spacing: 3) {
                 HStack {
-                    Text(otherName).font(.system(size: 15, weight: .semibold))
+                    Text(otherName).font(.subheadline.weight(.semibold))
                     Spacer()
                     Text(request.createdAt, style: .relative).font(.caption2).foregroundStyle(.secondary)
                 }
@@ -193,6 +318,10 @@ struct RequestRow: View {
                 }
                 HStack(spacing: 8) {
                     StatusBadge(status: status)
+                    if let ecb = request.ecb, request.isECB {
+                        Label("\(ecb) ECB", systemImage: "star.circle.fill")
+                            .font(.caption2.bold()).foregroundStyle(.orange)
+                    }
                     if needsMe {
                         Label("Your move", systemImage: "exclamationmark.circle.fill")
                             .font(.caption2.weight(.semibold)).foregroundStyle(.orange)
@@ -208,6 +337,7 @@ struct ThreadView: View {
     let request: TradeRequest
     private var store = MessagingStore.shared
     @State private var replyNote = ""
+    @State private var ecbSelectedDays: Set<String> = []
     @State private var staleDays: Set<String> = []
     @State private var otherProfile: TradeProfile?
     @Environment(\.dismiss) private var dismiss
@@ -248,17 +378,14 @@ struct ThreadView: View {
                 }
             }
 
-            let replies = store.responses(for: request.id)
-            if !replies.isEmpty {
-                Section("Replies") {
-                    ForEach(replies) { r in
-                        SlackMessageRow(name: r.responderID == myID ? "You" : r.responderName,
-                                        authorID: r.responderID, timestamp: r.createdAt,
-                                        message: r.note.isEmpty ? "_(no note)_" : r.note,
-                                        avatarSize: 30) {
-                            StatusBadge(status: r.statusValue)
-                        }
-                    }
+            Section("Audit trail") {
+                auditRow(icon: "paperplane.fill", tint: .blue,
+                         who: request.fromName, what: "proposed this trade", when: request.createdAt,
+                         note: request.note)
+                ForEach(store.responses(for: request.id).sorted { $0.createdAt < $1.createdAt }) { r in
+                    auditRow(icon: r.statusValue.icon, tint: r.statusValue.tint,
+                             who: r.responderID == myID ? "You" : r.responderName,
+                             what: r.statusValue.label.lowercased(), when: r.createdAt, note: r.note)
                 }
             }
 
@@ -270,7 +397,56 @@ struct ThreadView: View {
                 }
             }
 
-            if isIncoming && status == .pending {
+            // ECB queue position (recipient side) — per shift.
+            if isIncoming, request.isECB, let offerID = request.offerID, !senderConfirmedECB {
+                Section("Your queue position (per shift)") {
+                    ForEach(request.giveDayIDs, id: \.self) { d in
+                        HStack {
+                            Text(DayFmt.nice(d)).font(.subheadline)
+                            Spacer()
+                            if let pos = store.myQueuePosition(offerID: offerID, dayID: d) {
+                                Text("#\(pos)").font(.subheadline.bold())
+                                    .foregroundStyle(pos <= MessagingStore.ecbQueueCap ? .green : .orange)
+                            } else {
+                                Text("not accepted").font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ECB receipt confirmation (recipient side): once the sender confirms
+            // and submits the form, you confirm you received the ECB.
+            if isIncoming, request.isECB, senderConfirmedECB {
+                Section("ECB transfer") {
+                    if receivedECB {
+                        Label("You confirmed receipt of \(request.ecb ?? 0) ECB.", systemImage: "checkmark.seal.fill")
+                            .foregroundStyle(.green)
+                    } else {
+                        Text("\(request.fromName) is submitting the \(request.ecb ?? 0)-ECB form. Confirm once it lands in your account.")
+                            .font(.subheadline)
+                        Button { confirmReceived() } label: {
+                            Label("Confirm ECB received", systemImage: "star.circle.fill")
+                        }
+                        .buttonStyle(.borderedProminent).tint(.orange)
+                    }
+                }
+            }
+
+            if isIncoming, request.isECB, status == .pending {
+                Section("Accept shifts — \(request.ecb ?? 0) ECB each") {
+                    ForEach(request.giveDayIDs, id: \.self) { d in
+                        Toggle(DayFmt.nice(d), isOn: Binding(
+                            get: { ecbSelectedDays.contains(d) },
+                            set: { on in if on { ecbSelectedDays.insert(d) } else { ecbSelectedDays.remove(d) } }))
+                    }
+                    Button { Task { await store.acceptECB(request, days: Array(ecbSelectedDays)); ecbSelectedDays = [] } } label: {
+                        Label("Accept selected", systemImage: "checkmark.circle.fill")
+                    }
+                    .tint(.green).disabled(ecbSelectedDays.isEmpty)
+                    Button(role: .destructive) { respond(.declined) } label: { Label("Decline all", systemImage: "xmark.circle") }
+                }
+            } else if isIncoming && status == .pending {
                 Section("Respond") {
                     TextField("Optional note…", text: $replyNote, axis: .vertical)
                     Button { respond(.accepted) } label: { Label("Accept", systemImage: "checkmark.circle.fill") }
@@ -298,6 +474,25 @@ struct ThreadView: View {
         }
     }
 
+    /// One chronological audit event: who did what, when, with the note.
+    private func auditRow(icon: String, tint: Color, who: String, what: String,
+                          when: Date, note: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: icon).foregroundStyle(tint).frame(width: 20)
+            VStack(alignment: .leading, spacing: 1) {
+                HStack {
+                    Text("\(who) \(what)").font(.subheadline.weight(.semibold))
+                    Spacer()
+                    Text(when, style: .relative).font(.caption2).foregroundStyle(.secondary)
+                }
+                if !note.isEmpty {
+                    mdText(note).font(.caption).foregroundStyle(.secondary)
+                }
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
     private func leg(_ title: String, _ value: String) -> some View {
         VStack(alignment: .leading, spacing: 1) {
             Text(title).font(.caption).foregroundStyle(.secondary)
@@ -305,9 +500,46 @@ struct ThreadView: View {
         }
     }
 
-    private func respond(_ status: TradeRequestStatus) {
+    /// The sender posted an "ECB CONFIRMED" response → they're submitting the form.
+    private var senderConfirmedECB: Bool {
+        store.responses(for: request.id).contains {
+            $0.responderID == request.fromID && $0.note.localizedCaseInsensitiveContains("ECB CONFIRMED")
+        }
+    }
+    /// You already confirmed receipt.
+    private var receivedECB: Bool {
+        store.responses(for: request.id).contains {
+            $0.responderID == myID && $0.note.localizedCaseInsensitiveContains("RECEIVED")
+        }
+    }
+    /// The sender filled the offer with someone else.
+    private var filledByOther: Bool {
+        store.responses(for: request.id).contains {
+            $0.responderID == request.fromID && $0.note.localizedCaseInsensitiveContains("filled")
+        }
+    }
+
+    private func confirmReceived() {
+        let ecb = request.ecb ?? 0
         Task {
-            await store.respond(to: request, status: status, note: replyNote.trimmingCharacters(in: .whitespacesAndNewlines))
+            await store.respond(to: request, status: .accepted, note: "ECB RECEIVED — got the \(ecb) ECB. Thanks!")
+            TradeHistoryStore.shared.record(TradeHistoryEntry(
+                summary: "Received \(ecb) ECB from \(request.fromName) for taking \(DayFmt.list(request.giveDayIDs))",
+                participants: [request.fromName], dayIDs: request.giveDayIDs,
+                completedAt: Date(), pending: false, ecb: ecb))
+            WidgetData.update()
+        }
+    }
+
+    private func respond(_ status: TradeRequestStatus) {
+        var note = replyNote.trimmingCharacters(in: .whitespacesAndNewlines)
+        // ECB acceptances auto-include your employee # for the official form.
+        if request.isECB, status == .accepted {
+            let id = SettingsManager.shared.username
+            note = "Employee #\(id)." + (note.isEmpty ? "" : " \(note)")
+        }
+        Task {
+            await store.respond(to: request, status: status, note: note)
             replyNote = ""
             WidgetData.update()
             // Stay on the thread so your reply (and its status) is visible.
@@ -548,29 +780,33 @@ struct MessagingDock: View {
     }
 
     var body: some View {
-        HStack(spacing: 10) {
-            dockButton(system: "tray.full.fill", badge: store.pendingIncoming.count) { showInbox = true }
-            dockButton(system: "megaphone.fill", badge: 0) { showChannel = true }
+        HStack(spacing: 8) {
+            // Inbox badge = replies that need YOU (actionable, red).
+            dockButton(icon: "tray.full.fill", label: "Inbox",
+                       badge: store.pendingIncoming.count, badgeColor: .red) { showInbox = true }
+            // Channel badge = active posts (informational, neutral).
+            dockButton(icon: "megaphone.fill", label: "Channel",
+                       badge: store.broadcasts.count, badgeColor: .blue) { showChannel = true }
         }
     }
 
-    private func dockButton(system: String, badge: Int, action: @escaping () -> Void) -> some View {
+    private func dockButton(icon: String, label: String, badge: Int,
+                            badgeColor: Color, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Image(systemName: system)
-                .font(.body)
-                .frame(width: 40, height: 40)
-                .background(.thinMaterial, in: Circle())
-                .overlay(Circle().stroke(.quaternary, lineWidth: 0.5))
-                .overlay(alignment: .topTrailing) {
-                    if badge > 0 {
-                        Text("\(badge)")
-                            .font(.system(size: 11, weight: .bold))
-                            .foregroundStyle(.white)
-                            .padding(5)
-                            .background(Color.red, in: Circle())
-                            .offset(x: 4, y: -4)
-                    }
+            HStack(spacing: 5) {
+                Image(systemName: icon).font(.system(size: 13, weight: .semibold))
+                Text(label).font(.caption.weight(.semibold))
+                if badge > 0 {
+                    Text("\(badge)")
+                        .font(.dsBadge).foregroundStyle(.white)
+                        .padding(.horizontal, 5).padding(.vertical, 1)
+                        .background(badgeColor, in: Capsule())
                 }
+            }
+            .padding(.horizontal, 12).padding(.vertical, 8)
+            .background(.thinMaterial, in: Capsule())
+            .overlay(Capsule().stroke(.quaternary, lineWidth: 0.5))
+            .foregroundStyle(.primary)
         }
         .buttonStyle(.plain)
         .shadow(radius: 3, y: 1)

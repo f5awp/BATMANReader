@@ -278,7 +278,8 @@ struct DashboardCounts: Sendable, Hashable {
     /// count (the inbox already tracks this for `MessagingDock`).
     static func from(requests: [TradeRequest],
                      responses: [TradeResponse],
-                     unread: Int) -> DashboardCounts {
+                     unread: Int,
+                     pendingLedger: Int = 0) -> DashboardCounts {
         var accepted = 0, pending = 0, denied = 0
         for req in requests {
             let latest = responses
@@ -293,6 +294,9 @@ struct DashboardCounts: Sendable, Hashable {
             }
             if req.isExpired { /* expired proposals read as dead, counted via denied above if declined */ }
         }
-        return DashboardCounts(accepted: accepted, pending: pending, denied: denied, unread: unread)
+        // Pending ECB transfers (form submitted, receipt not yet confirmed) count
+        // as pending in the status tags.
+        return DashboardCounts(accepted: accepted, pending: pending + pendingLedger,
+                               denied: denied, unread: unread)
     }
 }

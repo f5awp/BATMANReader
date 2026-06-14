@@ -22,6 +22,10 @@
 		916E54252FDE376100A1CE2B /* DispatchPalette.swift in Sources */ = {isa = PBXBuildFile; fileRef = 916E54242FDE376100A1CE2B /* DispatchPalette.swift */; };
 		916E54272FDE3B6B00A1CE2B /* SlackKit.swift in Sources */ = {isa = PBXBuildFile; fileRef = 916E54262FDE3B6B00A1CE2B /* SlackKit.swift */; };
 		916E54292FDE3FEE00A1CE2B /* ReasonClassifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = 916E54282FDE3FEE00A1CE2B /* ReasonClassifier.swift */; };
+		916E542B2FDE569700A1CE2B /* Holidays.swift in Sources */ = {isa = PBXBuildFile; fileRef = 916E542A2FDE569700A1CE2B /* Holidays.swift */; };
+		916E542D2FDE87CB00A1CE2B /* MinCostFlow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 916E542C2FDE87CB00A1CE2B /* MinCostFlow.swift */; };
+		916E542F2FDE880800A1CE2B /* OptimalMatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 916E542E2FDE880800A1CE2B /* OptimalMatcher.swift */; };
+		916E54312FDE8DE900A1CE2B /* EngineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 916E54302FDE8DE900A1CE2B /* EngineTests.swift */; };
 		91D1B89D2FDA65050049CAF7 /* ShiftAvailability.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B8992FDA65050049CAF7 /* ShiftAvailability.swift */; };
 		91D1B89E2FDA65050049CAF7 /* AIScheduleSummaryIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B88A2FDA65050049CAF7 /* AIScheduleSummaryIntent.swift */; };
 		91D1B89F2FDA65050049CAF7 /* SettingsManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B8962FDA65050049CAF7 /* SettingsManager.swift */; };
@@ -44,7 +48,6 @@
 		91D1B8B52FDBDEA40049CAF7 /* RosterShift.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B8B42FDBDEA40049CAF7 /* RosterShift.swift */; };
 		91D1B8B72FDBDEB30049CAF7 /* RosterStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B8B62FDBDEB30049CAF7 /* RosterStore.swift */; };
 		91D1B8B92FDBE47C0049CAF7 /* TradeMatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B8B82FDBE47C0049CAF7 /* TradeMatcher.swift */; };
-		91D1B8BB2FDBF20A0049CAF7 /* ScheduleStripView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B8BA2FDBF20A0049CAF7 /* ScheduleStripView.swift */; };
 		91D1B8BD2FDBF3850049CAF7 /* ShiftSelectCalendar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B8BC2FDBF3850049CAF7 /* ShiftSelectCalendar.swift */; };
 		91D1B8BF2FDC488D0049CAF7 /* TradeIntentStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B8BE2FDC488D0049CAF7 /* TradeIntentStore.swift */; };
 		91D1B8C12FDC49AD0049CAF7 /* TradeProfile.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B8C02FDC49AD0049CAF7 /* TradeProfile.swift */; };
@@ -96,6 +99,10 @@
 		916E54242FDE376100A1CE2B /* DispatchPalette.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DispatchPalette.swift; sourceTree = "<group>"; };
 		916E54262FDE3B6B00A1CE2B /* SlackKit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SlackKit.swift; sourceTree = "<group>"; };
 		916E54282FDE3FEE00A1CE2B /* ReasonClassifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReasonClassifier.swift; sourceTree = "<group>"; };
+		916E542A2FDE569700A1CE2B /* Holidays.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Holidays.swift; sourceTree = "<group>"; };
+		916E542C2FDE87CB00A1CE2B /* MinCostFlow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MinCostFlow.swift; sourceTree = "<group>"; };
+		916E542E2FDE880800A1CE2B /* OptimalMatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OptimalMatcher.swift; sourceTree = "<group>"; };
+		916E54302FDE8DE900A1CE2B /* EngineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EngineTests.swift; sourceTree = "<group>"; };
 		91B5643C2FDA47E400D38BBE /* BATMANReader.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = BATMANReader.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		91D1B88A2FDA65050049CAF7 /* AIScheduleSummaryIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIScheduleSummaryIntent.swift; sourceTree = "<group>"; };
 		91D1B88B2FDA65050049CAF7 /* AvailabilityIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AvailabilityIntents.swift; sourceTree = "<group>"; };
@@ -119,7 +126,6 @@
 		91D1B8B42FDBDEA40049CAF7 /* RosterShift.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RosterShift.swift; sourceTree = "<group>"; };
 		91D1B8B62FDBDEB30049CAF7 /* RosterStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RosterStore.swift; sourceTree = "<group>"; };
 		91D1B8B82FDBE47C0049CAF7 /* TradeMatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TradeMatcher.swift; sourceTree = "<group>"; };
-		91D1B8BA2FDBF20A0049CAF7 /* ScheduleStripView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScheduleStripView.swift; sourceTree = "<group>"; };
 		91D1B8BC2FDBF3850049CAF7 /* ShiftSelectCalendar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShiftSelectCalendar.swift; sourceTree = "<group>"; };
 		91D1B8BE2FDC488D0049CAF7 /* TradeIntentStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TradeIntentStore.swift; sourceTree = "<group>"; };
 		91D1B8C02FDC49AD0049CAF7 /* TradeProfile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TradeProfile.swift; sourceTree = "<group>"; };
@@ -216,7 +222,6 @@
 				91D1B8B42FDBDEA40049CAF7 /* RosterShift.swift */,
 				91D1B8B62FDBDEB30049CAF7 /* RosterStore.swift */,
 				91D1B8B82FDBE47C0049CAF7 /* TradeMatcher.swift */,
-				91D1B8BA2FDBF20A0049CAF7 /* ScheduleStripView.swift */,
 				91D1B8BC2FDBF3850049CAF7 /* ShiftSelectCalendar.swift */,
 				91D1B8BE2FDC488D0049CAF7 /* TradeIntentStore.swift */,
 				91D1B8C02FDC49AD0049CAF7 /* TradeProfile.swift */,
@@ -240,6 +245,10 @@
 				916E54242FDE376100A1CE2B /* DispatchPalette.swift */,
 				916E54262FDE3B6B00A1CE2B /* SlackKit.swift */,
 				916E54282FDE3FEE00A1CE2B /* ReasonClassifier.swift */,
+				916E542A2FDE569700A1CE2B /* Holidays.swift */,
+				916E542C2FDE87CB00A1CE2B /* MinCostFlow.swift */,
+				916E542E2FDE880800A1CE2B /* OptimalMatcher.swift */,
+				916E54302FDE8DE900A1CE2B /* EngineTests.swift */,
 			);
 			sourceTree = "<group>";
 		};
@@ -363,6 +372,7 @@
 			files = (
 				91D1B89D2FDA65050049CAF7 /* ShiftAvailability.swift in Sources */,
 				916E54192FDE314700A1CE2B /* TradeHistoryStore.swift in Sources */,
+				916E542B2FDE569700A1CE2B /* Holidays.swift in Sources */,
 				916E54022FDCE50200A1CE2B /* CloudPush.swift in Sources */,
 				91D1B89E2FDA65050049CAF7 /* AIScheduleSummaryIntent.swift in Sources */,
 				91D1B8B92FDBE47C0049CAF7 /* TradeMatcher.swift in Sources */,
@@ -385,6 +395,7 @@
 				916E54252FDE376100A1CE2B /* DispatchPalette.swift in Sources */,
 				91D1B8A62FDA65050049CAF7 /* ScheduleDiff.swift in Sources */,
 				91D1B8A72FDA65050049CAF7 /* EventKitManager.swift in Sources */,
+				916E542F2FDE880800A1CE2B /* OptimalMatcher.swift in Sources */,
 				916E54232FDE332F00A1CE2B /* TradeIntentsFeed.swift in Sources */,
 				916E541B2FDE318D00A1CE2B /* TradeRouter.swift in Sources */,
 				916E54042FDCF23700A1CE2B /* HelpView.swift in Sources */,
@@ -393,16 +404,17 @@
 				91D1B8E72FDC66240049CAF7 /* CloudKitMessagingService.swift in Sources */,
 				916E54152FDE2F0A00A1CE2B /* TradeEngineModels.swift in Sources */,
 				91D1B8B72FDBDEB30049CAF7 /* RosterStore.swift in Sources */,
+				916E54312FDE8DE900A1CE2B /* EngineTests.swift in Sources */,
 				91D1B8BD2FDBF3850049CAF7 /* ShiftSelectCalendar.swift in Sources */,
 				91D1B8E52FDC65BC0049CAF7 /* Messaging.swift in Sources */,
 				91D1B8C32FDC5B2E0049CAF7 /* CloudKitTradeProfileService.swift in Sources */,
 				91D1B8A92FDA65050049CAF7 /* ContentView.swift in Sources */,
+				916E542D2FDE87CB00A1CE2B /* MinCostFlow.swift in Sources */,
 				916E54002FDCE21900A1CE2B /* CloudKitRosterService.swift in Sources */,
 				91D1B8AA2FDA65050049CAF7 /* ScheduleParser.swift in Sources */,
 				91D1B8B52FDBDEA40049CAF7 /* RosterShift.swift in Sources */,
 				91D1B8AB2FDA65050049CAF7 /* AvailabilityManager.swift in Sources */,
 				916E54272FDE3B6B00A1CE2B /* SlackKit.swift in Sources */,
-				91D1B8BB2FDBF20A0049CAF7 /* ScheduleStripView.swift in Sources */,
 				91D1B8AC2FDA65050049CAF7 /* WebController.swift in Sources */,
 				91D1B8AD2FDA65050049CAF7 /* ShiftStore.swift in Sources */,
 				91D1B8AE2FDA65050049CAF7 /* AvailabilityView.swift in Sources */,

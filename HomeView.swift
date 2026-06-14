@@ -46,6 +46,7 @@ struct HomeView: View {
     @State private var workBrush: WorkingIntentState = .dontWantToWork
     @State private var pendingConflict: PendingConflict?
     @State private var showKey = false
+    @State private var showAppSettings = false
 
     var body: some View {
         NavigationStack {
@@ -54,11 +55,13 @@ struct HomeView: View {
                     updateBanner
                 }
                 StatusHeaderBar()
-                HStack(spacing: 10) {
-                    snapshotTag
+                HStack(alignment: .center, spacing: 10) {
+                    if mode == .off { markIntentsPill }
+                    Spacer()
                     VisibilityToolbar(layers: $layers)
                 }
                 .padding(.horizontal).padding(.top, 2)
+                homeNotesBar
                 MarkIntentsToolbar(mode: $mode, offBrush: $offBrush, workBrush: $workBrush)
                 Divider()
 
@@ -89,10 +92,16 @@ struct HomeView: View {
                         .accessibilityLabel("Color key")
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button { showTradeSettings = true } label: { Image(systemName: "gearshape") }
+                    Menu {
+                        Button { showTradeSettings = true } label: { Label("Trade Settings", systemImage: "arrow.left.arrow.right") }
+                        Button { showAppSettings = true } label: { Label("App Settings", systemImage: "gearshape") }
+                    } label: {
+                        Image(systemName: "gearshape")
+                    }
                 }
             }
             .sheet(isPresented: $showTradeSettings) { TradeSettingsSheet() }
+            .sheet(isPresented: $showAppSettings) { SettingsView() }
             .sheet(isPresented: $showKey) { IntentKeySheet() }
             .sheet(item: $editTarget) { target in
                 DayIntentEditor(target: target)
@@ -117,6 +126,10 @@ struct HomeView: View {
                 Text("This day is already marked \"\(pendingConflict?.existing ?? "")\". Overwrite it?")
             }
             .onAppear(perform: reconcileSnapshot)
+            .onChange(of: mode) { _, new in
+                // Finished marking → publish updated availability pills for matching.
+                if new == .off { Task { await TradeProfileStore.shared.publishMine() } }
+            }
         }
     }
 
@@ -171,14 +184,28 @@ struct HomeView: View {
 
     // MARK: Pieces
 
-    private var snapshotTag: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "arrow.triangle.2.circlepath").font(.caption2)
-            Text(lastSyncText).font(.caption2)
-            Spacer()
+    /// Enters Mark-Intents (edit) mode — lives on the left of the header row.
+    private var markIntentsPill: some View {
+        Button { withAnimation(.snappy) { mode = .workingShifts } } label: {
+            Label("Mark Intents", systemImage: "pencil.and.list.clipboard")
+                .font(.subheadline.weight(.semibold))
+                .padding(.horizontal, 14).padding(.vertical, 7)
+                .background(Color.accentColor.opacity(0.14), in: Capsule())
         }
-        .foregroundStyle(.secondary)
-        .padding(.horizontal).padding(.vertical, 4)
+        .buttonStyle(.plain).tint(.accentColor)
+    }
+
+    /// Read-only one-line view of your private notes (from Trade Settings), swipe to
+    /// read overflow. Hidden when empty. No vertical padding — sits tight under the row.
+    @ViewBuilder private var homeNotesBar: some View {
+        if !settings.privateNotes.isEmpty {
+            ScrollView(.horizontal, showsIndicators: false) {
+                Text(settings.privateNotes)
+                    .font(.caption).foregroundStyle(.secondary)
+                    .lineLimit(1).fixedSize(horizontal: true, vertical: false)
+                    .padding(.horizontal)
+            }
+        }
     }
 
     private var updateBanner: some View {
@@ -203,12 +230,6 @@ struct HomeView: View {
         }
     }
 
-
-    private var lastSyncText: String {
-        guard let date = ShiftStore.shared.lastFetchDate else { return "Schedule not yet synced" }
-        let f = DateFormatter(); f.dateStyle = .medium; f.timeStyle = .short
-        return "Schedule updated: \(f.string(from: date))"
-    }
 
     // MARK: Actions
 
@@ -274,27 +295,10 @@ struct MarkIntentsToolbar: View {
 
     var body: some View {
         Group {
-            if mode == .off {
-                restingBar
-            } else {
+            if mode != .off {
                 editPanel.transition(.move(edge: .top).combined(with: .opacity))
             }
         }
-    }
-
-    /// Main View's resting state — clean, with one secondary entry into editing.
-    private var restingBar: some View {
-        HStack {
-            Spacer()
-            Button { withAnimation(.snappy) { mode = .workingShifts } } label: {
-                Label("Mark Intents", systemImage: "pencil.and.list.clipboard")
-                    .font(.subheadline.weight(.semibold))
-                    .padding(.horizontal, 14).padding(.vertical, 7)
-                    .background(Color.accentColor.opacity(0.14), in: Capsule())
-            }
-            .buttonStyle(.plain).tint(.accentColor)
-        }
-        .padding(.horizontal).padding(.vertical, 6)
     }
 
     /// Secondary edit panel: a two-way Working/Days-Off switch + brushes + Done.
@@ -378,6 +382,67 @@ struct MarkIntentsToolbar: View {
 /// A compact horizontal strip of icon toggles controlling which calendar layers
 /// are drawn — modeled on the dispatch desk's icon toolbar, with Slack-grade
 /// spacing and clear on/off states.
+/// Compact trade-status counters for the Home header — accepted / pending / denied
+/// (green / yellow / red) plus trade-requests-awaiting-you. Tap to open the dashboard.
+struct HomeStatusCounters: View {
+    private var messaging = MessagingStore.shared
+    private var history = TradeHistoryStore.shared
+    let action: () -> Void
+
+    init(action: @escaping () -> Void) { self.action = action }
+
+    private var counts: DashboardCounts {
+        DashboardCounts.from(requests: messaging.requests,
+                             responses: messaging.responses,
+                             unread: messaging.pendingIncoming.count,
+                             pendingLedger: history.pendingCount)
+    }
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 9) {
+                badge(counts.accepted, BrickPalette.clear, "checkmark.seal.fill", "Accepted")
+                badge(counts.pending, BrickPalette.caution, "clock.fill", "Pending")
+                badge(counts.denied, BrickPalette.critical, "xmark.octagon.fill", "Denied")
+                badge(counts.unread, BrickPalette.info, "bubble.left.fill", "Trade requests")
+            }
+            .frame(height: 26)
+            .padding(.horizontal, 8).padding(.vertical, 3)
+            .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 9))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func badge(_ n: Int, _ tint: Color, _ symbol: String, _ label: String) -> some View {
+        HStack(spacing: 3) {
+            Image(systemName: symbol).font(.system(size: 12, weight: .semibold)).foregroundStyle(tint)
+            Text("\(n)").font(.footnote.monospacedDigit().weight(.semibold))
+                .foregroundStyle(n > 0 ? .primary : .secondary)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(label): \(n)")
+    }
+}
+
+/// Compact "last synced" line, shown under the Home status counters.
+struct SyncTag: View {
+    private var store = ShiftStore.shared
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "arrow.triangle.2.circlepath")
+            Text(text)
+        }
+        .font(.caption2).foregroundStyle(.secondary)
+    }
+
+    private var text: String {
+        guard let date = store.lastFetchDate else { return "Not synced yet" }
+        let f = DateFormatter(); f.dateFormat = "MMM d, h:mm a"
+        return "Synced \(f.string(from: date))"
+    }
+}
+
 struct VisibilityToolbar: View {
     @Binding var layers: LayerVisibility
 
@@ -385,7 +450,6 @@ struct VisibilityToolbar: View {
         HStack(spacing: 2) {
             toggle("note.text", on: $layers.notes, label: "Notes")
             toggle("paintpalette.fill", on: $layers.intentOverlays, label: "Intent colors")
-            toggle("a.circle.fill", on: $layers.availability, label: "Availability")
         }
         .padding(3)
         .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 9))

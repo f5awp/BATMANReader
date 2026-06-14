@@ -32,6 +32,19 @@ enum TradeOpenness: String, CaseIterable, Sendable {
     }
 }
 
+/// A temporary openness change for a specific date range that overrides the base
+/// openness while it exists. E.g. base "Bookends", but "Open to all" for Jul 1–10.
+/// Inclusive ISO day bounds; string compare works for "yyyy-MM-dd".
+struct OpennessOverride: Codable, Sendable, Hashable, Identifiable {
+    let id: String
+    var startDay: String          // ISO "yyyy-MM-dd"
+    var endDay: String            // ISO inclusive
+    var opennessRaw: String
+
+    var openness: TradeOpenness { TradeOpenness(rawValue: opennessRaw) ?? .all }
+    func covers(_ dayID: String) -> Bool { dayID >= startDay && dayID <= endDay }
+}
+
 // MARK: - Desk → region / qualification rules
 
 enum DeskRegion: String, Sendable, CaseIterable {
@@ -248,7 +261,7 @@ enum TradeMatcher {
     static func twoWayExplore(withWorker workerID: String, name: String,
                               windowStart: Date, windowEnd: Date,
                               mySeeking: Set<String>, theirSeeking: Set<String>,
-                              myProfile: TradeProfile, myID: String,
+                              myProfile: TradeProfile, theirProfile: TradeProfile, myID: String,
                               ignoreOwnBlacklist: Bool = false) async -> TwoWayPlan {
         let cal = Calendar.current
         let myEntries = await RosterStore.shared.schedule(forWorker: myID)
@@ -259,8 +272,8 @@ enum TradeMatcher {
 
         func inWindow(_ d: Date) -> Bool { d >= windowStart && d < windowEnd }
 
-        // You take ← their work days you can cover (off + qualified + rested + not
-        // blacklisted) that are a bookend for YOU.
+        // You take ← their work days you can cover (off + qualified + rested) that
+        // pass YOUR rules (availability/openness/bookend/blacklist/mercenary/cap).
         var iTake: [TwoWayLeg] = []
         for pe in pEntries where !pe.isOff {
             guard let day = dateFromISO(pe.day), inWindow(day),
@@ -270,32 +283,36 @@ enum TradeMatcher {
             let weekday = cal.component(.weekday, from: day)
             let region  = DeskRules.region(forDesk: pe.desk).rawValue
             let type    = ShiftAvailabilityType.infer(fromStartHour: pe.startHour).rawValue
-            // Active-outbound override: the blacklist OWNER doing a manual search
-            // can choose to see (and override) their own blocked slots.
-            if !ignoreOwnBlacklist {
-                if myProfile.blacklistedWeekdays.contains(weekday) { continue }
-                if myProfile.blacklistedDesks.contains(pe.desk) { continue }
-                if myProfile.blacklistedShiftTypes.contains(type) { continue }
-                if myProfile.blacklistedRegions.contains(region) { continue }
-            }
-            // Hard: my weekly-hour cap — covering this shift can't blow my limit.
+            let bookend = anchored(day: day, map: myMap, plan: [pe.day], cal: cal)
+            // Hard: my weekly-hour cap.
             if let cap = SettingsManager.shared.maxWeeklyHours,
                weeklyWorkedHours(map: myMap, around: day, cal: cal) + 9 > cap { continue }
-            guard anchored(day: day, map: myMap, plan: [pe.day], cal: cal) else { continue }
+            // My rules — unless the owner is overriding their own restrictions.
+            if !ignoreOwnBlacklist {
+                guard myProfile.wouldPickUp(onDay: pe.day, weekday: weekday, desk: pe.desk,
+                                            shiftType: type, region: region, isBookend: bookend) else { continue }
+            }
             iTake.append(TwoWayLeg(dayID: pe.day, date: day, desk: pe.desk, startHour: pe.startHour,
-                                   bookend: true, wanted: theirSeeking.contains(pe.day)))
+                                   bookend: bookend, wanted: theirSeeking.contains(pe.day)))
         }
 
-        // You give → your work days they can cover that are a bookend for THEM.
+        // You give → your work days they can cover that pass THEIR rules.
         var iGive: [TwoWayLeg] = []
         for me in myEntries where !me.isOff {
             guard let day = dateFromISO(me.day), inWindow(day),
                   let pe = pMap[me.day], pe.isOff,
                   DeskRules.qualified(quals: pe.quals, forDesk: me.desk),
                   rested(map: pMap, day: day, startHour: me.startHour, cal: cal) else { continue }
-            guard anchored(day: day, map: pMap, plan: [me.day], cal: cal) else { continue }
+            let weekday = cal.component(.weekday, from: day)
+            let region  = DeskRules.region(forDesk: me.desk).rawValue
+            let type    = ShiftAvailabilityType.infer(fromStartHour: me.startHour).rawValue
+            let bookend = anchored(day: day, map: pMap, plan: [me.day], cal: cal)
+            if let cap = theirProfile.maxWeeklyHours,
+               weeklyWorkedHours(map: pMap, around: day, cal: cal) + 9 > cap { continue }
+            guard theirProfile.wouldPickUp(onDay: me.day, weekday: weekday, desk: me.desk,
+                                           shiftType: type, region: region, isBookend: bookend) else { continue }
             iGive.append(TwoWayLeg(dayID: me.day, date: day, desk: me.desk, startHour: me.startHour,
-                                   bookend: true, wanted: mySeeking.contains(me.day)))
+                                   bookend: bookend, wanted: mySeeking.contains(me.day)))
         }
 
         let order: (TwoWayLeg, TwoWayLeg) -> Bool = { ($0.wanted ? 0 : 1, $0.date) < ($1.wanted ? 0 : 1, $1.date) }
@@ -337,9 +354,9 @@ enum TradeMatcher {
             let weekday = cal.component(.weekday, from: day)
             let region  = DeskRules.region(forDesk: s.desk).rawValue
             let type    = ShiftAvailabilityType.infer(fromStartHour: s.startHour).rawValue
-            guard theirProfile.acceptsPickup(weekday: weekday, desk: s.desk, shiftType: type, region: region) else { continue }
-            if theirProfile.opennessLevel != .all,
-               !anchored(day: day, map: pMap, plan: [key], cal: cal) { continue }
+            let bookend = anchored(day: day, map: pMap, plan: [key], cal: cal)
+            guard theirProfile.wouldPickUp(onDay: key, weekday: weekday, desk: s.desk,
+                                           shiftType: type, region: region, isBookend: bookend) else { continue }
             countedGive.insert(key); a += 1
         }
         // B — their marked days YOU would take (your openness + blacklist).
@@ -352,9 +369,9 @@ enum TradeMatcher {
             let weekday = cal.component(.weekday, from: day)
             let region  = DeskRules.region(forDesk: pe.desk).rawValue
             let type    = ShiftAvailabilityType.infer(fromStartHour: pe.startHour).rawValue
-            guard myProfile.acceptsPickup(weekday: weekday, desk: pe.desk, shiftType: type, region: region) else { continue }
-            if myProfile.opennessLevel != .all,
-               !anchored(day: day, map: myMap, plan: [dayID], cal: cal) { continue }
+            let bookend = anchored(day: day, map: myMap, plan: [dayID], cal: cal)
+            guard myProfile.wouldPickUp(onDay: dayID, weekday: weekday, desk: pe.desk,
+                                        shiftType: type, region: region, isBookend: bookend) else { continue }
             b += 1
         }
         return a + b
@@ -425,11 +442,18 @@ enum TradeMatcher {
         return stale
     }
 
-    /// A worker's day → "A"/"P"/"M" (or "" when off) map, for the mini-schedule glance.
-    static func dayLetters(forWorker workerID: String) async -> [String: String] {
+    /// A worker's day → "AM 82" type+desk label ("" when off), for the larger
+    /// trade calendars.
+    static func dayLabels(forWorker workerID: String) async -> [String: String] {
         let entries = await RosterStore.shared.schedule(forWorker: workerID)
         var map: [String: String] = [:]
-        for e in entries { map[e.day] = e.isOff ? "" : typeLetter(e.startHour) }
+        for e in entries {
+            if e.isOff { map[e.day] = "" }
+            else {
+                let type = ShiftAvailabilityType.infer(fromStartHour: e.startHour).rawValue
+                map[e.day] = e.desk.isEmpty ? type : "\(type) \(e.desk)"
+            }
+        }
         return map
     }
 

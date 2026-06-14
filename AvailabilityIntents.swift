@@ -1,8 +1,10 @@
 // AvailabilityIntents.swift
-// App Intents for the shared dispatcher availability system.
+// App Intents for finding trade candidates from the v2 trade-profile system
+// (published availability pills / openness in CloudKit — the same data the in-app
+// matcher uses), so Siri/Shortcuts results match what the app would surface.
 //
 // ── Intent: GetAvailableDispatchersIntent ─────────────────────────────
-// Returns dispatchers who posted availability on a given date.
+// Returns dispatchers whose published profile shows them available on a given date.
 // Filter by AM / PM / MID shift type or get all.
 // Returns a list of AvailableDispatcherEntity — each one has the
 // dispatcher's name and availability type for use in Shortcuts.
@@ -79,35 +81,34 @@ struct AvailableDispatcherQuery: EntityQuery {
         []
     }
 
+    @MainActor
     func suggestedEntities() async throws -> [AvailableDispatcherEntity] {
-        // Return tomorrow's candidates as suggestions
+        // Tomorrow's candidates, from the live v2 trade profiles.
         let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: Date())!
-        return await AvailabilityManager.shared
-            .allOtherDispatchersAvailable(on: tomorrow)
-            .map { $0.toEntity() }
+        await TradeProfileStore.shared.refreshOthers()
+        return TradeProfileStore.shared.availableDispatchers(on: tomorrow, type: nil)
+            .map { AvailableDispatcherEntity.make(profile: $0.profile, type: $0.type, on: tomorrow) }
     }
 }
 
-// MARK: - Conversion
+// MARK: - Conversion (from a published v2 TradeProfile)
 
-extension DispatcherAvailabilityEntry {
+extension AvailableDispatcherEntity {
 
-    func toEntity() -> AvailableDispatcherEntity {
-        let f = DateFormatter()
-        f.dateStyle = .long
-        f.timeStyle = .none
+    static func make(profile: TradeProfile, type: ShiftAvailabilityType, on date: Date) -> AvailableDispatcherEntity {
+        let long = DateFormatter(); long.dateStyle = .long; long.timeStyle = .none
+        let iso  = DateFormatter(); iso.dateFormat = "yyyy-MM-dd"
 
-        let firstName = name.components(separatedBy: ",").last?
-            .trimmingCharacters(in: .whitespaces) ?? name
-
-        let body = "Hi \(firstName), are you interested in a trade on \(f.string(from: date))? I'm looking to trade my shift — let me know!"
+        let firstName = profile.displayName.components(separatedBy: ",").last?
+            .trimmingCharacters(in: .whitespaces) ?? profile.displayName
+        let body = "Hi \(firstName), are you interested in a trade on \(long.string(from: date))? I'm looking to trade my shift — let me know!"
 
         return AvailableDispatcherEntity(
-            id:          id,
-            name:        name,
-            shiftType:   availability.rawValue,
-            dateString:  f.string(from: date),
-            isoDate:     isoDate,
+            id:          "\(profile.workerID)-\(iso.string(from: date))-\(type.rawValue)",
+            name:        profile.displayName,
+            shiftType:   type.rawValue,
+            dateString:  long.string(from: date),
+            isoDate:     iso.string(from: date),
             messageBody: body
         )
     }
@@ -119,7 +120,7 @@ struct GetAvailableDispatchersIntent: AppIntent {
 
     static var title: LocalizedStringResource = "Get Available Dispatchers"
     static var description = IntentDescription(
-        "Returns dispatchers who posted availability on the shared calendar for a given date. Filter by AM, PM, or MID shift type to find trade candidates."
+        "Returns dispatchers whose published trade profile shows them available on a given date. Filter by AM, PM, or MID shift type to find trade candidates."
     )
     static var openAppWhenRun: Bool = false
 
@@ -133,20 +134,20 @@ struct GetAvailableDispatchersIntent: AppIntent {
     )
     var shiftTypeFilter: ShiftAvailabilityType?
 
+    @MainActor
     func perform() async throws -> some IntentResult
         & ReturnsValue<[AvailableDispatcherEntity]>
         & ProvidesDialog {
 
-        let dispatchers = await AvailabilityManager.shared.otherDispatchersAvailable(
-            on:       date,
-            filterBy: shiftTypeFilter
-        )
+        // Pull the latest published profiles, then query the v2 availability pills.
+        await TradeProfileStore.shared.refreshOthers()
+        let matches = TradeProfileStore.shared.availableDispatchers(on: date, type: shiftTypeFilter)
 
         let f = DateFormatter()
         f.dateStyle = .medium
         let dateStr    = f.string(from: date)
         let filterStr  = shiftTypeFilter.map { "\($0.rawValue) " } ?? ""
-        let entities   = dispatchers.map { $0.toEntity() }
+        let entities   = matches.map { AvailableDispatcherEntity.make(profile: $0.profile, type: $0.type, on: date) }
 
         let dialog: IntentDialog
         if entities.isEmpty {

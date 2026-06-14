@@ -17,6 +17,8 @@ struct TradeByIntentsFeed: View {
     @State private var execRoute: NWayRoute?
     @State private var sentMessage: String?
     @State private var selectedTier: SolutionTier = .matchingIntents
+    @State private var detailPackage: TradePackage?
+    @State private var showTierInfo = false
 
     private func routes(_ tier: SolutionTier) -> [NWayRoute] {
         tiers.first { $0.tier == tier }?.routes ?? []
@@ -33,11 +35,12 @@ struct TradeByIntentsFeed: View {
                 }
 
                 if !packages.isEmpty {
-                    sectionHeader("Packages", "Cover all your give-away days — fewest people first")
+                    sectionHeader("Packages", "Swap away all your selected days — fewest people first")
                     ForEach(packages) { pkg in
                         PackageCard(package: pkg,
                                     onPropose: { Task { await propose(pkg) } },
-                                    onExecute: { if let r = pkg.route { execRoute = r } })
+                                    onExecute: { if let r = pkg.route { execRoute = r } },
+                                    onOpen: { detailPackage = pkg })
                     }
                 }
 
@@ -56,10 +59,18 @@ struct TradeByIntentsFeed: View {
                     let r = routes(selectedTier)
                     HStack {
                         Text(selectedTier.label).font(.headline)
+                        Button { showTierInfo = true } label: {
+                            Image(systemName: "info.circle").font(.subheadline)
+                        }
+                        .accessibilityLabel("What do these tiers mean?")
                         Spacer()
                         Text("^[\(r.count) match](inflect: true)").font(.subheadline).foregroundStyle(.secondary)
                     }
                     .padding(.horizontal)
+                    Text(tierExplain(selectedTier))
+                        .font(.caption).foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal)
                     if r.isEmpty {
                         Text("No matches in this tier.").font(.caption).foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity).padding(.vertical, 20)
@@ -71,11 +82,19 @@ struct TradeByIntentsFeed: View {
                         }
                     }
                 }
+
+                if !loading { TradeFeedKey().padding(.horizontal).padding(.top, 8) }
             }
             .padding(.bottom, 24)
         }
         .fullScreenCover(item: $twoWayCandidate) { TwoWaySheet(candidate: $0) }
+        .fullScreenCover(item: $detailPackage) { pkg in
+            PackageDetailView(package: pkg,
+                              onPropose: { Task { await propose(pkg) } },
+                              onExecute: { if let r = pkg.route { execRoute = r } })
+        }
         .sheet(item: $execRoute) { ExecutionConfirmationView(route: $0) }
+        .sheet(isPresented: $showTierInfo) { TierLegendSheet() }
         .task { await reload() }
         .onChange(of: whatIf) { _, _ in Task { await reload() } }
         .alert("Package sent", isPresented: Binding(
@@ -104,6 +123,20 @@ struct TradeByIntentsFeed: View {
         }
     }
 
+    /// One-line plain-English meaning of each match tier, shown under the tabs.
+    private func tierExplain(_ t: SolutionTier) -> String {
+        switch t {
+        case .matchingIntents:
+            return "Best matches: you want to give the day away AND they want to pick it up — wanted on both sides."
+        case .intentsAndBookends:
+            return "Intent matches plus bookend pickups — the day attaches to the edge of their work block, so no one's break gets split."
+        case .neutralOptimization:
+            return "They didn't ask for these days, but their openness allows the pickup. A clean swap that simply works out."
+        case .globalPool:
+            return "Every legal swap in the pool, including looser matches. The widest net — use when the cleaner tiers are empty."
+        }
+    }
+
     private func sectionHeader(_ title: String, _ subtitle: String) -> some View {
         VStack(alignment: .leading, spacing: 1) {
             Text(title).font(.title3.bold())
@@ -126,12 +159,12 @@ struct TradeByIntentsFeed: View {
     private func propose(_ pkg: TradePackage) async {
         for a in pkg.assignments {
             await MessagingStore.shared.sendRequest(
-                to: a.workerID, toName: a.name,
-                note: "Please cover my shift(s): \(a.dayIDs.map { prettyDay($0) }.joined(separator: ", "))",
-                take: [], give: a.dayIDs)
+                to: a.workerID, toName: a.name, note: swapNote(a),
+                take: a.takeDayIDs, give: a.giveDayIDs)
         }
         WidgetData.update()
-        sentMessage = "Sent to ^[\(pkg.assignments.count) dispatcher](inflect: true). Track replies in your Inbox."
+        let n = pkg.assignments.count
+        sentMessage = "Sent to \(n) dispatcher\(n == 1 ? "" : "s"). Track replies in your Inbox."
     }
 
     /// 2-participant routes reopen the rich two-way sheet (it re-explores by ID).
@@ -143,6 +176,90 @@ struct TradeByIntentsFeed: View {
     }
 }
 
+// MARK: - Feed key (explains the chips, flame, and quality pills)
+
+/// A compact legend at the bottom of the Intents feed, mirroring the trade-calendar key.
+struct TradeFeedKey: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Key").font(.caption.weight(.bold)).foregroundStyle(.secondary)
+            HStack(spacing: 14) {
+                chip("You give", BrickPalette.mineScheme)
+                chip("You get", BrickPalette.peerScheme)
+                Label("Mutual intent", systemImage: "flame.fill")
+                    .font(.caption2).foregroundStyle(.orange)
+            }
+            HStack(spacing: 10) {
+                pill("Optimal", .green); Text("fewest people").font(.caption2).foregroundStyle(.secondary)
+                pill("Fast", .secondary); Text("quick match").font(.caption2).foregroundStyle(.secondary)
+                pill("Circular", .indigo); Text("loop").font(.caption2).foregroundStyle(.secondary)
+            }
+            .lineLimit(1).minimumScaleFactor(0.7)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(DS.cardPadding)
+        .background(.bar, in: RoundedRectangle(cornerRadius: DS.cardRadius))
+    }
+
+    private func chip(_ label: String, _ color: Color) -> some View {
+        HStack(spacing: DS.xs) {
+            Capsule().fill(color.opacity(DS.pillFill)).frame(width: 16, height: 13)
+                .overlay(Capsule().stroke(color.opacity(0.5), lineWidth: 0.5))
+            Text(label).font(.caption2)
+        }
+    }
+
+    private func pill(_ text: String, _ color: Color) -> some View {
+        Text(text.uppercased())
+            .font(.dsBadge)
+            .padding(.horizontal, 6).padding(.vertical, 2)
+            .background(color.opacity(DS.pillFill), in: Capsule())
+            .foregroundStyle(color)
+    }
+}
+
+// MARK: - Swap day chips (give = blue, get = red) — shared by route & package cards
+
+/// Compact day chips for a swap: which days YOU give (blue) and get (red), matching
+/// the calendar color language. Overflow collapses to "+N".
+struct SwapChips: View {
+    let giveDays: [String]
+    let getDays: [String]
+    var giveLabel = "You give"
+    var getLabel = "You get"
+    var maxChips = 5
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            if !giveDays.isEmpty { row(giveLabel, giveDays, BrickPalette.mineScheme) }
+            if !getDays.isEmpty  { row(getLabel,  getDays,  BrickPalette.peerScheme) }
+        }
+    }
+
+    private func row(_ label: String, _ days: [String], _ color: Color) -> some View {
+        HStack(spacing: DS.xs + 1) {
+            Text(label).font(.dsLabel).foregroundStyle(color)
+                .frame(width: 50, alignment: .leading)
+            ForEach(days.prefix(maxChips), id: \.self) { iso in
+                Text(Self.chipDay(iso))
+                    .font(.dsChip)
+                    .padding(.horizontal, 7).padding(.vertical, 2)
+                    .background(color.opacity(DS.pillFill), in: Capsule())
+                    .foregroundStyle(color)
+            }
+            if days.count > maxChips {
+                Text("+\(days.count - maxChips)").font(.dsBadge).foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    static func chipDay(_ iso: String) -> String {
+        guard let d = TradeMatcher.dayDate(fromISO: iso) else { return iso }
+        let f = DateFormatter(); f.dateFormat = "MMM d"; return f.string(from: d)
+    }
+}
+
 // MARK: - Route card (direct swap vs. circular chain)
 
 struct RouteCard: View {
@@ -150,11 +267,13 @@ struct RouteCard: View {
     let onOpenSwap: () -> Void
     let onExecute: () -> Void
 
-    @State private var miniDays: [MiniDay] = []
-
+    private var myID: String { SettingsManager.shared.username }
     private var peerID: String {
         route.participants.count == 2 ? route.participants[1] : route.participants[0]
     }
+    // This swap's actual days, from the legs: from me = you give, to me = you get.
+    private var myGive: [String] { route.legs.filter { $0.fromID == myID }.map(\.dayID) }
+    private var myGet:  [String] { route.legs.filter { $0.toID == myID }.map(\.dayID) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -164,23 +283,22 @@ struct RouteCard: View {
                 chain
             }
         }
-        .padding(12)
-        .background(.bar, in: RoundedRectangle(cornerRadius: 12))
+        .padding(DS.cardPadding)
+        .background(.bar, in: RoundedRectangle(cornerRadius: DS.cardRadius))
         .padding(.horizontal)
-        .task {
-            // Direct 1-to-1 cards keep a mini-schedule of the peer's next 2 weeks.
-            if route.participants.count <= 2 { miniDays = await Self.loadMini(workerID: peerID) }
-        }
     }
 
-    // Direct 1-to-1: name + status + a mini-schedule + open the two-way sheet.
+    // Direct 1-to-1: avatar + name + status, this swap's give/get days, open the sheet.
     private var directSwap: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(participantName(peerID)).font(.subheadline.bold())
-                    if let status = participantStatus(peerID) {
-                        Text(status).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center, spacing: 8) {
+                Avatar(name: participantName(peerID), id: peerID, size: 30)
+                VStack(alignment: .leading, spacing: 1) {
+                    HStack(spacing: 6) {
+                        Text(participantName(peerID)).font(.subheadline.bold())
+                        if let status = participantStatus(peerID) {
+                            Text(status).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                        }
                     }
                     if route.tier == .matchingIntents {
                         Label("Mutual intent", systemImage: "flame.fill")
@@ -191,42 +309,14 @@ struct RouteCard: View {
                 Button("Open swap", action: onOpenSwap)
                     .buttonStyle(.borderedProminent).controlSize(.small)
             }
-            if !miniDays.isEmpty { miniSchedule }
+            SwapChips(giveDays: myGive, getDays: myGet)
         }
     }
 
-    private var miniSchedule: some View {
-        HStack(spacing: 3) {
-            ForEach(miniDays) { d in
-                VStack(spacing: 1) {
-                    Text(d.weekday).font(.system(size: 8)).foregroundStyle(.secondary)
-                    Text(d.letter.isEmpty ? "·" : d.letter)
-                        .font(.system(size: 10, weight: .bold))
-                        .frame(width: 16, height: 16)
-                        .background(d.letter.isEmpty ? Color.clear : Color.accentColor.opacity(0.18),
-                                    in: RoundedRectangle(cornerRadius: 4))
-                }
-            }
-        }
-    }
-
-    /// The peer's next 14 days as weekday + shift letter.
-    static func loadMini(workerID: String) async -> [MiniDay] {
-        let letters = await TradeMatcher.dayLetters(forWorker: workerID)
-        let cal = Calendar.current
-        let iso = DateFormatter(); iso.dateFormat = "yyyy-MM-dd"
-        let wf = DateFormatter(); wf.dateFormat = "EEEEE"   // single-letter weekday
-        let today = cal.startOfDay(for: Date())
-        return (0..<14).compactMap { off in
-            guard let d = cal.date(byAdding: .day, value: off, to: today) else { return nil }
-            let key = iso.string(from: d)
-            return MiniDay(id: key, weekday: wf.string(from: d), letter: letters[key] ?? "")
-        }
-    }
-
-    // Circular: A ➔ B ➔ C with names + statuses, no mini-schedule.
+    // Circular: a row per person showing exactly what THEY give and get, so a
+    // 3-/4-way loop is unambiguous (not just your own side).
     private var chain: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 6) {
                 Image(systemName: "arrow.triangle.2.circlepath").foregroundStyle(.indigo)
                 Text("\(route.participants.count)-way trade").font(.subheadline.bold())
@@ -235,19 +325,27 @@ struct RouteCard: View {
                     .buttonStyle(.borderedProminent).controlSize(.small)
             }
             ForEach(Array(route.participants.enumerated()), id: \.offset) { idx, pid in
-                HStack(spacing: 6) {
-                    Image(systemName: idx == 0 ? "person.fill" : "arrow.turn.down.right")
-                        .font(.caption2).foregroundStyle(.secondary)
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(participantName(pid)).font(.caption.weight(.semibold))
-                        if let status = participantStatus(pid) {
-                            Text(status).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
+                HStack(alignment: .top, spacing: 8) {
+                    Avatar(name: participantName(pid), id: pid, size: 28)
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 6) {
+                            Text(pid == myID ? "You" : participantName(pid)).font(.subheadline.weight(.semibold))
+                            if let status = participantStatus(pid) {
+                                Text(status).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                            }
                         }
+                        // Each person gives one shift to the next and gets one from the previous.
+                        SwapChips(giveDays: legDays(from: pid), getDays: legDays(to: pid),
+                                  giveLabel: "Gives", getLabel: "Gets")
                     }
+                    Spacer(minLength: 0)
                 }
             }
         }
     }
+
+    private func legDays(from pid: String) -> [String] { route.legs.filter { $0.fromID == pid }.map(\.dayID) }
+    private func legDays(to pid: String)   -> [String] { route.legs.filter { $0.toID == pid }.map(\.dayID) }
 }
 
 // MARK: - Package card (one card per deal)
@@ -256,56 +354,231 @@ struct PackageCard: View {
     let package: TradePackage
     let onPropose: () -> Void
     let onExecute: () -> Void
+    var onOpen: () -> Void = {}
 
-    private var tagColor: Color { package.methodology == .greedy ? BrickPalette.clear : .indigo }
+    private var isCircular: Bool { package.methodology == .circular }
+
+    private var headline: String {
+        package.peopleCount == 1 ? "1-person swap" : "\(package.peopleCount)-person swap"
+    }
+    private var subtitle: String {
+        let days = package.allDayIDs.count
+        let kind = isCircular ? "circular loop" : (package.isOptimal ? "fewest people" : "quick match")
+        return "\(days) day\(days == 1 ? "" : "s") · \(kind)"
+    }
+    private var quality: (text: String, color: Color) {
+        if isCircular { return ("Circular", .indigo) }
+        return package.isOptimal ? ("Optimal", .green) : ("Fast", .secondary)
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                Text(package.methodology.rawValue)
-                    .font(.caption2.bold())
-                    .padding(.horizontal, 8).padding(.vertical, 3)
-                    .background(tagColor.opacity(0.20), in: Capsule())
-                    .foregroundStyle(tagColor)
-                Text("^[\(package.peopleCount) person](inflect: true) · ^[\(package.allDayIDs.count) day](inflect: true)")
-                    .font(.caption).foregroundStyle(.secondary)
-                if package.urgency >= 3 {
-                    Label("Urgent", systemImage: "exclamationmark.triangle.fill")
-                        .font(.caption2.bold()).foregroundStyle(BrickPalette.warning)
-                        .labelStyle(.titleAndIcon)
+        VStack(alignment: .leading, spacing: 12) {
+            // Header — headline value, metadata, quality + urgency.
+            HStack(spacing: 10) {
+                Image(systemName: isCircular ? "arrow.triangle.2.circlepath" : "person.2.fill")
+                    .font(.title3).foregroundStyle(quality.color)
+                    .frame(width: 30)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(headline).font(.subheadline.bold())
+                    Text(subtitle).font(.caption2).foregroundStyle(.secondary)
                 }
                 Spacer()
-                Button(package.methodology == .greedy ? "Propose" : "Execute") {
-                    package.methodology == .greedy ? onPropose() : onExecute()
+                VStack(alignment: .trailing, spacing: 4) {
+                    pill(quality.text, quality.color)
+                    if package.urgency >= 3 {
+                        Label("Urgent", systemImage: "exclamationmark.triangle.fill")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(BrickPalette.warning)
+                    }
+                }
+            }
+
+            Divider()
+
+            // One row per counterparty — avatar, name + status, this swap's days.
+            ForEach(package.assignments) { a in
+                HStack(alignment: .top, spacing: 10) {
+                    Avatar(name: a.name, id: a.workerID, size: 30)
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 6) {
+                            Text(a.name).font(.subheadline.weight(.semibold))
+                            if let s = participantStatus(a.workerID) {
+                                Text(s).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                            }
+                        }
+                        SwapChips(giveDays: a.giveDayIDs, getDays: a.takeDayIDs)
+                    }
+                    Spacer(minLength: 0)
+                }
+            }
+
+            Divider()
+
+            // Actions — primary commit + view on schedule.
+            HStack {
+                Button {
+                    isCircular ? onExecute() : onPropose()
+                } label: {
+                    Label(isCircular ? "Execute trade" : "Propose to all",
+                          systemImage: isCircular ? "arrow.triangle.2.circlepath" : "paperplane.fill")
                 }
                 .buttonStyle(.borderedProminent).controlSize(.small)
-            }
-            ForEach(package.assignments) { a in
-                HStack(alignment: .top, spacing: 8) {
-                    Avatar(name: a.name, id: a.workerID, size: 26)
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(a.name).font(.caption.weight(.semibold))
-                        if let s = participantStatus(a.workerID) {
-                            Text(s).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
-                        }
-                        Text("covers " + a.dayIDs.map { prettyDay($0) }.joined(separator: ", "))
-                            .font(.system(size: 11)).foregroundStyle(.secondary)
+                Spacer()
+                Button(action: onOpen) {
+                    HStack(spacing: 3) {
+                        Text("View on schedule").font(.caption.weight(.semibold))
+                        Image(systemName: "chevron.right").font(.caption2)
                     }
-                    Spacer()
+                    .foregroundStyle(.blue)
                 }
+                .buttonStyle(.plain)
             }
         }
-        .padding(12)
-        .background(.bar, in: RoundedRectangle(cornerRadius: 12))
+        .padding(DS.cardPadding)
+        .background(.bar, in: RoundedRectangle(cornerRadius: DS.cardRadius))
         .padding(.horizontal)
+        .contentShape(Rectangle())
+        .onTapGesture(perform: onOpen)
+    }
+
+    private func pill(_ text: String, _ color: Color) -> some View {
+        Text(text.uppercased())
+            .font(.dsBadge)
+            .padding(.horizontal, DS.s).padding(.vertical, 3)
+            .background(color.opacity(DS.pillFill), in: Capsule())
+            .foregroundStyle(color)
     }
 }
 
-/// One day in a route card's mini-schedule strip.
-struct MiniDay: Identifiable, Hashable {
-    let id: String       // ISO day
-    let weekday: String  // single-letter
-    let letter: String   // shift letter or ""
+// MARK: - Package detail (back-to-back calendars, per-trader tabs)
+
+struct PackageDetailView: View {
+    let package: TradePackage
+    let onPropose: () -> Void
+    let onExecute: () -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.horizontalSizeClass) private var hSize
+    @State private var sel = 0                       // selected other-trader tab
+    @State private var monthIndex = 0
+    @State private var myDays: [String: String] = [:]
+    @State private var peerDays: [String: [String: String]] = [:]
+    @State private var showIntents = true
+
+    private let cal = Calendar.current
+    private let youColor = BrickPalette.mineScheme
+    private let themColor = BrickPalette.peerScheme
+    private let monthOffsets = Array(0...12)
+    private static let monthF: DateFormatter = { let f = DateFormatter(); f.dateFormat = "MMMM yyyy"; return f }()
+    private var myID: String { SettingsManager.shared.username }
+
+    private var assignments: [PackageAssignment] { package.assignments }
+    private var current: PackageAssignment? { assignments.indices.contains(sel) ? assignments[sel] : nil }
+
+    /// My give-days (blue) and take-days (orange) across the whole package.
+    private var myGiveDays: Set<String> { Set(package.assignments.flatMap(\.giveDayIDs)) }
+    private var myTakeDays: Set<String> { Set(package.assignments.flatMap(\.takeDayIDs)) }
+
+    private var thisMonthStart: Date {
+        cal.date(from: cal.dateComponents([.year, .month], from: Date())) ?? Date()
+    }
+    private func monthAnchor(_ offset: Int) -> Date {
+        cal.date(byAdding: .month, value: offset, to: thisMonthStart) ?? thisMonthStart
+    }
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 12) {
+                if assignments.count > 1 {
+                    Picker("Trader", selection: $sel) {
+                        ForEach(assignments.indices, id: \.self) { i in Text(assignments[i].name).tag(i) }
+                    }
+                    .pickerStyle(.segmented).padding(.horizontal)
+                }
+
+                HStack {
+                    Button { if monthIndex > 0 { monthIndex -= 1 } } label: { Image(systemName: "chevron.left").font(.headline) }
+                        .disabled(monthIndex == 0)
+                    Spacer()
+                    Text(Self.monthF.string(from: monthAnchor(monthIndex))).font(.headline)
+                    Button { withAnimation { showIntents.toggle() } } label: {
+                        Image(systemName: showIntents ? "paintpalette.fill" : "paintpalette")
+                            .foregroundStyle(showIntents ? Color.accentColor : .secondary)
+                    }
+                    .accessibilityLabel(showIntents ? "Hide intent colors" : "Show intent colors")
+                    Spacer()
+                    Button { if monthIndex < monthOffsets.count - 1 { monthIndex += 1 } } label: { Image(systemName: "chevron.right").font(.headline) }
+                        .disabled(monthIndex >= monthOffsets.count - 1)
+                }
+                .padding(.horizontal)
+
+                TabView(selection: $monthIndex) {
+                    ForEach(monthOffsets, id: \.self) { off in
+                        calendars(for: off).tag(off).padding(.horizontal)
+                    }
+                }
+                .tabViewStyle(.page(indexDisplayMode: .never))
+
+                MiniScheduleLegend().padding(.horizontal)
+
+                Button {
+                    package.methodology == .greedy ? onPropose() : onExecute()
+                    dismiss()
+                } label: {
+                    Label(package.methodology == .greedy ? "Propose package" : "Execute trade",
+                          systemImage: package.methodology == .greedy ? "paperplane.fill" : "arrow.triangle.2.circlepath")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent).padding(.horizontal).padding(.bottom, 8)
+            }
+            .navigationTitle("Package")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } } }
+            .task { await load() }
+        }
+    }
+
+    @ViewBuilder private func calendars(for off: Int) -> some View {
+        ScrollView {
+            VStack(spacing: 16) {
+                MiniScheduleGrid(title: "You", days: myDays, month: monthAnchor(off),
+                                 accent: youColor,
+                                 giveDays: myGiveDays, takeDays: myTakeDays,
+                                 intent: myIntent,
+                                 topology: { DayIntentStore.shared.topology(forDay: $0) },
+                                 eventName: { TwoWaySheet.eventText($0, topology: DayIntentStore.shared.topology(forDay: $0), includePrivate: true) })
+                if let a = current {
+                    MiniScheduleGrid(title: a.name, days: peerDays[a.workerID] ?? [:], month: monthAnchor(off),
+                                     accent: themColor,
+                                     giveDays: Set(a.takeDayIDs), takeDays: Set(a.giveDayIDs),
+                                     intent: { peerIntent($0, workerID: a.workerID) },
+                                     topology: TwoWaySheet.globalTopology, eventName: TwoWaySheet.globalEvent)
+                }
+            }
+        }
+    }
+
+    /// My intents on the "You" calendar (hidden when the overlay toggle is off).
+    private func myIntent(_ day: String) -> Color? {
+        guard showIntents else { return nil }
+        if let w = DayIntentStore.shared.workingIntent(forDay: day) { return w.brickColor }
+        if let o = DayIntentStore.shared.offIntent(forDay: day) { return o.brickColor }
+        return nil
+    }
+
+    /// A peer's published intent (days they're seeking to trade away) as a corner chip.
+    private func peerIntent(_ day: String, workerID: String) -> Color? {
+        guard showIntents else { return nil }
+        let seeks = TradeProfileStore.shared.profile(forWorker: workerID)?.seekingDayIDs ?? []
+        return seeks.contains(day) ? BrickPalette.change : nil
+    }
+
+    private func load() async {
+        myDays = await TradeMatcher.dayLabels(forWorker: myID)
+        for a in assignments where peerDays[a.workerID] == nil {
+            peerDays[a.workerID] = await TradeMatcher.dayLabels(forWorker: a.workerID)
+        }
+    }
 }
 
 // MARK: - Execution confirmation (checkout)
@@ -398,4 +671,92 @@ func participantStatus(_ id: String) -> String? {
 func prettyDay(_ iso: String) -> String {
     guard let d = TradeMatcher.dayDate(fromISO: iso) else { return iso }
     let f = DateFormatter(); f.dateFormat = "EEE, MMM d"; return f.string(from: d)
+}
+
+/// Human-readable reciprocal-swap note for a package assignment.
+func swapNote(_ a: PackageAssignment) -> String {
+    var parts: [String] = []
+    if !a.takeDayIDs.isEmpty { parts.append("I take your \(a.takeDayIDs.map(prettyDay).joined(separator: ", "))") }
+    if !a.giveDayIDs.isEmpty { parts.append("you take my \(a.giveDayIDs.map(prettyDay).joined(separator: ", "))") }
+    return parts.isEmpty ? "Trade proposal." : "Swap: " + parts.joined(separator: "; ") + "."
+}
+
+// MARK: - Tier + mini-schedule legend
+
+/// Explains the four match tiers and the dual mini-schedule color language.
+struct TierLegendSheet: View {
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("Match tiers") {
+                    tierRow("Intents", "flame.fill", .orange,
+                            "Wanted on BOTH sides — you want to give the day away and they want to pick it up. The strongest matches; propose these first.")
+                    tierRow("Bookends", "book.fill", .blue,
+                            "Intent matches plus bookend pickups: the day attaches to the edge of their existing work block, so nobody's break gets split by an isolated day.")
+                    tierRow("Neutral", "equal.circle.fill", .secondary,
+                            "They didn't specifically ask for these days, but their openness setting allows the pickup. A clean swap that just works out.")
+                    tierRow("All", "circle.grid.2x2.fill", .indigo,
+                            "Every legal swap in the pool, including looser matches. The widest net — use when the cleaner tiers come up empty.")
+                }
+
+                Section("Reading the mini-schedule") {
+                    Text("When you open a match, two calendars show the swap on each person's real schedule. You read blue (your schedule); the other person reads red (theirs) — so a swapped shift looks like it belongs to whichever side it lands on:")
+                        .font(.subheadline)
+                    legendRow(border: BrickPalette.mineScheme, fill: nil,
+                              title: "A day you give away",
+                              detail: "Blue border (you give). On their calendar the same day is a red fill (they get).")
+                    legendRow(border: nil, fill: BrickPalette.mineScheme,
+                              title: "A day you pick up",
+                              detail: "Blue fill (you get). On their calendar it's a red border (they give).")
+                    HStack(spacing: 10) {
+                        BrickPalette.change.frame(width: 18, height: 6).clipShape(Capsule())
+                        Text("A thick bar along the bottom marks intent (e.g. a day they're seeking). Tap the 🎨 to hide it.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    .padding(.top, 2)
+                    HStack(spacing: 10) {
+                        Circle().fill(BrickPalette.highImpact).frame(width: 16, height: 16)
+                        Circle().fill(BrickPalette.personalDay).frame(width: 16, height: 16)
+                        Text("Gold = high-impact day, pink = personal day. Tap one to see what it is.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    HStack(spacing: 10) {
+                        Circle().fill(BrickPalette.mineScheme).frame(width: 18, height: 18)
+                        Text("Today (a blue ring when it lands on a gold/pink day). Faint days are the previous/next month.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .navigationTitle("What the tiers mean")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+        }
+    }
+
+    private func tierRow(_ name: String, _ icon: String, _ tint: Color, _ desc: String) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: icon).foregroundStyle(tint).frame(width: 24)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(name).font(.subheadline.weight(.semibold))
+                Text(desc).font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func legendRow(border: Color?, fill: Color?, title: String, detail: String) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            RoundedRectangle(cornerRadius: 5)
+                .fill((fill ?? Color(.systemGray5)).opacity(fill == nil ? 1 : 0.5))
+                .frame(width: 26, height: 26)
+                .overlay(RoundedRectangle(cornerRadius: 5).stroke(border ?? .clear, lineWidth: 3))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.subheadline.weight(.semibold))
+                Text(detail).font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .padding(.vertical, 2)
+    }
 }

@@ -244,6 +244,14 @@ struct SettingsView: View {
                     }
 
                     Button {
+                        let fails = TradeEngineTests.runAll()
+                        debugMessage = fails.isEmpty
+                            ? "✅ All engine tests passed."
+                            : "Engine test failures:\n" + fails.joined(separator: "\n")
+                    } label: {
+                        Label("Run engine tests", systemImage: "checkmark.shield.fill")
+                    }
+                    Button {
                         Task { @MainActor in
                             let n = await TradeProfileStore.shared.seedFromRoster()
                             debugMessage = n == 0

@@ -1,327 +1,13 @@
 // AvailabilityView.swift
-// Two-section view:
-//   1. My Availability — edit your off-day availability type per day
-//   2. Find Candidates — pick a date + shift type, see who's available,
-//      message them directly or via Shortcuts
+// Trade discovery surfaces used by the Trades tab (the standalone "My Availability"
+// page was retired in v2 — openness/pills now live on the Home calendar):
+//   • FindCandidatesSection — reciprocal Trade Search (date range → packages)
+//   • ECBTradesView         — one-way ECB (points-for-coverage) trades
+//   • TwoWaySheet           — the rich two-person swap explorer
+//   • MiniScheduleGrid/Legend — the shared trade calendar + key
 
 import SwiftUI
 import UIKit
-
-struct AvailabilityView: View {
-
-    private let manager  = AvailabilityManager.shared
-    private let settings = SettingsManager.shared
-
-    @State private var selectedSegment = 0  // 0 = My Availability, 1 = Find Candidates
-
-    var body: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
-                Picker("", selection: $selectedSegment) {
-                    Text("My Availability").tag(0)
-                    Text("Find Candidates").tag(1)
-                }
-                .pickerStyle(.segmented)
-                .padding(.horizontal)
-                .padding(.vertical, 10)
-
-                Divider()
-
-                if selectedSegment == 0 {
-                    MyAvailabilitySection()
-                } else {
-                    FindCandidatesSection(whatIf: .constant(false))
-                }
-            }
-            .navigationTitle("Availability")
-            .navigationBarTitleDisplayMode(.large)
-            .overlay {
-                if !settings.sharedCalendarEnabled {
-                    sharedCalendarPrompt
-                }
-            }
-        }
-    }
-
-    private var sharedCalendarPrompt: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "calendar.badge.exclamationmark")
-                .font(.system(size: 48))
-                .foregroundStyle(.secondary)
-            Text("Shared Calendar Not Enabled")
-                .font(.headline)
-            Text("Enable the shared dispatcher calendar in Settings to see and share availability.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 40)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(.background)
-    }
-}
-
-// MARK: - My Availability
-
-struct MyAvailabilitySection: View {
-
-    private let manager = AvailabilityManager.shared
-    private let store   = ShiftStore.shared
-    private var intent  = TradeIntentStore.shared
-
-    @State private var showSeekingCalendar = false
-
-    var body: some View {
-        List {
-            Section("Trade preferences") {
-                TradePrefsBox()
-            }
-
-            Section {
-                if store.shifts.contains(where: { !$0.isOff }) {
-                    Button { showSeekingCalendar = true } label: {
-                        HStack {
-                            Label("Days I want to trade away", systemImage: "calendar.badge.plus")
-                            Spacer()
-                            if !intent.seekingDayIDs.isEmpty {
-                                Text("\(intent.seekingDayIDs.count)")
-                                    .foregroundStyle(.secondary).monospacedDigit()
-                            }
-                            Image(systemName: "chevron.right")
-                                .font(.caption).foregroundStyle(.tertiary)
-                        }
-                    }
-                    .tint(.primary)
-                } else {
-                    Text("Import your schedule to mark days you want to trade away.")
-                        .font(.footnote).foregroundStyle(.secondary)
-                }
-            } footer: {
-                Text("Mark the working days across the year you actively want to give away. Once cloud sync is enabled these are shared so others can offer to cover or swap.")
-            }
-
-            if manager.myAvailability.isEmpty {
-                Section {
-                    ContentUnavailableView(
-                        "No Off Days",
-                        systemImage: "calendar.badge.clock",
-                        description: Text("Import your schedule to populate your off days.")
-                    )
-                }
-            } else {
-                Section("Your upcoming off days") {
-                    ForEach(manager.myAvailability) { day in
-                        AvailabilityRow(day: day)
-                    }
-                }
-            }
-        }
-        .listStyle(.insetGrouped)
-        .onAppear {
-            intent.pruneExpired(using: store.shifts)
-            Task { await TradeProfileStore.shared.publishMine() }
-        }
-        .sheet(isPresented: $showSeekingCalendar) { SeekingDaysSheet() }
-    }
-}
-
-// MARK: - Days-to-trade-away calendar (sheet)
-
-/// A full-screen month-navigable calendar (outside any List, so taps + month
-/// navigation stay smooth) for marking the working days you want to give away.
-struct SeekingDaysSheet: View {
-
-    private let store  = ShiftStore.shared
-    private var intent = TradeIntentStore.shared
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(spacing: 12) {
-                    Text("Tap the working days you actively want to trade away. Use the month arrows to reach any week of the year.")
-                        .font(.footnote).foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-
-                    ShiftSelectCalendar(shifts: store.shifts, selection: Binding(
-                        get: { intent.seekingDayIDs },
-                        set: { intent.seekingDayIDs = $0 }
-                    ))
-
-                    if !intent.seekingDayIDs.isEmpty {
-                        Text("^[\(intent.seekingDayIDs.count) day](inflect: true) marked")
-                            .font(.footnote).foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                }
-                .padding()
-            }
-            .navigationTitle("Days to Trade Away")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("Clear", role: .destructive) { intent.seekingDayIDs = [] }
-                        .disabled(intent.seekingDayIDs.isEmpty)
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
-                }
-            }
-        }
-    }
-}
-
-// MARK: - Trade preferences box (openness + blacklist)
-
-struct TradePrefsBox: View {
-    @Bindable private var settings = SettingsManager.shared
-    @State private var showBlacklist = false
-
-    private var openness: Binding<TradeOpenness> {
-        Binding(
-            get: { TradeOpenness(rawValue: settings.tradeOpenness) ?? .bookends },
-            set: { settings.tradeOpenness = $0.rawValue; AvailabilityManager.shared.buildFromSchedule() }
-        )
-    }
-    private var deskText: Binding<String> {
-        Binding(
-            get: { settings.blacklistedDesks.sorted().joined(separator: ", ") },
-            set: { newValue in
-                settings.blacklistedDesks = Set(newValue
-                    .split { $0 == "," || $0 == " " }
-                    .map { String($0).trimmingCharacters(in: .whitespaces) }
-                    .filter { !$0.isEmpty })
-            }
-        )
-    }
-
-    private static let weekdaySymbols = Calendar.current.weekdaySymbols   // ["Sunday"…"Saturday"]
-
-    var body: some View {
-        Picker(selection: openness) {
-            ForEach(TradeOpenness.allCases, id: \.self) { Text($0.label).tag($0) }
-        } label: {
-            Label("Openness", systemImage: "arrow.triangle.2.circlepath")
-        }
-        .pickerStyle(.menu)
-
-        DisclosureGroup("Blacklist — never pick up", isExpanded: $showBlacklist) {
-            ForEach(["AM", "PM", "MID"], id: \.self) { type in
-                Toggle("No \(type) shifts", isOn: typeBinding(type))
-            }
-            ForEach(["Domestic", "European", "Latin America", "Pacific"], id: \.self) { region in
-                Toggle("No \(region) desks", isOn: regionBinding(region))
-            }
-            ForEach(1...7, id: \.self) { wd in
-                Toggle("No \(Self.weekdaySymbols[wd - 1])s", isOn: weekdayBinding(wd))
-            }
-            LabeledContent("Desks to avoid") {
-                TextField("e.g. 29, 82", text: deskText)
-                    .multilineTextAlignment(.trailing)
-                    .autocorrectionDisabled()
-            }
-        }
-    }
-
-    private func weekdayBinding(_ wd: Int) -> Binding<Bool> {
-        Binding(
-            get: { settings.blacklistedWeekdays.contains(wd) },
-            set: { on in
-                if on { settings.blacklistedWeekdays.insert(wd) } else { settings.blacklistedWeekdays.remove(wd) }
-                AvailabilityManager.shared.buildFromSchedule()
-            }
-        )
-    }
-    private func typeBinding(_ t: String) -> Binding<Bool> {
-        Binding(
-            get: { settings.blacklistedShiftTypes.contains(t) },
-            set: { on in
-                if on { settings.blacklistedShiftTypes.insert(t) } else { settings.blacklistedShiftTypes.remove(t) }
-                AvailabilityManager.shared.buildFromSchedule()
-            }
-        )
-    }
-    private func regionBinding(_ r: String) -> Binding<Bool> {
-        Binding(
-            get: { settings.blacklistedRegions.contains(r) },
-            set: { on in if on { settings.blacklistedRegions.insert(r) } else { settings.blacklistedRegions.remove(r) } }
-        )
-    }
-}
-
-struct AvailabilityRow: View {
-
-    let day: DayAvailability
-    @State private var showPicker = false
-
-    var body: some View {
-        Button {
-            showPicker = true
-        } label: {
-            HStack {
-                // Date
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(day.formattedDate)
-                        .font(.body)
-                        .foregroundStyle(.primary)
-                    Text(day.isAvailable ? "Available to cover" : "Not Available")
-                        .font(.caption)
-                        .foregroundStyle(day.isAvailable ? AnyShapeStyle(.secondary) : AnyShapeStyle(.red))
-                }
-
-                Spacer()
-
-                // Availability badges — one per offered shift type
-                if day.isAvailable {
-                    HStack(spacing: 4) {
-                        ForEach(day.sortedTypes, id: \.self) { type in
-                            Text(type.rawValue)
-                                .font(.caption.bold())
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
-                                .background(availabilityColor(type).opacity(0.15))
-                                .foregroundStyle(availabilityColor(type))
-                                .clipShape(Capsule())
-                        }
-                    }
-                } else {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.red)
-                }
-
-                Image(systemName: "chevron.right")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-            }
-        }
-        .confirmationDialog(
-            "Availability for \(day.formattedDate)",
-            isPresented: $showPicker,
-            titleVisibility: .visible
-        ) {
-            ForEach(ShiftAvailabilityType.allCases, id: \.self) { type in
-                Button((day.availableTypes.contains(type) ? "Remove " : "Add ") + type.calendarLabel) {
-                    AvailabilityManager.shared.toggleType(type, on: day.id)
-                }
-            }
-            Button("Not Available (clear all)", role: .destructive) {
-                AvailabilityManager.shared.disableDay(day.id)
-            }
-            Button("Reset to default") {
-                AvailabilityManager.shared.resetDay(day.id)
-            }
-            Button("Cancel", role: .cancel) {}
-        }
-    }
-
-    private func availabilityColor(_ type: ShiftAvailabilityType) -> Color {
-        switch type {
-        case .am:  return .orange
-        case .pm:  return .indigo
-        case .mid: return .purple
-        }
-    }
-}
 
 // MARK: - Find Candidates
 
@@ -341,6 +27,10 @@ struct FindCandidatesSection: View {
     @State private var hasSearched = false
     @State private var calendarExpanded = true
     @State private var twoWayCandidate: PlanCandidate?
+    @State private var packages: [TradePackage] = []
+    @State private var execRoute: NWayRoute?
+    @State private var packageSent: String?
+    @State private var detailPackage: TradePackage?
 
     private var hasShifts: Bool { !store.upcomingWorkingShifts().isEmpty }
     private var selectedShifts: [Shift] {
@@ -372,6 +62,16 @@ struct FindCandidatesSection: View {
         .fullScreenCover(item: $twoWayCandidate) { c in
             TwoWaySheet(candidate: c)
         }
+        .sheet(item: $execRoute) { ExecutionConfirmationView(route: $0) }
+        .fullScreenCover(item: $detailPackage) { pkg in
+            PackageDetailView(package: pkg,
+                              onPropose: { Task { await propose(pkg) } },
+                              onExecute: { if let r = pkg.route { execRoute = r } })
+        }
+        .alert("Package sent", isPresented: Binding(
+            get: { packageSent != nil }, set: { if !$0 { packageSent = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: { Text(packageSent ?? "") }
     }
 
     private var controls: some View {
@@ -428,13 +128,38 @@ struct FindCandidatesSection: View {
         } else if !hasSearched {
             ContentUnavailableView("Pick Shifts to Trade", systemImage: "person.2.badge.gearshape",
                 description: Text("Tap the days you want to give away, then Find. (Import the roster file first.)"))
-        } else if candidates.isEmpty {
+        } else if candidates.isEmpty && packages.isEmpty {
             ContentUnavailableView("No Matches", systemImage: "person.slash",
-                description: Text("No off, qualified, rested dispatcher matched these shifts."))
+                description: Text("No one is off, desk-qualified, and rested for these shifts. Try other days or What If? mode."))
         } else {
             VStack(spacing: 0) {
-                resultsHeader
+                if !displayed.isEmpty { resultsHeader }
                 ScrollView {
+                    if !packages.isEmpty {
+                        Text("Packages").font(.headline)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal).padding(.top, 8)
+                        Text("Swap away all selected days — fewest people first.")
+                            .font(.caption).foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal)
+                        ForEach(packages) { pkg in
+                            PackageCard(package: pkg,
+                                        onPropose: { Task { await propose(pkg) } },
+                                        onExecute: { if let r = pkg.route { execRoute = r } },
+                                        onOpen: { detailPackage = pkg })
+                        }
+                        if !displayed.isEmpty {
+                            Divider().padding(.vertical, 6)
+                            Text("Individual takers").font(.headline)
+                                .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal)
+                        }
+                    }
+                    if displayed.isEmpty && !packages.isEmpty {
+                        Text("No single person can take all your days — but the package(s) above do.")
+                            .font(.caption).foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal).padding(.top, 4)
+                    }
                     // Many selected shifts → 1 full-width column so the coverage
                     // grid has room; few → dense 2-column.
                     LazyVGrid(columns: resultColumns, spacing: 6) {
@@ -448,7 +173,7 @@ struct FindCandidatesSection: View {
                     }
                     .padding(8)
                 }
-                messageBar
+                if !displayed.isEmpty { messageBar }
             }
         }
     }
@@ -543,9 +268,24 @@ struct FindCandidatesSection: View {
             return $0.name < $1.name
         }
 
+        // Same packaging algos as Trade by Intents, seeded from the selected days.
+        packages = await TradeRouter.packages(forGiveShifts: shifts, excluding: settings.username)
+
         isSearching = false
         hasSearched = true
         withAnimation(.snappy) { calendarExpanded = false }
+    }
+
+    /// Greedy package: send a cover request to each assigned dispatcher.
+    private func propose(_ pkg: TradePackage) async {
+        for a in pkg.assignments {
+            await MessagingStore.shared.sendRequest(
+                to: a.workerID, toName: a.name, note: swapNote(a),
+                take: a.takeDayIDs, give: a.giveDayIDs)
+        }
+        WidgetData.update()
+        let n = pkg.assignments.count
+        packageSent = "Sent to \(n) dispatcher\(n == 1 ? "" : "s"). Track replies in your Inbox."
     }
 
     private func messageSelected() {
@@ -563,6 +303,165 @@ struct FindCandidatesSection: View {
     }
 }
 
+// MARK: - ECB Trades (one-way, points-for-coverage)
+
+/// One-way trades: find who can cover shifts you want off, offer ECB points, and
+/// request them all. No swap-back, no greedy/N-way — pure "who can work my shift".
+struct ECBTradesView: View {
+    private let store    = ShiftStore.shared
+    private let settings = SettingsManager.shared
+
+    @State private var selectedIDs: Set<String> = []
+    @State private var candidates: [PlanCandidate] = []
+    @State private var isSearching = false
+    @State private var hasSearched = false
+    @State private var ecb = 9
+    @State private var calendarExpanded = true
+    @State private var sentMsg: String?
+
+    private var hasShifts: Bool { !store.upcomingWorkingShifts().isEmpty }
+    private var selectedShifts: [Shift] {
+        store.shifts.filter { selectedIDs.contains($0.id) }.sorted { $0.date < $1.date }
+    }
+    private var selectedDatesLabel: String {
+        let cal = Calendar.current
+        let thisYear = cal.component(.year, from: Date())
+        let f = DateFormatter(); f.dateFormat = "EEE MMM d"
+        let fy = DateFormatter(); fy.dateFormat = "EEE MMM d, yyyy"
+        return selectedShifts.map {
+            cal.component(.year, from: $0.date) == thisYear ? f.string(from: $0.date) : fy.string(from: $0.date)
+        }.joined(separator: ", ")
+    }
+    private let columns = [GridItem(.flexible(), spacing: 6)]
+
+    var body: some View {
+        VStack(spacing: 0) {
+            controls
+            Divider()
+            content
+        }
+        .alert("ECB requests sent", isPresented: Binding(
+            get: { sentMsg != nil }, set: { if !$0 { sentMsg = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: { Text(sentMsg ?? "") }
+    }
+
+    private var controls: some View {
+        VStack(spacing: 8) {
+            if !hasShifts {
+                Text("Import your schedule to offer one-way ECB trades.")
+                    .font(.subheadline).foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                Stepper(value: $ecb, in: 0...50) {
+                    HStack(spacing: 8) {
+                        Label("ECB offered", systemImage: "star.circle.fill").foregroundStyle(.orange)
+                        Text("\(ecb)").font(.headline.monospacedDigit())
+                        Spacer()
+                    }
+                }
+                HStack(spacing: 10) {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Take my shift (one-way)").font(.caption2).foregroundStyle(.secondary)
+                        Text(selectedIDs.isEmpty ? "Tap days on the calendar" : selectedDatesLabel)
+                            .font(.subheadline).bold().lineLimit(2)
+                    }
+                    Spacer()
+                    Button { Task { await search() } } label: { Label("Find", systemImage: "magnifyingglass") }
+                        .buttonStyle(.borderedProminent).controlSize(.small)
+                        .disabled(selectedIDs.isEmpty || isSearching)
+                    Button { withAnimation(.snappy) { calendarExpanded.toggle() } } label: {
+                        Image(systemName: calendarExpanded ? "chevron.up" : "chevron.down").foregroundStyle(.secondary)
+                    }
+                }
+                if calendarExpanded {
+                    ShiftSelectCalendar(shifts: store.shifts, selection: $selectedIDs)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
+            }
+        }
+        .padding(.horizontal).padding(.vertical, 8).background(.bar)
+    }
+
+    @ViewBuilder private var content: some View {
+        if isSearching {
+            ProgressView("Searching roster…").frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if !hasSearched {
+            ContentUnavailableView("One-Way ECB Trades", systemImage: "star.circle",
+                description: Text("Pick shifts you want taken, set the ECB you'll offer, then Find. No swap back — you're paying ECB points."))
+        } else if candidates.isEmpty {
+            ContentUnavailableView("No Takers", systemImage: "person.slash",
+                description: Text("No one is off, desk-qualified, and rested to take these shifts."))
+        } else {
+            VStack(spacing: 0) {
+                Text("\(candidates.count) can take").font(.caption).foregroundStyle(.secondary).padding(.vertical, 6)
+                ScrollView {
+                    LazyVGrid(columns: columns, spacing: 6) {
+                        ForEach(candidates) { c in
+                            PlanCandidateCell(candidate: c, selectedShifts: selectedShifts,
+                                              total: selectedShifts.count, isSelected: false,
+                                              onTap: {}, onEnter: {}, showSchedule: true, showEnter: false)
+                        }
+                    }
+                    .padding(8)
+                }
+                Button { Task { await requestAll() } } label: {
+                    Label("Request all \(candidates.count) · offer \(ecb) ECB", systemImage: "paperplane.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent).padding(10).background(.bar)
+            }
+        }
+    }
+
+    private func search() async {
+        let shifts = selectedShifts
+        guard !shifts.isEmpty else { return }
+        isSearching = true
+        let able = await TradeMatcher.candidatesForTrades(shifts: shifts, excluding: settings.username)
+        await TradeProfileStore.shared.refreshOthers()
+        // People who actively marked WANT-TO-WORK (published availability) on these
+        // off days are looking for a shift — surface them first.
+        candidates = able.sorted {
+            let aw = wantsToWork($0), bw = wantsToWork($1)
+            if aw != bw { return aw }
+            if $0.matchCount != $1.matchCount { return $0.matchCount > $1.matchCount }
+            return $0.name < $1.name
+        }
+        isSearching = false; hasSearched = true
+        withAnimation(.snappy) { calendarExpanded = false }
+    }
+
+    /// Whether this dispatcher published want-to-work availability for any of the
+    /// requested days (= they're actively seeking a shift).
+    private func wantsToWork(_ c: PlanCandidate) -> Bool {
+        guard let prof = TradeProfileStore.shared.profile(forWorker: c.workerID),
+              prof.hasPublishedAvailability else { return false }
+        return selectedShifts.contains { s in
+            let t = ShiftAvailabilityType.infer(fromStartHour: s.startHour)
+            return prof.availabilityMap[s.id]?.contains(t) ?? false
+        }
+    }
+
+    private func requestAll() async {
+        let offerID = UUID().uuidString   // groups the broadcast; queue is per shift
+        var sent = 0
+        for c in candidates {
+            // Only the selected days THIS person can actually cover.
+            let theirDays = selectedShifts.filter { c.coveredShiftIDs.contains($0.id) }.map(\.id)
+            guard !theirDays.isEmpty else { continue }
+            let dates = theirDays.map { prettyDay($0) }.joined(separator: ", ")
+            await MessagingStore.shared.sendRequest(
+                to: c.workerID, toName: c.name,
+                note: "One-way ECB trade — take my \(dates). Offering \(ecb) ECB. Accept the shifts you can take; first to accept each shift gets it. Reply with your employee #.",
+                take: [], give: theirDays, ecb: ecb, offerID: offerID)
+            sent += 1
+        }
+        WidgetData.update()
+        sentMsg = "Sent ECB requests to \(sent) dispatcher\(sent == 1 ? "" : "s") offering \(ecb) ECB. Track replies in your Inbox."
+    }
+}
+
 struct PlanCandidateCell: View {
     let candidate: PlanCandidate
     let selectedShifts: [Shift]
@@ -570,6 +469,8 @@ struct PlanCandidateCell: View {
     let isSelected: Bool
     let onTap: () -> Void
     let onEnter: () -> Void
+    var showSchedule: Bool = false   // ECB tab shows the mini-schedule instead of status
+    var showEnter: Bool = true       // ECB hides the two-way enter button
 
     @Environment(\.horizontalSizeClass) private var hSize
     @State private var showMatchDates = false
@@ -596,9 +497,9 @@ struct PlanCandidateCell: View {
         .padding(.horizontal, 10).padding(.vertical, 9)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(isSelected ? Color.blue.opacity(0.10) : Color(.secondarySystemBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .clipShape(RoundedRectangle(cornerRadius: DS.rowRadius))
         .overlay(
-            RoundedRectangle(cornerRadius: 10)
+            RoundedRectangle(cornerRadius: DS.rowRadius)
                 .stroke(borderColor, lineWidth: 2)
         )
         .contentShape(Rectangle())
@@ -609,23 +510,24 @@ struct PlanCandidateCell: View {
     private var compactRow: some View {
         HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 3) {
-                Text(candidate.name).font(.system(size: 14, weight: .bold)).lineLimit(1)
+                Text(candidate.name).font(.dsCardTitle).lineLimit(1)
                 HStack(spacing: 10) {
                     if !candidate.quals.isEmpty {
                         Text(candidate.quals.joined(separator: " "))
-                            .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                            .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                     }
                     smallBook
                     flameOrUnknown
                 }
                 if let s = TradeProfileStore.shared.profile(forWorker: candidate.workerID)?.statusBroadcast,
                    !s.isEmpty {
-                    Text(s).font(.system(size: 10)).foregroundStyle(.tertiary).lineLimit(1)
+                    Text(s).font(.dsCardMeta).foregroundStyle(.tertiary).lineLimit(1)
                 }
             }
             Spacer(minLength: 4)
+            if showSchedule { scheduleStrip }
             selectionCheck
-            enterButton
+            if showEnter { enterButton }
         }
     }
 
@@ -648,18 +550,27 @@ struct PlanCandidateCell: View {
             }
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 4) {
-                    Text(candidate.name).font(.system(size: 14, weight: .bold)).lineLimit(1)
+                    Text(candidate.name).font(.dsCardTitle).lineLimit(1)
                     flameOrUnknown
                 }
                 Text(candidate.quals.joined(separator: " "))
-                    .font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
-                Text("covers \(candidate.matchCount) of \(total)")
-                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                Text("takes \(candidate.matchCount) of \(total)")
+                    .font(.dsCardMeta).foregroundStyle(.secondary)
             }
             Spacer(minLength: 4)
-            statusMessage
+            if showSchedule { scheduleStrip } else { statusMessage }
             selectionCheck
-            enterButton
+            if showEnter { enterButton }
+        }
+    }
+
+    /// Mini-schedule (coverage of the selected shifts, or a ±4-day snapshot).
+    @ViewBuilder private var scheduleStrip: some View {
+        if candidate.week.isEmpty {
+            CoverageStrip(shifts: selectedShifts, covered: candidate.coveredShiftIDs)
+        } else {
+            MiniSchedule(week: candidate.week)
         }
     }
 
@@ -763,12 +674,14 @@ struct TwoWaySheet: View {
     @State private var selectedTake: Set<String> = []       // their days you'll take
     @State private var selectedGive: Set<String> = []       // your days they'll take
     @State private var theirSeeking: Set<String> = []       // days they want to trade away
+    @State private var ignoreMyBlacklist = false            // active-outbound override
     @State private var zoom: CGFloat = 1
+    @State private var showIntents = true                   // intent tint overlay on both calendars
 
-    private let youColor  = Color.blue
-    private let themColor = Color.orange
+    private let youColor  = BrickPalette.mineScheme
+    private let themColor = BrickPalette.peerScheme
 
-    private var glanceBaseHeight: CGFloat { hSize == .compact ? 520 : 260 }
+    private var glanceBaseHeight: CGFloat { 720 }   // two full-width calendars, stacked
 
     private let bookendGreen = Color(red: 0.16, green: 0.46, blue: 0.22)
     private let seekingGold  = Color(red: 0.80, green: 0.60, blue: 0.10)
@@ -818,6 +731,7 @@ struct TwoWaySheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
             .task { await load() }
+            .onChange(of: ignoreMyBlacklist) { _, _ in Task { await load() } }
             .alert("Request sent", isPresented: $sentConfirmation) {
                 Button("OK") { dismiss() }
             } message: {
@@ -846,6 +760,11 @@ struct TwoWaySheet: View {
                 Text(Self.monthF.string(from: monthAnchor(monthIndex)))
                     .font(.caption.bold())
                     .frame(maxWidth: .infinity)
+                Button { withAnimation { showIntents.toggle() } } label: {
+                    Image(systemName: showIntents ? "paintpalette.fill" : "paintpalette")
+                        .foregroundStyle(showIntents ? Color.accentColor : .secondary)
+                }
+                .accessibilityLabel(showIntents ? "Hide intent colors" : "Show intent colors")
                 Button { setZoom(zoom + 0.5) } label: {
                     Image(systemName: "plus.magnifyingglass")
                 }
@@ -858,18 +777,17 @@ struct TwoWaySheet: View {
                 ForEach(monthOffsets, id: \.self) { off in
                     // Side-by-side on iPad; stacked on iPhone so each calendar gets
                     // full width and stays readable.
-                    let layout = hSize == .compact
-                        ? AnyLayout(VStackLayout(spacing: 10))
-                        : AnyLayout(HStackLayout(alignment: .top, spacing: 10))
-                    layout {
+                    VStack(spacing: 16) {
                         MiniScheduleGrid(title: "You", days: myDays, month: monthAnchor(off),
                                          accent: youColor,
-                                         selfSelected: selectedGive, otherSelected: selectedTake,
-                                         otherColor: themColor, gold: myGoldDays, intent: myIntent)
+                                         giveDays: selectedGive, takeDays: selectedTake,
+                                         gold: myGoldDays, intent: myIntent,
+                                         topology: myTopology, eventName: myEvent)
                         MiniScheduleGrid(title: candidate.name, days: theirDays, month: monthAnchor(off),
                                          accent: themColor,
-                                         selfSelected: selectedTake, otherSelected: selectedGive,
-                                         otherColor: youColor, gold: theirGoldDays, intent: theirIntent)
+                                         giveDays: selectedTake, takeDays: selectedGive,
+                                         gold: theirGoldDays, intent: theirIntent,
+                                         topology: Self.globalTopology, eventName: Self.globalEvent)
                     }
                     .padding(.horizontal, 2)
                     .tag(off)
@@ -890,22 +808,53 @@ struct TwoWaySheet: View {
         withAnimation { zoom = min(max(value, 1), 3) }
     }
 
-    /// Your intents painted on the "You" calendar.
+    /// Your intent as a corner chip on the "You" calendar (hidden when toggled off).
     private func myIntent(_ day: String) -> Color? {
-        if let w = DayIntentStore.shared.workingIntent(forDay: day) { return w.brickColor.opacity(0.55) }
-        if let o = DayIntentStore.shared.offIntent(forDay: day) { return o.brickColor.opacity(0.55) }
+        guard showIntents else { return nil }
+        if let w = DayIntentStore.shared.workingIntent(forDay: day) { return w.brickColor }
+        if let o = DayIntentStore.shared.offIntent(forDay: day) { return o.brickColor }
         return nil
     }
 
-    /// Their published intent (days they want to trade away) on their calendar.
+    /// Their published intent (days they want to trade away) as a corner chip.
     private func theirIntent(_ day: String) -> Color? {
-        theirSeeking.contains(day) ? BrickPalette.change.opacity(0.55) : nil
+        guard showIntents else { return nil }
+        return theirSeeking.contains(day) ? BrickPalette.change : nil
+    }
+
+    /// Your own day markers (high-demand or personal milestone) and their detail text.
+    private func myTopology(_ day: String) -> DayTopology { DayIntentStore.shared.topology(forDay: day) }
+    private func myEvent(_ day: String) -> String? { Self.eventText(day, topology: myTopology(day), includePrivate: true) }
+
+    /// The peer's calendar only shows GLOBAL high-demand days (personal milestones
+    /// aren't published), so it's identical for everyone.
+    static func globalTopology(_ day: String) -> DayTopology { Holidays.isHighDemand(day) ? .highDemand : .standard }
+    static func globalEvent(_ day: String) -> String? { Holidays.name(forDay: day) }
+
+    /// Shared text for a marked day's popover.
+    static func eventText(_ day: String, topology: DayTopology, includePrivate: Bool) -> String? {
+        switch topology {
+        case .highDemand:
+            return Holidays.name(forDay: day) ?? "High-impact day"
+        case .personalMilestone:
+            let note = DayIntentStore.shared.note(forDay: day)
+            if let note, includePrivate || !note.isPrivate, !note.message.isEmpty { return note.message }
+            return "Personal day"
+        case .standard:
+            return nil
+        }
     }
 
     private var content: some View {
         ScrollView {
             VStack(spacing: 16) {
                 scheduleGlance
+                MiniScheduleLegend()
+                Toggle(isOn: $ignoreMyBlacklist.animation()) {
+                    Label("Show my blacklisted shifts (override)", systemImage: "eye.slash")
+                        .font(.caption.weight(.semibold))
+                }
+                .tint(.orange)
                 if mutualN > 0 { mutualSection }
                 discoverySection
                 VStack(spacing: 4) {
@@ -961,7 +910,7 @@ struct TwoWaySheet: View {
             legColumn("You take ←", subtitle: "their shift", legs: takes, selected: selectedTake) { id in
                 if selectedTake.contains(id) { selectedTake.remove(id) } else { selectedTake.insert(id) }
             }
-            legColumn("You give →", subtitle: "they cover", legs: gives, selected: selectedGive) { id in
+            legColumn("You give →", subtitle: "they take", legs: gives, selected: selectedGive) { id in
                 if selectedGive.contains(id) { selectedGive.remove(id) } else { selectedGive.insert(id) }
             }
         }
@@ -1008,7 +957,12 @@ struct TwoWaySheet: View {
     private func load() async {
         loading = true
         let myProfile    = TradeProfileStore.shared.myProfile()
-        let theirSeek    = TradeProfileStore.shared.profile(forWorker: candidate.workerID)?.seekingDayIDs ?? []
+        let theirProf    = await TradeProfileStore.shared.fetchProfile(forWorker: candidate.workerID)
+            ?? TradeProfile(workerID: candidate.workerID, displayName: candidate.name,
+                            openness: TradeOpenness.all.rawValue, blacklistedWeekdays: [],
+                            blacklistedDesks: [], blacklistedShiftTypes: [], blacklistedRegions: [],
+                            seekingDayIDs: [], updatedAt: Date())
+        let theirSeek    = theirProf.seekingDayIDs
         theirSeeking = theirSeek
         let mySeeking    = DayIntentStore.shared.seekingDayIDs
         let horizonEnd   = cal.date(byAdding: .month, value: TradeMatcher.twoWayHorizonMonths, to: today) ?? today
@@ -1016,9 +970,10 @@ struct TwoWaySheet: View {
             withWorker: candidate.workerID, name: candidate.name,
             windowStart: today, windowEnd: horizonEnd,
             mySeeking: mySeeking, theirSeeking: theirSeek,
-            myProfile: myProfile, myID: SettingsManager.shared.username)
-        myDays    = await TradeMatcher.dayLetters(forWorker: SettingsManager.shared.username)
-        theirDays = await TradeMatcher.dayLetters(forWorker: candidate.workerID)
+            myProfile: myProfile, theirProfile: theirProf, myID: SettingsManager.shared.username,
+            ignoreOwnBlacklist: ignoreMyBlacklist)
+        myDays    = await TradeMatcher.dayLabels(forWorker: SettingsManager.shared.username)
+        theirDays = await TradeMatcher.dayLabels(forWorker: candidate.workerID)
         // Pre-select the mutually-wanted days as a sensible starting proposal.
         selectedTake = Set(full?.iTake.filter(\.wanted).map(\.dayID) ?? [])
         selectedGive = Set(full?.iGive.filter(\.wanted).map(\.dayID) ?? [])
@@ -1049,47 +1004,77 @@ struct TwoWaySheet: View {
     }
 }
 
-/// A tiny Monday-first month grid (M–Su header, day# over A/P/M, off days blank)
-/// for a quick glance at someone's schedule. No desks. Days outside the month dim.
+/// One thin key bar under the paired trade calendars: give = border, get = fill;
+/// you read blue, they read red.
+struct MiniScheduleLegend: View {
+    var body: some View {
+        HStack(spacing: 10) {
+            swatch("You give") { RoundedRectangle(cornerRadius: 3).stroke(BrickPalette.mineScheme, lineWidth: 2.5) }
+            swatch("You get")  { RoundedRectangle(cornerRadius: 3).fill(BrickPalette.mineScheme.opacity(0.5)) }
+            swatch("They give"){ RoundedRectangle(cornerRadius: 3).stroke(BrickPalette.peerScheme, lineWidth: 2.5) }
+            swatch("They get") { RoundedRectangle(cornerRadius: 3).fill(BrickPalette.peerScheme.opacity(0.5)) }
+        }
+        .font(.caption2)
+        .lineLimit(1).minimumScaleFactor(0.7)
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 6).padding(.horizontal, 12)
+        .background(.bar, in: Capsule())
+    }
+
+    private func swatch<S: View>(_ label: String, @ViewBuilder _ shape: () -> S) -> some View {
+        HStack(spacing: 4) {
+            shape().frame(width: 13, height: 13)
+            Text(label)
+        }
+    }
+}
+
+/// A full-width Sunday-first month grid with large day cells (day# over shift+desk).
+/// One color per side (you = blue, the counterparty = red), one cue per direction:
+/// a day you GIVE = own-color BORDER, a day you GET = own-color FILL. So on your
+/// (blue) calendar a give is blue-bordered and a pickup is blue-filled; on their
+/// (red) calendar their give is red-bordered and their pickup is red-filled. Intent
+/// is a thin bar along the bottom; today is a blue circle.
 struct MiniScheduleGrid: View {
     let title: String
-    let days: [String: String]           // ISO "yyyy-MM-dd" → "A"/"P"/"M" ("" = off)
+    let days: [String: String]           // ISO → "AM 82" label ("" = off)
     let month: Date
-    var accent: Color = .blue            // THIS side's color
-    var selfSelected: Set<String> = []   // selections on this side → bold border
-    var otherSelected: Set<String> = []  // selections on the OTHER side → filled with otherColor
-    var otherColor: Color = .orange
+    var accent: Color = .blue            // THIS calendar owner's signature color (You=blue, peer=red)
+    var giveDays: Set<String> = []       // owner GIVES these away → own-color border
+    var takeDays: Set<String> = []       // owner RECEIVES these → own-color fill
     var gold: Set<String> = []           // mutually-wanted → gold border
-    var intent: (String) -> Color? = { _ in nil }   // intent overlay per ISO day
+    var intent: (String) -> Color? = { _ in nil }              // thick bottom bar (toggle-able by caller)
+    var topology: (String) -> DayTopology = { _ in .standard } // high-impact / personal-day circle
+    var eventName: (String) -> String? = { _ in nil }          // popover text when a marked day is tapped
+
+    @State private var openEvent: String?
 
     private let cal = Calendar.current
+    private let blue = Color.blue
     private let goldBorder = Color(red: 0.85, green: 0.62, blue: 0.05)
-    private static let headers = ["M", "T", "W", "Th", "F", "S", "Su"]
+    private static let headers = ["Su", "M", "T", "W", "Th", "F", "Sa"]
     private static let isoF: DateFormatter = {
         let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; return f
     }()
 
+    /// The Sunday on or before the 1st of the month.
     private var gridStart: Date {
         let first = cal.date(from: cal.dateComponents([.year, .month], from: month)) ?? month
-        let wd = cal.component(.weekday, from: first)
-        return cal.date(byAdding: .day, value: -((wd + 5) % 7), to: first) ?? first
+        let wd = cal.component(.weekday, from: first)   // 1 = Sun
+        return cal.date(byAdding: .day, value: -(wd - 1), to: first) ?? first
     }
 
     var body: some View {
-        VStack(spacing: 3) {
-            HStack(spacing: 5) {
-                Circle().fill(accent).frame(width: 9, height: 9)
-                Text(title).font(.subheadline.bold()).lineLimit(1)
-            }
-            .frame(maxWidth: .infinity)
-            HStack(spacing: 2) {
+        VStack(spacing: 4) {
+            Text(title).font(.headline).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
+            HStack(spacing: 3) {
                 ForEach(Self.headers, id: \.self) { h in
-                    Text(h).font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
+                    Text(h).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity)
                 }
             }
             ForEach(0..<6, id: \.self) { w in
-                HStack(spacing: 2) {
+                HStack(spacing: 3) {
                     ForEach(0..<7, id: \.self) { c in
                         cell(dayOffset: w * 7 + c)
                     }
@@ -1097,42 +1082,98 @@ struct MiniScheduleGrid: View {
             }
         }
         .frame(maxWidth: .infinity)
+        // Scale with Dynamic Type, but cap it so the fixed-size day cells don't overflow.
+        .dynamicTypeSize(...DynamicTypeSize.xLarge)
     }
 
     private func cell(dayOffset: Int) -> some View {
         let date    = cal.date(byAdding: .day, value: dayOffset, to: gridStart) ?? gridStart
         let key     = Self.isoF.string(from: date)
-        let letter  = days[key] ?? ""
-        let working = !letter.isEmpty
+        let label   = days[key] ?? ""
+        let working = !label.isEmpty
         let inMonth = cal.isDate(date, equalTo: month, toGranularity: .month)
         let isToday = cal.isDateInToday(date)
-        let pickedHere  = selfSelected.contains(key)
-        let pickedOther = otherSelected.contains(key)
-        let isGold  = gold.contains(key)
 
-        return VStack(spacing: 0) {
-            Text("\(cal.component(.day, from: date))")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.primary)
-            Text(letter.isEmpty ? " " : letter)
-                .font(.system(size: 13, weight: .heavy))
+        let marker = markerColor(key: key, isToday: isToday)
+        let hasEvent = eventName(key) != nil
+
+        return VStack(spacing: 1) {
+            ZStack {
+                // Today + a marked day → marker circle ringed in blue. Either alone →
+                // a single filled circle (blue for today, gold/pink for marked days).
+                if let marker {
+                    Circle().fill(marker).frame(width: 26, height: 26)
+                    if isToday && marker != blue {
+                        Circle().stroke(blue, lineWidth: 2.5).frame(width: 31, height: 31)
+                    }
+                }
+                Text("\(cal.component(.day, from: date))")
+                    .font(.subheadline.weight(.semibold))
+                    // Dark text on the light gold circle; white on blue/pink.
+                    .foregroundStyle(marker == nil ? .primary
+                        : (topology(key) == .highDemand ? Color.black.opacity(0.85) : .white))
+            }
+            .frame(height: 32)
+            Text(label.isEmpty ? " " : label)
+                .font(.caption.weight(.heavy))
                 .foregroundStyle(working ? accent : .secondary)
+                .lineLimit(1).minimumScaleFactor(0.55)
         }
-        .frame(maxWidth: .infinity, minHeight: 30)
-        .background(background(key: key, working: working, pickedOther: pickedOther))
-        .clipShape(RoundedRectangle(cornerRadius: 5))
-        .overlay {
-            if pickedHere { RoundedRectangle(cornerRadius: 5).stroke(accent, lineWidth: 2.5) }
-            else if isGold { RoundedRectangle(cornerRadius: 5).stroke(goldBorder, lineWidth: 2) }
-            else if isToday { RoundedRectangle(cornerRadius: 5).stroke(Color.primary.opacity(0.5), lineWidth: 1) }
+        .frame(maxWidth: .infinity, minHeight: 50)
+        .background(background(key: key, working: working))
+        .overlay(alignment: .bottom) { intentBar(key: key) }
+        .clipShape(RoundedRectangle(cornerRadius: 7))
+        .overlay { border(key: key) }
+        .opacity(inMonth ? 1 : 0.18)
+        .contentShape(Rectangle())
+        .onTapGesture { if hasEvent { openEvent = key } }
+        .popover(isPresented: Binding(get: { openEvent == key },
+                                      set: { if !$0 { openEvent = nil } })) {
+            eventPopover(key: key)
         }
-        .opacity(inMonth ? 1 : 0.2)
     }
 
-    private func background(key: String, working: Bool, pickedOther: Bool) -> Color {
-        if pickedOther { return otherColor.opacity(0.45) }          // the OTHER side's pick
-        if let tint = intent(key) { return tint }                  // intent overlay
+    /// Gold for a high-demand day, pink for a personal day, blue for today (today is
+    /// only the fallback when the day isn't otherwise marked). Returns nil = no circle.
+    private func markerColor(key: String, isToday: Bool) -> Color? {
+        switch topology(key) {
+        case .highDemand:        return BrickPalette.highImpact
+        case .personalMilestone: return BrickPalette.personalDay
+        case .standard:          return isToday ? blue : nil
+        }
+    }
+
+    private func background(key: String, working: Bool) -> Color {
+        if takeDays.contains(key) { return accent.opacity(0.5) }    // owner receives → own-color fill
         return working ? accent.opacity(0.16) : Color(.systemGray5)
+    }
+
+    /// Intent rendered as a thick bar across the bottom of the cell — visible without
+    /// fighting the trade fills. Hidden when the caller's `intent` closure returns nil.
+    @ViewBuilder private func intentBar(key: String) -> some View {
+        if let tint = intent(key) {
+            tint.frame(maxWidth: .infinity).frame(height: 5)
+        }
+    }
+
+    @ViewBuilder private func eventPopover(key: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            let isPersonal = topology(key) == .personalMilestone
+            Label(isPersonal ? "Personal day" : "High-impact day",
+                  systemImage: isPersonal ? "star.circle.fill" : "exclamationmark.circle.fill")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(isPersonal ? BrickPalette.personalDay : BrickPalette.highImpact)
+            if let name = eventName(key) { Text(name).font(.body) }
+        }
+        .padding()
+        .presentationCompactAdaptation(.popover)
+    }
+
+    @ViewBuilder private func border(key: String) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 7)
+        // Give = own-color border; get = fill only (handled in background, no border).
+        if giveDays.contains(key) { shape.stroke(accent, lineWidth: 3) }
+        else if gold.contains(key) { shape.stroke(goldBorder, lineWidth: 2) }
     }
 }
 

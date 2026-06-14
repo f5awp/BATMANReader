@@ -1,8 +1,8 @@
 // TradeRouter.swift
 // v2 matchmaking on top of the existing TradeMatcher. Adds:
+//   • packages          — reciprocal "fewest people" covers (optimal + greedy)
 //   • tieredSolutions   — segments swaps into the 4 SolutionTiers for the feed
 //   • nWayRoutes        — bounded 3–4-person circular trade loops
-//   • minimalCover      — greedy "fewest people" cover of a contiguous block
 // Reuses TradeMatcher's hard gates (qualified / rested / anchored) verbatim; never
 // duplicates that logic. All roster reads go through RosterStore.
 
@@ -30,25 +30,6 @@ struct MatchConstraints: Sendable {
     }
 }
 
-// MARK: - Block-cover result (one-directional give-away, not a swap loop)
-
-/// A way to offload a `ShiftBlock` to one or more coverers. Fewer `assignments`
-/// (unique people) is better — it preserves the block as a whole.
-struct BlockCover: Sendable, Hashable, Identifiable {
-    struct Assignment: Sendable, Hashable {
-        let workerID: String
-        let name: String
-        let dayIDs: [String]
-    }
-    let assignments: [Assignment]
-
-    var uniquePeople: Int { assignments.count }
-    var coveredDayIDs: [String] { assignments.flatMap(\.dayIDs) }
-    var id: String {
-        assignments.map { $0.workerID + ":" + $0.dayIDs.joined(separator: ",") }
-            .joined(separator: "|")
-    }
-}
 
 // MARK: - Packaged solution (one card per deal)
 
@@ -57,12 +38,15 @@ enum TradeMethodology: String, Sendable {
     case circular = "Circular swap"
 }
 
-/// One coverer and the days of yours they'd take.
+/// One counterparty in a reciprocal package: your shifts they take, and their
+/// shifts you take back (balanced for a true day-for-day swap).
 struct PackageAssignment: Sendable, Hashable, Identifiable {
     let workerID: String
     let name: String
-    let dayIDs: [String]
+    let giveDayIDs: [String]   // YOUR shifts this person covers (you → them)
+    let takeDayIDs: [String]   // THEIR shifts you cover (them → you)
     var id: String { workerID }
+    var dayIDs: [String] { giveDayIDs }   // back-compat for simple displays
 }
 
 /// A complete, proposable deal: either a greedy give-away (you → coverers) or a
@@ -73,6 +57,7 @@ struct TradePackage: Sendable, Hashable, Identifiable {
     let assignments: [PackageAssignment]
     let route: NWayRoute?               // present for circular (drives Execute)
     var urgency: Int = 0                // max reason-urgency over the days covered
+    var isOptimal: Bool = false         // true = provably fewest people; false = fast heuristic
     var peopleCount: Int { Set(assignments.map(\.workerID)).count }
     var allDayIDs: [String] { assignments.flatMap(\.dayIDs) }
 }
@@ -94,64 +79,6 @@ enum TradeRouter {
 
     // MARK: Greedy recipient minimization
 
-    /// Offload a contiguous block to the FEWEST unique people. Returns covers
-    /// ranked best-first: full single-person pickups, then the greedy multi-person
-    /// split. Empty if no legal coverage exists for any day.
-    static func minimalCover(block: ShiftBlock, excluding selfID: String,
-                             constraints: MatchConstraints = .standard) async -> [BlockCover] {
-        let shifts = block.shifts.filter { !$0.isOff }
-        guard !shifts.isEmpty else { return [] }
-
-        // Candidate coverage per worker, reusing the existing one-way matcher.
-        let candidates = await TradeMatcher.candidatesForTrades(shifts: shifts, excluding: selfID)
-        guard !candidates.isEmpty else { return [] }
-
-        let allDayIDs = Set(shifts.map(\.id))
-        let shiftDayID = Dictionary(uniqueKeysWithValues: shifts.map { ($0.id, $0.id) })
-        _ = shiftDayID
-
-        // Map each candidate to the set of block day-IDs they can cover.
-        var coverable: [(id: String, name: String, days: Set<String>)] = candidates.map {
-            ($0.workerID, $0.name, $0.coveredShiftIDs.intersection(allDayIDs))
-        }
-        .filter { !$0.days.isEmpty }
-
-        var results: [BlockCover] = []
-
-        // 1) Anyone who can cover the WHOLE block alone (ideal — 1 person).
-        for c in coverable where c.days == allDayIDs {
-            results.append(BlockCover(assignments: [
-                .init(workerID: c.id, name: c.name, dayIDs: shifts.map(\.id).filter { c.days.contains($0) })
-            ]))
-        }
-
-        // 2) Greedy set cover: repeatedly take the worker covering the most
-        //    still-uncovered days, until the block is covered or no progress.
-        var uncovered = allDayIDs
-        var picks: [BlockCover.Assignment] = []
-        while !uncovered.isEmpty {
-            guard let best = coverable
-                .map({ (c) in (c, c.days.intersection(uncovered)) })
-                .filter({ !$0.1.isEmpty })
-                .max(by: { $0.1.count < $1.1.count }) else { break }
-            let (c, gained) = best
-            let orderedDays = shifts.map(\.id).filter { gained.contains($0) }
-            picks.append(.init(workerID: c.id, name: c.name, dayIDs: orderedDays))
-            uncovered.subtract(gained)
-            coverable.removeAll { $0.id == c.id }
-        }
-        if uncovered.isEmpty, picks.count > 1 || results.isEmpty {
-            results.append(BlockCover(assignments: picks))
-        }
-
-        // Rank: fewest people first, then most days covered.
-        return results
-            .filter { !$0.assignments.isEmpty }
-            .sorted {
-                if $0.uniquePeople != $1.uniquePeople { return $0.uniquePeople < $1.uniquePeople }
-                return $0.coveredDayIDs.count > $1.coveredDayIDs.count
-            }
-    }
 
     // MARK: Packaged solutions (greedy first, circular as a >2-person alternative)
 
@@ -161,49 +88,182 @@ enum TradeRouter {
     static func packages(excluding selfID: String) async -> [TradePackage] {
         let (start, end) = horizon
         let giveShifts = await selfSeekingShifts(myID: selfID, start: start, end: end)
-        guard !giveShifts.isEmpty else { return [] }
+        return await packages(forGiveShifts: giveShifts, excluding: selfID)
+    }
+
+    /// RECIPROCAL packaging for an explicit set of give-away shifts. Every package
+    /// is balanced — you give N and receive N back, all passing your criteria. A
+    /// pairwise greedy (fewest counterparties) comes first; N-way circular loops
+    /// are offered when pairwise can't fully reciprocate. Used by both feeds.
+    static func packages(forGiveShifts giveShifts: [Shift], excluding selfID: String) async -> [TradePackage] {
+        let giveDayIDs = Set(giveShifts.filter { !$0.isOff }.map(\.id))
+        guard !giveDayIDs.isEmpty else { return [] }
+
+        // A day's urgency blends the AI-categorized reason with the day's topology,
+        // so personal milestones and high-demand holidays raise a day's priority too
+        // — not just the free-text reason. Used to rank/tie-break trade solutions.
+        func dayUrgency(_ dayID: String) -> Int {
+            let reason = DayIntentStore.shared.note(forDay: dayID)?.reason?.urgency ?? 0
+            let topo: Int
+            switch DayIntentStore.shared.topology(forDay: dayID) {
+            case .personalMilestone: topo = 3   // your protected personal date
+            case .highDemand:        topo = 2   // holiday / known high-demand
+            case .standard:          topo = 0
+            }
+            return reason + topo
+        }
+        func urgency(of dayIDs: [String]) -> Int { dayIDs.map(dayUrgency).max() ?? 0 }
+        func urgencyWeight(_ dayIDs: [String]) -> Int { dayIDs.map(dayUrgency).reduce(0, +) }
+
+        let (start, end) = horizon
+        let mySeeking = DayIntentStore.shared.seekingDayIDs
+        let myProfile = TradeProfileStore.shared.myProfile()
+
+        // Whether `prof` would actually pick up a leg — honors their availability
+        // pills, openness, bookend (no-split) rule, blacklist, and mercenary mode.
+        func wouldTake(_ prof: TradeProfile, _ leg: TwoWayLeg) -> Bool {
+            let cal = Calendar.current
+            let weekday = cal.component(.weekday, from: leg.date)
+            let region  = DeskRules.region(forDesk: leg.desk).rawValue
+            let type    = ShiftAvailabilityType.infer(fromStartHour: leg.startHour).rawValue
+            return prof.wouldPickUp(onDay: leg.dayID, weekday: weekday, desk: leg.desk,
+                                    shiftType: type, region: region, isBookend: leg.bookend)
+        }
+
+        // Per-peer reciprocal capacity via two-way exploration, then gated by BOTH
+        // parties' real rules: they only take my days they'd accept; I only take
+        // theirs I'd accept.
+        struct PeerSwap { let id: String; let name: String; let canTake: [String]; let givesBack: [String] }
+        var peerSwaps: [PeerSwap] = []
+        // Deterministic order (by employee ID) so results don't flicker between refreshes.
+        for (peerID, profile) in TradeProfileStore.shared.others.sorted(by: { $0.key < $1.key }) {
+            let plan = await TradeMatcher.twoWayExplore(
+                withWorker: peerID, name: profile.displayName,
+                windowStart: start, windowEnd: end,
+                mySeeking: mySeeking, theirSeeking: profile.seekingDayIDs,
+                myProfile: myProfile, theirProfile: profile, myID: selfID)
+            let canTake   = plan.iGive.filter { giveDayIDs.contains($0.dayID) && wouldTake(profile, $0) }.map(\.dayID)
+            let givesBack = plan.iTake.filter { wouldTake(myProfile, $0) }.map(\.dayID)
+            if !canTake.isEmpty, !givesBack.isEmpty {
+                peerSwaps.append(PeerSwap(id: peerID, name: profile.displayName, canTake: canTake, givesBack: givesBack))
+            }
+        }
 
         var result: [TradePackage] = []
 
-        // Reason-urgency per day (AI-categorized) → ranks solutions.
-        func urgency(of dayIDs: [String]) -> Int {
-            dayIDs.map { DayIntentStore.shared.note(forDay: $0)?.reason?.urgency ?? 0 }.max() ?? 0
-        }
-
-        // Greedy — primary.
-        let covers = await minimalCover(block: ShiftBlock(shifts: giveShifts), excluding: selfID)
-        for cover in covers {
-            let assigns = cover.assignments.map {
-                PackageAssignment(workerID: $0.workerID, name: $0.name, dayIDs: $0.dayIDs)
+        // Schedules for per-person SET contiguity (the bookend no-split rule across
+        // ALL of someone's assigned days, not per leg).
+        let allEntries = await RosterStore.shared.entries(from: start, to: end)
+        var maps: [String: [String: RosterEntry]] = [:]
+        for e in allEntries { maps[e.workerID, default: [:]][e.day] = e }
+        func anchoredSet(_ ids: [String], in map: [String: RosterEntry]) -> Bool {
+            let plan = Set(ids)
+            return ids.allSatisfy { d in
+                guard let day = TradeMatcher.dayDate(fromISO: d) else { return false }
+                return TradeMatcher.isAnchored(day: day, map: map, plan: plan)
             }
-            result.append(TradePackage(id: "greedy-" + cover.id, methodology: .greedy,
-                                       assignments: assigns, route: nil,
-                                       urgency: urgency(of: assigns.flatMap(\.dayIDs))))
+        }
+        // Only people whose rule is "bookends" must keep contiguous breaks.
+        func contiguityOK(_ assignments: [OptimalMatcher.Assignment]) -> Bool {
+            for a in assignments {
+                if TradeProfileStore.shared.profile(forWorker: a.id)?.opennessLevel == .bookends,
+                   !anchoredSet(a.giveDayIDs, in: maps[a.id] ?? [:]) { return false }
+            }
+            if myProfile.opennessLevel == .bookends,
+               !anchoredSet(assignments.flatMap(\.takeDayIDs), in: maps[selfID] ?? [:]) { return false }
+            return true
         }
 
-        // Circular — secondary, only when greedy can't do it in ≤2 people.
-        let bestGreedy = covers.map(\.uniquePeople).min()
-        if bestGreedy == nil || bestGreedy! > 2 {
+        // OPTIMAL tier: provably fewest counterparties (branch-and-bound + min-cost
+        // flow), rejecting break-fragmenting assignments. nil → greedy fallback.
+        let cands = peerSwaps.map {
+            OptimalMatcher.Cand(id: $0.id, name: $0.name, canTake: Set($0.canTake), givesBack: $0.givesBack)
+        }
+        if let opt = OptimalMatcher.minPeopleReciprocal(giveDayIDs: Array(giveDayIDs), peers: cands, contiguous: contiguityOK) {
+            let a = opt.map { PackageAssignment(workerID: $0.id, name: $0.name,
+                                                giveDayIDs: $0.giveDayIDs, takeDayIDs: $0.takeDayIDs) }
+            result.append(TradePackage(
+                id: "optimal-" + a.map(\.workerID).sorted().joined(separator: ","),
+                methodology: .greedy, assignments: a, route: nil,
+                urgency: urgency(of: a.flatMap(\.giveDayIDs)), isOptimal: true))
+        }
+
+        // Greedy balanced cover (fallback / alternative): repeatedly take the peer
+        // who reciprocally clears the most remaining give-days, until fully covered.
+        var uncovered = giveDayIDs
+        var usedBack = Set<String>()
+        var assigns: [PackageAssignment] = []
+        var pool = peerSwaps
+        while result.isEmpty, !uncovered.isEmpty {
+            let best = pool.compactMap { ps -> (PeerSwap, [String], [String])? in
+                let gives = ps.canTake.filter { uncovered.contains($0) }
+                let backs = ps.givesBack.filter { !usedBack.contains($0) }
+                let k = min(gives.count, backs.count)
+                guard k > 0 else { return nil }
+                return (ps, Array(gives.prefix(k)), Array(backs.prefix(k)))
+            }.max { l, r in
+                // 1) clears the most give-days, then 2) clears the most-urgent days
+                // (milestones / high-demand / reasons), then 3) seniority — lower
+                // employee number = more senior (AA numbers are seniority-ordered).
+                if l.1.count != r.1.count { return l.1.count < r.1.count }
+                let lu = urgencyWeight(l.1), ru = urgencyWeight(r.1)
+                if lu != ru { return lu < ru }
+                return l.0.id > r.0.id
+            }
+            guard let (ps, gives, takes) = best else { break }
+            assigns.append(PackageAssignment(workerID: ps.id, name: ps.name,
+                                             giveDayIDs: gives, takeDayIDs: takes))
+            uncovered.subtract(gives)
+            usedBack.formUnion(takes)
+            pool.removeAll { $0.id == ps.id }
+        }
+        // Emit the greedy package ONLY if it passes the same no-split contiguity
+        // check the optimal path uses — so a break-fragmenting assignment is never
+        // proposed even on instances too large for the optimizer. Better to offer
+        // nothing than a package that splits someone's break.
+        if result.isEmpty, uncovered.isEmpty, !assigns.isEmpty {
+            let asOpt = assigns.map { OptimalMatcher.Assignment(
+                id: $0.workerID, name: $0.name,
+                giveDayIDs: $0.giveDayIDs, takeDayIDs: $0.takeDayIDs) }
+            if contiguityOK(asOpt) {
+                result.append(TradePackage(
+                    id: "recip-" + assigns.map(\.workerID).sorted().joined(separator: ","),
+                    methodology: .greedy, assignments: assigns, route: nil,
+                    urgency: urgency(of: assigns.flatMap(\.giveDayIDs))))
+            }
+        }
+
+        // N-way circular fallback when pairwise can't fully reciprocate (or to
+        // offer a smaller-headcount loop). The loop is inherently balanced.
+        if result.first?.peopleCount ?? Int.max > 1 || result.isEmpty {
             let loops = await nWayRoutes(seedShifts: giveShifts, excluding: selfID)
-            for loop in loops.prefix(8) {
-                var byWorker: [String: [String]] = [:]
-                for leg in loop.legs where leg.toID != selfID { byWorker[leg.toID, default: []].append(leg.dayID) }
-                let assigns = byWorker.map {
-                    PackageAssignment(workerID: $0.key, name: participantName($0.key), dayIDs: $0.value)
+            for loop in loops.prefix(6) {
+                var gv: [String: [String]] = [:]   // peer → my days they cover
+                var tk: [String: [String]] = [:]   // peer → their days I cover
+                for leg in loop.legs {
+                    if leg.fromID == selfID { gv[leg.toID, default: []].append(leg.dayID) }
+                    if leg.toID == selfID   { tk[leg.fromID, default: []].append(leg.dayID) }
+                }
+                let participants = Set(gv.keys).union(tk.keys)
+                let a = participants.map { pid in
+                    PackageAssignment(workerID: pid, name: participantName(pid),
+                                      giveDayIDs: gv[pid] ?? [], takeDayIDs: tk[pid] ?? [])
                 }
                 result.append(TradePackage(id: "circular-" + loop.id, methodology: .circular,
-                                           assignments: assigns, route: loop,
-                                           urgency: urgency(of: assigns.flatMap(\.dayIDs))))
+                                           assignments: a, route: loop,
+                                           urgency: urgency(of: a.flatMap(\.giveDayIDs))))
             }
         }
 
-        // Sort: fewest people, then most urgent (AI-categorized reason), then
-        // greedy ahead of circular.
-        return result.sorted {
-            if $0.peopleCount != $1.peopleCount { return $0.peopleCount < $1.peopleCount }
-            if $0.urgency != $1.urgency { return $0.urgency > $1.urgency }
-            return $0.methodology == .greedy && $1.methodology == .circular
-        }
+        // Dedupe + rank: fewest people, then urgency, greedy ahead of circular.
+        var seen = Set<String>()
+        return result
+            .filter { seen.insert($0.id).inserted }
+            .sorted {
+                if $0.peopleCount != $1.peopleCount { return $0.peopleCount < $1.peopleCount }
+                if $0.urgency != $1.urgency { return $0.urgency > $1.urgency }
+                return $0.methodology == .greedy && $1.methodology == .circular
+            }
     }
 
     // MARK: Tiered two-way solutions (the "Trade by Intents" feed)
@@ -226,12 +286,12 @@ enum TradeRouter {
         var byTier: [SolutionTier: [NWayRoute]] = [:]
         for t in SolutionTier.allCases { byTier[t] = [] }
 
-        for (peerID, profile) in TradeProfileStore.shared.others {
+        for (peerID, profile) in TradeProfileStore.shared.others.sorted(by: { $0.key < $1.key }) {
             let plan = await TradeMatcher.twoWayExplore(
                 withWorker: peerID, name: profile.displayName,
                 windowStart: start, windowEnd: end,
                 mySeeking: mySeeking, theirSeeking: profile.seekingDayIDs,
-                myProfile: myProfile, myID: myID)
+                myProfile: myProfile, theirProfile: profile, myID: myID)
             guard plan.isViable else { continue }
 
             // Protect high-value dates: if the only days I'd give are high-demand /
@@ -296,7 +356,6 @@ enum TradeRouter {
             names[e.workerID] = e.workerName
         }
         guard let selfMap = maps[selfID] else { return [] }
-        let selfQuals = selfMap.values.first?.quals ?? []
         let myProfile = TradeProfileStore.shared.myProfile()
 
         var routes: [NWayRoute] = []
@@ -311,19 +370,20 @@ enum TradeRouter {
             // Hard: weekly-hour cap (always enforced, even in What If?).
             if let cap = weeklyCap(forWorker: covererID),
                weeklyWorkedHours(map: covererMap, around: day) + 9 > cap { return false }
-            // Soft: chaining (bookend) — only when enforced.
-            if constraints.enforceChaining,
-               !TradeMatcher.isAnchored(day: day, map: covererMap, plan: [entry.day]) { return false }
-            // Inbound blacklist gate via published profile (others) / my profile (self).
+            // Bookend (no-split) is NOT forced globally here — it's a per-person
+            // preference owned entirely by `wouldPickUp` below: a `.bookends` peer
+            // rejects non-anchored pickups, an `.all` peer accepts them. (This is
+            // why "open to everything" truly ignores chaining.)
+            // Pill-based availability gate (published per-day pills, else openness),
+            // via published profile (others) / my profile (self).
             let weekday = Calendar.current.component(.weekday, from: day)
             let region  = DeskRules.region(forDesk: entry.desk).rawValue
             let type    = ShiftAvailabilityType.infer(fromStartHour: entry.startHour).rawValue
-            if covererID == selfID {
-                if DayIntentStore.shared.offIntent(forDay: entry.day) == .mustBeOff { return false }
-                return myProfile.acceptsPickup(weekday: weekday, desk: entry.desk, shiftType: type, region: region)
-            }
-            guard let prof = TradeProfileStore.shared.profile(forWorker: covererID) else { return false }
-            return prof.acceptsPickup(weekday: weekday, desk: entry.desk, shiftType: type, region: region)
+            let bookend = TradeMatcher.isAnchored(day: day, map: covererMap, plan: [entry.day])
+            let profile = covererID == selfID ? myProfile : TradeProfileStore.shared.profile(forWorker: covererID)
+            guard let profile else { return false }
+            return profile.wouldPickUp(onDay: entry.day, weekday: weekday, desk: entry.desk,
+                                       shiftType: type, region: region, isBookend: bookend)
         }
 
         // DFS: path of leg tuples. Each step, the current node gives one of THEIR
@@ -363,7 +423,7 @@ enum TradeRouter {
                     : (TradeProfileStore.shared.profile(forWorker: current)?.seekingDayIDs.contains(entry.day) ?? false)
                 if constraints.enforceChaining && !wantsGive { continue }
 
-                for (nextID, nextMap) in maps where !visited.contains(nextID) && nextID != selfID {
+                for (nextID, nextMap) in maps.sorted(by: { $0.key < $1.key }) where !visited.contains(nextID) && nextID != selfID {
                     guard canCover(covererID: nextID, covererMap: nextMap, giver: entry) else { continue }
                     let leg = NWayLeg(fromID: current, toID: nextID, dayID: entry.day,
                                       desk: entry.desk, startHour: entry.startHour)
@@ -379,7 +439,7 @@ enum TradeRouter {
         for s in giveDays {
             if constraints.enforceTopology, DayIntentStore.shared.topology(forDay: s.id) != .standard { continue }
             guard let myEntry = selfMap[s.id] else { continue }
-            for (nextID, nextMap) in maps where nextID != selfID {
+            for (nextID, nextMap) in maps.sorted(by: { $0.key < $1.key }) where nextID != selfID {
                 guard canCover(covererID: nextID, covererMap: nextMap, giver: myEntry) else { continue }
                 let leg = NWayLeg(fromID: selfID, toID: nextID, dayID: myEntry.day,
                                   desk: myEntry.desk, startHour: myEntry.startHour)

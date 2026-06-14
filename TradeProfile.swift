@@ -71,10 +71,16 @@ struct TradeProfile: Sendable, Hashable, Codable, Identifiable {
     var statusBroadcast: String? = nil
     var maxWeeklyHours: Int? = nil
     var minWeeklyHours: Int? = nil
-    var prioritizeChaining: Bool? = nil
     var isMercenaryMode: Bool? = nil
+    // Per-day availability pills, published so matching is pill-based cross-user.
+    // Each entry is "ISO|TYPE", e.g. "2026-07-04|AM". Optional so old records decode.
+    var availabilitySlots: [String]? = nil
+    // ISO days whose effective openness is "bookends" (base or a date-range override),
+    // so peers can apply the no-split gate per-day. nil = fall back to opennessLevel.
+    var bookendDays: [String]? = nil
 
     var id: String { workerID }
+    var bookendDaySet: Set<String> { Set(bookendDays ?? []) }
     var bestEmail: String? {
         let p = personalEmail?.trimmingCharacters(in: .whitespaces) ?? ""
         let a = aaEmail?.trimmingCharacters(in: .whitespaces) ?? ""
@@ -88,11 +94,56 @@ struct TradeProfile: Sendable, Hashable, Codable, Identifiable {
     /// the per-day bookends-only nuance of `.bookends` is applied there too.)
     func acceptsPickup(weekday: Int, desk: String, shiftType: String, region: String) -> Bool {
         guard opennessLevel != .none else { return false }
+        return passesBlacklist(weekday: weekday, desk: desk, shiftType: shiftType, region: region)
+    }
+
+    /// Blacklist gate only (no openness).
+    func passesBlacklist(weekday: Int, desk: String, shiftType: String, region: String) -> Bool {
         if blacklistedWeekdays.contains(weekday) { return false }
         if blacklistedDesks.contains(desk) { return false }
         if blacklistedShiftTypes.contains(shiftType) { return false }
         if blacklistedRegions.contains(region) { return false }
         return true
+    }
+
+    /// ISO day → published availability types (parsed from `availabilitySlots`).
+    var availabilityMap: [String: Set<ShiftAvailabilityType>] {
+        guard let slots = availabilitySlots else { return [:] }
+        var m: [String: Set<ShiftAvailabilityType>] = [:]
+        for s in slots {
+            let parts = s.split(separator: "|")
+            if parts.count == 2, let t = ShiftAvailabilityType(rawValue: String(parts[1])) {
+                m[String(parts[0]), default: []].insert(t)
+            }
+        }
+        return m
+    }
+
+    /// True only when the user has actually published per-day pills (≥ 1 slot).
+    var hasPublishedAvailability: Bool { !(availabilitySlots?.isEmpty ?? true) }
+
+    /// Whether this person would take a pickup on a SPECIFIC day. Uses published
+    /// per-day availability pills when present; falls back to openness otherwise.
+    func wouldPickUp(onDay dayID: String, weekday: Int, desk: String,
+                     shiftType: String, region: String, isBookend: Bool) -> Bool {
+        guard passesBlacklist(weekday: weekday, desk: desk, shiftType: shiftType, region: region) else { return false }
+        // Mercenary mode: take ANY qualifying shift — ignore availability pills,
+        // openness, and bookend protection (the hard legal gates still apply
+        // outside this method: off + qualified + 8h rest + weekly cap).
+        if isMercenaryMode == true { return true }
+        if hasPublishedAvailability {
+            guard let t = ShiftAvailabilityType(rawValue: shiftType),
+                  availabilityMap[dayID]?.contains(t) == true else { return false }
+            // Per-day "bookends" gate: only pickups that don't split the break (the
+            // day attaches to existing work). When the profile publishes a per-day
+            // set (range overrides), use it; otherwise fall back to profile openness.
+            let bookendGated = bookendDays != nil ? bookendDaySet.contains(dayID)
+                                                  : (opennessLevel == .bookends)
+            if bookendGated, !isBookend { return false }
+            return true
+        }
+        guard opennessLevel != .none else { return false }
+        return opennessLevel == .all || isBookend
     }
 
     /// Classify a candidate's willingness to COVER the shifts they can physically
@@ -216,8 +267,13 @@ final class TradeProfileStore {
             statusBroadcast:       s.statusBroadcast.isEmpty ? nil : s.statusBroadcast,
             maxWeeklyHours:        s.maxWeeklyHours,
             minWeeklyHours:        s.minWeeklyHours,
-            prioritizeChaining:    s.prioritizeChaining,
-            isMercenaryMode:       s.isMercenaryMode
+            isMercenaryMode:       s.isMercenaryMode,
+            availabilitySlots:     DayIntentStore.shared.offAvailability.flatMap { day, types in
+                types.map { "\(day)|\($0.rawValue)" }
+            },
+            bookendDays:           DayIntentStore.shared.bookendGatedDays(
+                base: TradeOpenness(rawValue: s.tradeOpenness) ?? .bookends,
+                shifts: ShiftStore.shared.shifts)
         )
     }
 
@@ -235,6 +291,33 @@ final class TradeProfileStore {
     }
 
     func profile(forWorker workerID: String) -> TradeProfile? { others[workerID] }
+
+    private static let isoDayF: DateFormatter = {
+        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; return f
+    }()
+
+    /// Dispatchers whose PUBLISHED v2 profile says they'd take a pickup on `date`
+    /// (optionally of `type`) — the same availability pills / openness the in-app
+    /// matcher uses, so Siri/Shortcuts results match what the app would surface.
+    /// Returns (profile, shift-type) pairs, deterministically ordered.
+    func availableDispatchers(on date: Date, type: ShiftAvailabilityType?) -> [(profile: TradeProfile, type: ShiftAvailabilityType)] {
+        let iso = Self.isoDayF.string(from: date)
+        var out: [(TradeProfile, ShiftAvailabilityType)] = []
+        for (_, p) in others.sorted(by: { $0.key < $1.key }) {
+            guard p.opennessLevel != .none else { continue }
+            // Published pills are authoritative; with no pills, openness ".all" means
+            // any legal type. (".bookends" without pills is ambiguous off-app, so we
+            // surface it as a candidate and let the in-app two-way sheet confirm.)
+            let types: [ShiftAvailabilityType] = p.hasPublishedAvailability
+                ? (p.availabilityMap[iso].map { Array($0) } ?? [])
+                : ShiftAvailabilityType.allCases
+            for t in types.sorted(by: { $0.rawValue < $1.rawValue }) where type == nil || t == type {
+                if p.blacklistedShiftTypes.contains(t.rawValue) { continue }
+                out.append((p, t))
+            }
+        }
+        return out
+    }
 
     /// Cached profile if present, else fetch the single record from the backend
     /// (used by the inbox/two-way to show a person's contact info).

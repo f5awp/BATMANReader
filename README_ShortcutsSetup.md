@@ -1,126 +1,104 @@
-# BATMANReader — Shortcuts Setup Guide
+# BATMAN Watcher — Siri & Shortcuts Guide
 
-Two-part workflow:
-1. **BATMANReader** scrapes and stores your schedule, sends day-before notifications.
-2. **Shortcuts** (built-in iOS app) reads the stored shifts and creates Calendar events and Clock alarms.
+BATMAN Watcher reads your dispatch schedule, manages your trade intent (openness,
+availability, blacklists), and matches reciprocal trades. On top of that, it exposes
+a set of **App Intents** so you can drive it from **Siri** and the **Shortcuts** app —
+to wake-up alarms, calendar events, and quick "do I work tomorrow?" answers.
 
----
-
-## Step 1 — First-time app setup
-
-1. Open **BATMANReader** → tap the **gear icon** → Settings.
-2. Enter your Employee ID and password. Tap **Save Password**.
-3. Set your **lead time** (hours before shift the notification fires). Default is 2h.
-4. Tap **Done**, then tap **Fetch** on the main screen.
-5. The app logs in, navigates to your Expanded Schedule Report, parses all shifts,
-   and schedules a day-before notification for each one.
-6. You should see your upcoming shifts listed. That's the data Shortcuts will use.
-
-**You only need to run Fetch again when your schedule changes** (trade, bid update, etc.).
+This guide covers the Shortcuts layer. Everything here works once you've completed
+first-run setup and fetched your schedule at least once.
 
 ---
 
-## Step 2 — Build the Shortcuts automation
+## Step 1 — First-time setup (in the app)
 
-Open the **Shortcuts** app on your iPhone/iPad.
+1. Open **BATMAN Watcher** and finish the first-run sign-in (Sign in with Apple +
+   claim your employee ID).
+2. On the **Home** tab, tap the **gear** (top-right) → **App Settings**.
+3. Enter your Employee ID and password, then tap **Save Password**.
+4. Set your **alert lead time** (how many hours before a shift reminders fire). Default 2h.
+5. Close Settings and **Fetch your schedule** (the download button on Home). The app
+   logs in, parses your Expanded Schedule Report, and stores every shift.
 
-### Shortcut: "Add Schedule to Calendar + Set Alarms"
-
-Tap **+** to create a new Shortcut. Add these actions in order:
-
----
-
-**Action 1 — Get My Shifts**
-- Tap **Add Action** → search "Get My Shifts"
-- Select **Get My Shifts** (from BATMANReader)
-- Parameters:
-  - Only upcoming shifts: **On**
-  - Include off days: **Off**
-- This returns a list of ShiftEntity objects. The output variable is called "Shifts".
+> Re-run **Fetch** only when your schedule changes (a trade, a bid update, etc.).
 
 ---
 
-**Action 2 — Repeat with Each**
-- Tap **Add Action** → search "Repeat with Each"
-- Set **Items** to the **Shifts** output from Action 1
-- Everything inside the repeat loop runs once per shift.
+## Step 2 — Talk to Siri (zero setup)
+
+These phrases work as soon as your schedule is fetched — just ask Siri:
+
+| Say to Siri… | What it does |
+|---|---|
+| "Fetch my schedule in BATMAN Watcher" | Logs in and refreshes your shifts |
+| "Do I work tomorrow in BATMAN Watcher" | Reads tomorrow's shift (or "you're off") |
+| "When should I wake up for work in BATMAN Watcher" | Tomorrow's alarm time (start − lead time) |
+| "Turn on shift alerts in BATMAN Watcher" | Schedules a reminder before every upcoming shift |
+| "Get my shifts from BATMAN Watcher" | Returns your upcoming shifts |
+| "What changed in my schedule in BATMAN Watcher" | Lists added/removed shifts from the last fetch |
+| "Who can trade with me in BATMAN Watcher" | Finds dispatchers available on a date |
+| "Summarize my schedule in BATMAN Watcher" | On-device AI summary of your week *(iOS 27+)* |
+| "Compose a trade broadcast in BATMAN Watcher" | AI-drafted trade message *(iOS 27+)* |
+
+All of these also appear in the **Shortcuts** app under BATMAN Watcher, so you can drop
+them into your own automations.
 
 ---
 
-**Action 3 (inside loop) — Add New Event**
-- Tap **Add Action** inside the loop → search "Add New Event"
-- Fill in each field by tapping the field, then tapping the variable picker (the magic wand):
-  - **Title** → pick **Repeat Item** → tap the arrow → select **Title**
-    (shows as "DSP @ 29", "OJT", etc.)
-  - **Start Date** → tap the field → tap **Repeat Item** → **ISO Date**
-    (then in the date picker, set time: tap **Repeat Item** → **Start Time**)
-  - **End Date** → same as Start Date but use **End Time**
-  - **Calendar** → pick "Work" or create a new one called "AA Schedule"
-  - **Notes** → optional: pick **Role**, **Desk**, **Leave Code**
+## Step 3 — Build the wake-up + calendar automation
+
+This Shortcut turns every upcoming shift into a Calendar event and a Clock alarm.
+
+Open the **Shortcuts** app → tap **+** → add these actions in order:
+
+**1. Get My Shifts** (from BATMAN Watcher)
+- Only upcoming shifts: **On**
+- Include off days: **Off**
+- Output is a list of shifts.
+
+**2. Repeat with Each** — set **Items** to the *Shifts* output. Actions 3–4 go inside.
+
+**3. Add New Event** (inside the loop) — tap each field, then the variable picker:
+- **Title** → Repeat Item → **Title** (e.g. "DSP @ 29")
+- **Start Date** → Repeat Item → **Start Date/Time**
+- **End Date** → Repeat Item → **End Date/Time**
+- **Calendar** → your work calendar (or the default Calendar)
+- **Notes** *(optional)* → Repeat Item → **Role / Desk / Leave Code**
+
+**4. Create Alarm** (inside the loop) — a real Clock alarm that rings even on silent:
+- **Label** → Repeat Item → **Title**
+- **Hour** → Repeat Item → **Alarm Hour** (already offset by your lead time)
+- **Minute** → **0**
+- **Date** → Repeat Item → **ISO Date**
+- **Repeat** → **Never**
+
+**5. Show Alert** *(optional, after the loop)* — "Calendar + alarms set."
+
+Name it (e.g. **"Set Schedule Alarms"**), tap **Done**, then run it from Shortcuts,
+your Home Screen, or "Hey Siri, Set Schedule Alarms."
 
 ---
 
-**Action 4 (inside loop) — Create Alarm**
-- Tap **Add Action** inside the loop → search "Create Alarm"
-- This is the **built-in iOS Shortcuts alarm** — it creates a real Clock alarm.
-- Fill in:
-  - **Label** → pick **Repeat Item** → **Title**
-  - **Hour** → pick **Repeat Item** → **Alarm Hour (pre-calculated)**
-    (This is already offset by your lead time — just use it directly)
-  - **Minute** → type **0**
-  - **Date** → pick **Repeat Item** → **ISO Date**
-  - **Repeat** → **Never** (each shift is unique)
+## How the alarm time is computed
+
+`Alarm Hour = shift start hour − lead time`
+Example: shift starts 0500, lead time 2h → Alarm Hour = 3 → the alarm rings at 03:00.
+You set the lead time once in Settings; the app pre-calculates **Alarm Hour** so the
+Shortcut needs no math.
+
+**Notification vs. Alarm:** the app's own reminders fire silently from Notification
+Center; the Shortcut's **alarm** rings from the Clock app even in silent mode. You can
+use either or both.
+
+**Re-running:** the Shortcut doesn't de-dupe. If you run it twice you'll get duplicate
+events/alarms — delete the old ones first, or add a "Remove Calendar Events" action
+before the loop.
 
 ---
 
-**Action 5 (after loop) — Show Alert** *(optional)*
-- Tap **Add Action** → search "Show Alert"
-- Message: "Done! Calendar events and alarms created."
+## Troubleshooting
 
----
-
-### Name and save the Shortcut
-- Tap the name at the top, call it **"Set Schedule Alarms"**
-- Tap **Done**
-
----
-
-## Step 3 — Run it
-
-- Tap **"Set Schedule Alarms"** in the Shortcuts app.
-- Or add it to your Home Screen for one-tap access.
-- Or say **"Hey Siri, Set Schedule Alarms"**.
-
-It will loop through every upcoming shift and:
-- Add a calendar event (0500–1400 or 1300–2200) titled "DSP @ 29" etc.
-- Set a Clock alarm for your pre-calculated alarm hour on each shift day.
-
----
-
-## Notes
-
-**Alarm Hour explained:**
-`Alarm Hour = Shift Start Hour − Lead Time (hours)`
-Example: shift starts at 0500, lead time = 2h → Alarm Hour = 3 → alarm fires at 03:00.
-You set the lead time once in the app. BATMANReader pre-calculates the alarm hour
-so Shortcuts just needs to read the number — no math in Shortcuts needed.
-
-**When to re-run:**
-- After any trade or bid change: tap **Fetch** in the app, then run the Shortcut again.
-- The Shortcut does not check for duplicates — if you run it twice you'll get duplicate events/alarms. Delete the old ones first, or add a "Delete Calendar Events" action before the loop.
-
-**Notification vs Alarm:**
-- **Notification** (from BATMANReader): fires from Notification Center, works silently.
-- **Alarm** (from Shortcuts): fires from the Clock app, makes the full alarm sound, works even in silent mode.
-Both are scheduled — you'll get both for each shift.
-
----
-
-## Calibration checklist (first run)
-
-- [ ] `reportURL` in `WebController.swift` updated to the real Expanded Schedule Report URL
-- [ ] Login works (status reaches "Reading schedule data…")
-- [ ] Shift count in the main list looks correct
-- [ ] One test shift appears correctly in Calendar
-- [ ] One test alarm appears in Clock
-- [ ] Day-before notification fires (test by temporarily setting a shift 10 minutes out)
+- **"Sign in failed"** — re-enter your password in App Settings → Save Password.
+- **No shifts returned** — fetch your schedule on Home first; Siri reads stored data.
+- **AI phrases do nothing** — the two AI shortcuts need iOS 27+ (on-device models).
+- **Wrong alarm time** — check the lead time in App Settings.

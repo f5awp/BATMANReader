@@ -75,16 +75,16 @@ struct SlackMessageRow<Actions: View>: View {
             Avatar(name: name, id: authorID, size: avatarSize)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
-                    Text(name).font(.system(size: 15, weight: .semibold))
+                    Text(name).font(.subheadline.weight(.semibold))
                     if let meta {
-                        Text(meta.text).font(.system(size: 11, weight: .medium)).foregroundStyle(meta.color)
+                        Text(meta.text).font(.caption2.weight(.medium)).foregroundStyle(meta.color)
                     }
-                    Text(timestamp, style: .relative).font(.system(size: 12)).foregroundStyle(.secondary)
+                    Text(timestamp, style: .relative).font(.caption2).foregroundStyle(.secondary)
                     Spacer(minLength: 0)
                     actions()
                 }
                 if !message.isEmpty {
-                    mdText(message).font(.system(size: 15)).textSelection(.enabled)
+                    mdText(message).font(.subheadline).textSelection(.enabled)
                 }
             }
         }
@@ -144,9 +144,9 @@ struct StatusHeaderBar: View {
         HStack(spacing: 8) {
             Avatar(name: name, id: settings.username, size: 28)
             VStack(alignment: .leading, spacing: 0) {
-                Text(name).font(.system(size: 13, weight: .semibold)).lineLimit(1)
+                Text(name).font(.footnote.weight(.semibold)).lineLimit(1)
                 Text(settings.statusBroadcast.isEmpty ? "Set a status in Trade Settings →" : settings.statusBroadcast)
-                    .font(.system(size: 11))
+                    .font(.caption2)
                     .foregroundStyle(settings.statusBroadcast.isEmpty ? .tertiary : .secondary)
                     .lineLimit(1)
             }

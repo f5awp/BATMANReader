@@ -20,10 +20,10 @@ struct HelpView: View {
                     "The admin posts an updated master about 3× a day (once a shift). Just open the app to get the latest; the Schedule tab shows a scrolling month calendar with today highlighted."
                 ])
 
-                section("Find Candidates (who can cover you)", "person.2.badge.gearshape", [
+                section("Find Candidates (who can take your shifts)", "person.2.badge.gearshape", [
                     "Availability tab → Find Candidates → tap the day(s) you want to give away → Find.",
                     "📖 green = a clean bookend (won't chop up their time off).",
-                    "🔥 gold ×N = the strongest matches — you each have days the other wants and can cover.",
+                    "🔥 gold ×N = the strongest matches — you each have days the other wants and can work.",
                     "“?” means that person hasn't set a trade profile yet."
                 ])
 

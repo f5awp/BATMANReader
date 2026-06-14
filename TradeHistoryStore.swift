@@ -12,15 +12,22 @@ struct TradeHistoryEntry: Codable, Sendable, Hashable, Identifiable {
     let summary: String          // human-readable "who swapped what"
     let participants: [String]   // display names involved
     let dayIDs: [String]         // ISO days that moved
-    let completedAt: Date
+    var completedAt: Date
+    var pending: Bool = false    // ECB form submitted, awaiting receipt confirmation
+    var ecb: Int? = nil
+    var employeeID: String? = nil
 
     init(id: String = UUID().uuidString, summary: String, participants: [String],
-         dayIDs: [String], completedAt: Date) {
+         dayIDs: [String], completedAt: Date, pending: Bool = false,
+         ecb: Int? = nil, employeeID: String? = nil) {
         self.id = id
         self.summary = summary
         self.participants = participants
         self.dayIDs = dayIDs
         self.completedAt = completedAt
+        self.pending = pending
+        self.ecb = ecb
+        self.employeeID = employeeID
     }
 }
 
@@ -51,6 +58,19 @@ final class TradeHistoryStore {
     func record(_ entry: TradeHistoryEntry) {
         entries.removeAll { $0.id == entry.id }
         entries.insert(entry, at: 0)
+    }
+
+    /// Pending ECB transfers (form submitted, receipt not yet confirmed).
+    var pending: [TradeHistoryEntry] { entries.filter(\.pending) }
+    var pendingCount: Int { pending.count }
+
+    /// Mark a pending entry complete once the recipient confirms receipt.
+    func markComplete(id: String, at date: Date) {
+        guard let i = entries.firstIndex(where: { $0.id == id }) else { return }
+        entries[i].pending = false
+        entries[i].completedAt = date
+        entries.sort { $0.completedAt > $1.completedAt }
+        persist()
     }
 
     private func persist() {
