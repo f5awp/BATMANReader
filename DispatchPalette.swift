@@ -19,6 +19,9 @@ enum BrickPalette {
     static let critical  = Color(red: 0.86, green: 0.21, blue: 0.21)  // red
     static let milestone = Color(red: 0.95, green: 0.40, blue: 0.70)  // pink
     static let neutral   = Color.gray
+    // Distinct off-day hues so off intents never collide with worked-day intents.
+    static let availableOff = Color(red: 0.00, green: 0.68, blue: 0.62)  // teal
+    static let lockedOff    = Color(red: 0.27, green: 0.30, blue: 0.55)  // slate
 }
 
 // MARK: - Intent → brick color
@@ -39,8 +42,8 @@ extension OffIntentState {
     /// Calendar fill hue for an off day with this intent.
     var brickColor: Color {
         switch self {
-        case .wantToWork:  return BrickPalette.clear        // available to pick up
-        case .mustBeOff:   return BrickPalette.critical     // hard do-not-schedule
+        case .wantToWork:  return BrickPalette.availableOff // teal — distinct from worked "want to work"
+        case .mustBeOff:   return BrickPalette.lockedOff     // slate — distinct from worked "keep"
         case .neutralOpen: return BrickPalette.neutral
         }
     }

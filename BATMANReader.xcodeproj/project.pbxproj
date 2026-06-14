@@ -21,6 +21,7 @@
 		916E54232FDE332F00A1CE2B /* TradeIntentsFeed.swift in Sources */ = {isa = PBXBuildFile; fileRef = 916E54222FDE332F00A1CE2B /* TradeIntentsFeed.swift */; };
 		916E54252FDE376100A1CE2B /* DispatchPalette.swift in Sources */ = {isa = PBXBuildFile; fileRef = 916E54242FDE376100A1CE2B /* DispatchPalette.swift */; };
 		916E54272FDE3B6B00A1CE2B /* SlackKit.swift in Sources */ = {isa = PBXBuildFile; fileRef = 916E54262FDE3B6B00A1CE2B /* SlackKit.swift */; };
+		916E54292FDE3FEE00A1CE2B /* ReasonClassifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = 916E54282FDE3FEE00A1CE2B /* ReasonClassifier.swift */; };
 		91D1B89D2FDA65050049CAF7 /* ShiftAvailability.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B8992FDA65050049CAF7 /* ShiftAvailability.swift */; };
 		91D1B89E2FDA65050049CAF7 /* AIScheduleSummaryIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B88A2FDA65050049CAF7 /* AIScheduleSummaryIntent.swift */; };
 		91D1B89F2FDA65050049CAF7 /* SettingsManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B8962FDA65050049CAF7 /* SettingsManager.swift */; };
@@ -94,6 +95,7 @@
 		916E54222FDE332F00A1CE2B /* TradeIntentsFeed.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TradeIntentsFeed.swift; sourceTree = "<group>"; };
 		916E54242FDE376100A1CE2B /* DispatchPalette.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DispatchPalette.swift; sourceTree = "<group>"; };
 		916E54262FDE3B6B00A1CE2B /* SlackKit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SlackKit.swift; sourceTree = "<group>"; };
+		916E54282FDE3FEE00A1CE2B /* ReasonClassifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReasonClassifier.swift; sourceTree = "<group>"; };
 		91B5643C2FDA47E400D38BBE /* BATMANReader.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = BATMANReader.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		91D1B88A2FDA65050049CAF7 /* AIScheduleSummaryIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIScheduleSummaryIntent.swift; sourceTree = "<group>"; };
 		91D1B88B2FDA65050049CAF7 /* AvailabilityIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AvailabilityIntents.swift; sourceTree = "<group>"; };
@@ -237,6 +239,7 @@
 				916E54222FDE332F00A1CE2B /* TradeIntentsFeed.swift */,
 				916E54242FDE376100A1CE2B /* DispatchPalette.swift */,
 				916E54262FDE3B6B00A1CE2B /* SlackKit.swift */,
+				916E54282FDE3FEE00A1CE2B /* ReasonClassifier.swift */,
 			);
 			sourceTree = "<group>";
 		};
@@ -363,6 +366,7 @@
 				916E54022FDCE50200A1CE2B /* CloudPush.swift in Sources */,
 				91D1B89E2FDA65050049CAF7 /* AIScheduleSummaryIntent.swift in Sources */,
 				91D1B8B92FDBE47C0049CAF7 /* TradeMatcher.swift in Sources */,
+				916E54292FDE3FEE00A1CE2B /* ReasonClassifier.swift in Sources */,
 				91D1B8ED2FDC69DF0049CAF7 /* MessagingViews.swift in Sources */,
 				91D1B8C12FDC49AD0049CAF7 /* TradeProfile.swift in Sources */,
 				91D1B89F2FDA65050049CAF7 /* SettingsManager.swift in Sources */,

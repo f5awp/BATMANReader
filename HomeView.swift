@@ -289,8 +289,8 @@ struct MarkIntentsToolbar: View {
                 swatch(BrickPalette.change, "Trade away")
                 swatch(BrickPalette.critical, "Keep")
             } else {
-                swatch(BrickPalette.clear, "Want to work")
-                swatch(BrickPalette.critical, "Must be off")
+                swatch(BrickPalette.availableOff, "Want to work")
+                swatch(BrickPalette.lockedOff, "Must be off")
             }
             Spacer()
             Text("Tap to set · long-press for options")
@@ -399,8 +399,8 @@ struct IntentKeySheet: View {
                     keyRow(BrickPalette.neutral, "Neutral / open", "No strong preference")
                 }
                 Section("Days off") {
-                    keyRow(BrickPalette.clear, "Want to work", "Available to pick up a shift")
-                    keyRow(BrickPalette.critical, "Must be off", "Hard do-not-schedule")
+                    keyRow(BrickPalette.availableOff, "Want to work", "Available to pick up a shift")
+                    keyRow(BrickPalette.lockedOff, "Must be off", "Hard do-not-schedule")
                 }
                 Section("Markers & borders") {
                     borderRow(BrickPalette.warning, "High-Demand date")

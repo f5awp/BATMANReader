@@ -195,7 +195,7 @@ struct IntentCalendarView: View {
     private func borderColor(dayID: String, isToday: Bool, isOff: Bool, hasShift: Bool) -> Color {
         if flashDays.contains(dayID) { return BrickPalette.warning }
         if isToday { return BrickPalette.warning }
-        if hasShift, isOff, intents.offIntent(forDay: dayID) == .mustBeOff { return BrickPalette.critical }
+        if hasShift, isOff, intents.offIntent(forDay: dayID) == .mustBeOff { return BrickPalette.lockedOff }
         let topo = intents.topology(forDay: dayID)
         if topo != .standard { return topo.accent }
         return .clear
@@ -219,9 +219,11 @@ struct DayIntentEditor: View {
     @State private var working: WorkingIntentState?
     @State private var off: OffIntentState?
     @State private var reason: IntentReason?
-    @State private var topology: DayTopology = .standard
+    @State private var reasonText = ""
+    @State private var significant = false
     @State private var noteText = ""
     @State private var notePrivate = false
+    @State private var saving = false
 
     init(target: DayEditTarget) { self.target = target }
 
@@ -249,25 +251,31 @@ struct DayIntentEditor: View {
                     }
                 }
 
-                Section("Reason (optional)") {
-                    Picker("Reason", selection: Binding(
-                        get: { reason },
-                        set: { reason = $0 })) {
-                        Text("None").tag(IntentReason?.none)
-                        ForEach(IntentReason.allCases) { Text($0.label).tag(IntentReason?.some($0)) }
+                Section {
+                    TextField("Why? (free text)", text: $reasonText, axis: .vertical)
+                        .lineLimit(1...3)
+                    if let reason {
+                        HStack(spacing: 6) {
+                            Image(systemName: "sparkles").foregroundStyle(.purple)
+                            Text("Categorized as \(reason.label)").font(.caption).foregroundStyle(.secondary)
+                        }
                     }
+                } header: {
+                    Text("Reason")
+                } footer: {
+                    Text("Type it naturally — it's categorized automatically on save.")
                 }
 
-                Section("Calendar gravity") {
-                    Picker("Topology", selection: $topology) {
-                        ForEach(DayTopology.allCases) { Text($0.label).tag($0) }
-                    }
+                Section {
+                    Toggle("Significant day", isOn: $significant)
+                } footer: {
+                    Text("Protects this date from automatic trade suggestions.")
                 }
 
                 Section("Note (≤ 50 chars)") {
                     TextField("Short note", text: $noteText)
                         .onChange(of: noteText) { _, v in if v.count > 50 { noteText = String(v.prefix(50)) } }
-                    Toggle("Private (never shared)", isOn: $notePrivate)
+                    Toggle("Make Private", isOn: $notePrivate)
                 }
 
                 Section {
@@ -283,7 +291,9 @@ struct DayIntentEditor: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) { Button("Save", action: save) }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") { Task { await save() } }.disabled(saving)
+                }
             }
             .onAppear(perform: load)
         }
@@ -292,20 +302,24 @@ struct DayIntentEditor: View {
     private func load() {
         working = intents.workingIntent(forDay: target.dayID)
         off = intents.offIntent(forDay: target.dayID)
-        topology = intents.topology(forDay: target.dayID)
+        significant = intents.topology(forDay: target.dayID) != .standard
         if let n = intents.note(forDay: target.dayID) {
             noteText = n.message; notePrivate = n.isPrivate; reason = n.reason
         }
     }
 
-    private func save() {
+    private func save() async {
+        saving = true
+        // Categorize the free-text reason with the on-device model.
+        reason = await ReasonClassifier.classify(reasonText)
         if target.isOff { intents.setOffIntent(off, forDay: target.dayID) }
         else { intents.setWorkingIntent(working, forDay: target.dayID) }
-        intents.setTopology(topology, forDay: target.dayID)
+        intents.setTopology(significant ? .personalMilestone : nil, forDay: target.dayID)
         let trimmed = noteText.trimmingCharacters(in: .whitespacesAndNewlines)
         intents.setNote(trimmed.isEmpty ? nil
                         : DayNote(dayID: target.dayID, message: trimmed, reason: reason, isPrivate: notePrivate),
                         forDay: target.dayID)
+        saving = false
         dismiss()
     }
 }
