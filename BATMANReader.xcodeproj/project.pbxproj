@@ -6,14 +6,148 @@
 	objectVersion = 110;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		916E54002FDCE21900A1CE2B /* CloudKitRosterService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 916E53FF2FDCE21900A1CE2B /* CloudKitRosterService.swift */; };
+		916E54022FDCE50200A1CE2B /* CloudPush.swift in Sources */ = {isa = PBXBuildFile; fileRef = 916E54012FDCE50200A1CE2B /* CloudPush.swift */; };
+		916E54042FDCF23700A1CE2B /* HelpView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 916E54032FDCF23700A1CE2B /* HelpView.swift */; };
+		916E54062FDCF7FF00A1CE2B /* AccountService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 916E54052FDCF7FF00A1CE2B /* AccountService.swift */; };
+		916E54152FDE2F0A00A1CE2B /* TradeEngineModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 916E54142FDE2F0A00A1CE2B /* TradeEngineModels.swift */; };
+		916E54172FDE2F2B00A1CE2B /* DayIntentStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 916E54162FDE2F2B00A1CE2B /* DayIntentStore.swift */; };
+		91D1B89D2FDA65050049CAF7 /* ShiftAvailability.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B8992FDA65050049CAF7 /* ShiftAvailability.swift */; };
+		91D1B89E2FDA65050049CAF7 /* AIScheduleSummaryIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B88A2FDA65050049CAF7 /* AIScheduleSummaryIntent.swift */; };
+		91D1B89F2FDA65050049CAF7 /* SettingsManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B8962FDA65050049CAF7 /* SettingsManager.swift */; };
+		91D1B8A02FDA65050049CAF7 /* ShiftEntity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B89A2FDA65050049CAF7 /* ShiftEntity.swift */; };
+		91D1B8A12FDA65050049CAF7 /* BATMANReaderApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B88E2FDA65050049CAF7 /* BATMANReaderApp.swift */; };
+		91D1B8A22FDA65050049CAF7 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B8972FDA65050049CAF7 /* SettingsView.swift */; };
+		91D1B8A32FDA65050049CAF7 /* AvailabilityIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B88B2FDA65050049CAF7 /* AvailabilityIntents.swift */; };
+		91D1B8A42FDA65050049CAF7 /* Shift.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B8982FDA65050049CAF7 /* Shift.swift */; };
+		91D1B8A52FDA65050049CAF7 /* ScheduleIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B8942FDA65050049CAF7 /* ScheduleIntents.swift */; };
+		91D1B8A62FDA65050049CAF7 /* ScheduleDiff.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B8932FDA65050049CAF7 /* ScheduleDiff.swift */; };
+		91D1B8A72FDA65050049CAF7 /* EventKitManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B8902FDA65050049CAF7 /* EventKitManager.swift */; };
+		91D1B8A82FDA65050049CAF7 /* NotificationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B8912FDA65050049CAF7 /* NotificationManager.swift */; };
+		91D1B8A92FDA65050049CAF7 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B88F2FDA65050049CAF7 /* ContentView.swift */; };
+		91D1B8AA2FDA65050049CAF7 /* ScheduleParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B8952FDA65050049CAF7 /* ScheduleParser.swift */; };
+		91D1B8AB2FDA65050049CAF7 /* AvailabilityManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B88C2FDA65050049CAF7 /* AvailabilityManager.swift */; };
+		91D1B8AC2FDA65050049CAF7 /* WebController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B89C2FDA65050049CAF7 /* WebController.swift */; };
+		91D1B8AD2FDA65050049CAF7 /* ShiftStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B89B2FDA65050049CAF7 /* ShiftStore.swift */; };
+		91D1B8AE2FDA65050049CAF7 /* AvailabilityView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B88D2FDA65050049CAF7 /* AvailabilityView.swift */; };
+		91D1B8AF2FDA65050049CAF7 /* README_ShortcutsSetup.md in Resources */ = {isa = PBXBuildFile; fileRef = 91D1B8922FDA65050049CAF7 /* README_ShortcutsSetup.md */; };
+		91D1B8B52FDBDEA40049CAF7 /* RosterShift.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B8B42FDBDEA40049CAF7 /* RosterShift.swift */; };
+		91D1B8B72FDBDEB30049CAF7 /* RosterStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B8B62FDBDEB30049CAF7 /* RosterStore.swift */; };
+		91D1B8B92FDBE47C0049CAF7 /* TradeMatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B8B82FDBE47C0049CAF7 /* TradeMatcher.swift */; };
+		91D1B8BB2FDBF20A0049CAF7 /* ScheduleStripView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B8BA2FDBF20A0049CAF7 /* ScheduleStripView.swift */; };
+		91D1B8BD2FDBF3850049CAF7 /* ShiftSelectCalendar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B8BC2FDBF3850049CAF7 /* ShiftSelectCalendar.swift */; };
+		91D1B8BF2FDC488D0049CAF7 /* TradeIntentStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B8BE2FDC488D0049CAF7 /* TradeIntentStore.swift */; };
+		91D1B8C12FDC49AD0049CAF7 /* TradeProfile.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B8C02FDC49AD0049CAF7 /* TradeProfile.swift */; };
+		91D1B8C32FDC5B2E0049CAF7 /* CloudKitTradeProfileService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B8C22FDC5B2E0049CAF7 /* CloudKitTradeProfileService.swift */; };
+		91D1B8CB2FDC65470049CAF7 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 91D1B8CA2FDC65470049CAF7 /* WidgetKit.framework */; };
+		91D1B8CD2FDC65470049CAF7 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 91D1B8CC2FDC65470049CAF7 /* SwiftUI.framework */; };
+		91D1B8DE2FDC65490049CAF7 /* BATMANWidgetsExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 91D1B8C82FDC65470049CAF7 /* BATMANWidgetsExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		91D1B8E52FDC65BC0049CAF7 /* Messaging.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B8E42FDC65BC0049CAF7 /* Messaging.swift */; };
+		91D1B8E72FDC66240049CAF7 /* CloudKitMessagingService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B8E62FDC66240049CAF7 /* CloudKitMessagingService.swift */; };
+		91D1B8EB2FDC67DD0049CAF7 /* WidgetData.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B8EA2FDC67DD0049CAF7 /* WidgetData.swift */; };
+		91D1B8ED2FDC69DF0049CAF7 /* MessagingViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B8EC2FDC69DF0049CAF7 /* MessagingViews.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		91D1B8DC2FDC65490049CAF7 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 91B564342FDA47E400D38BBE /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 91D1B8C72FDC65470049CAF7;
+			remoteInfo = BATMANWidgetsExtension;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		91D1B8E32FDC65490049CAF7 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			dstPath = "";
+			dstSubfolder = PlugIns;
+			files = (
+				91D1B8DE2FDC65490049CAF7 /* BATMANWidgetsExtension.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
+		916E53FF2FDCE21900A1CE2B /* CloudKitRosterService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudKitRosterService.swift; sourceTree = "<group>"; };
+		916E54012FDCE50200A1CE2B /* CloudPush.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudPush.swift; sourceTree = "<group>"; };
+		916E54032FDCF23700A1CE2B /* HelpView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HelpView.swift; sourceTree = "<group>"; };
+		916E54052FDCF7FF00A1CE2B /* AccountService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountService.swift; sourceTree = "<group>"; };
+		916E54142FDE2F0A00A1CE2B /* TradeEngineModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TradeEngineModels.swift; sourceTree = "<group>"; };
+		916E54162FDE2F2B00A1CE2B /* DayIntentStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DayIntentStore.swift; sourceTree = "<group>"; };
 		91B5643C2FDA47E400D38BBE /* BATMANReader.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = BATMANReader.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		91D1B88A2FDA65050049CAF7 /* AIScheduleSummaryIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIScheduleSummaryIntent.swift; sourceTree = "<group>"; };
+		91D1B88B2FDA65050049CAF7 /* AvailabilityIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AvailabilityIntents.swift; sourceTree = "<group>"; };
+		91D1B88C2FDA65050049CAF7 /* AvailabilityManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AvailabilityManager.swift; sourceTree = "<group>"; };
+		91D1B88D2FDA65050049CAF7 /* AvailabilityView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AvailabilityView.swift; sourceTree = "<group>"; };
+		91D1B88E2FDA65050049CAF7 /* BATMANReaderApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BATMANReaderApp.swift; sourceTree = "<group>"; };
+		91D1B88F2FDA65050049CAF7 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		91D1B8902FDA65050049CAF7 /* EventKitManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EventKitManager.swift; sourceTree = "<group>"; };
+		91D1B8912FDA65050049CAF7 /* NotificationManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationManager.swift; sourceTree = "<group>"; };
+		91D1B8922FDA65050049CAF7 /* README_ShortcutsSetup.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README_ShortcutsSetup.md; sourceTree = "<group>"; };
+		91D1B8932FDA65050049CAF7 /* ScheduleDiff.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScheduleDiff.swift; sourceTree = "<group>"; };
+		91D1B8942FDA65050049CAF7 /* ScheduleIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScheduleIntents.swift; sourceTree = "<group>"; };
+		91D1B8952FDA65050049CAF7 /* ScheduleParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScheduleParser.swift; sourceTree = "<group>"; };
+		91D1B8962FDA65050049CAF7 /* SettingsManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsManager.swift; sourceTree = "<group>"; };
+		91D1B8972FDA65050049CAF7 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		91D1B8982FDA65050049CAF7 /* Shift.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Shift.swift; sourceTree = "<group>"; };
+		91D1B8992FDA65050049CAF7 /* ShiftAvailability.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShiftAvailability.swift; sourceTree = "<group>"; };
+		91D1B89A2FDA65050049CAF7 /* ShiftEntity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShiftEntity.swift; sourceTree = "<group>"; };
+		91D1B89B2FDA65050049CAF7 /* ShiftStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShiftStore.swift; sourceTree = "<group>"; };
+		91D1B89C2FDA65050049CAF7 /* WebController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebController.swift; sourceTree = "<group>"; };
+		91D1B8B42FDBDEA40049CAF7 /* RosterShift.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RosterShift.swift; sourceTree = "<group>"; };
+		91D1B8B62FDBDEB30049CAF7 /* RosterStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RosterStore.swift; sourceTree = "<group>"; };
+		91D1B8B82FDBE47C0049CAF7 /* TradeMatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TradeMatcher.swift; sourceTree = "<group>"; };
+		91D1B8BA2FDBF20A0049CAF7 /* ScheduleStripView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScheduleStripView.swift; sourceTree = "<group>"; };
+		91D1B8BC2FDBF3850049CAF7 /* ShiftSelectCalendar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShiftSelectCalendar.swift; sourceTree = "<group>"; };
+		91D1B8BE2FDC488D0049CAF7 /* TradeIntentStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TradeIntentStore.swift; sourceTree = "<group>"; };
+		91D1B8C02FDC49AD0049CAF7 /* TradeProfile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TradeProfile.swift; sourceTree = "<group>"; };
+		91D1B8C22FDC5B2E0049CAF7 /* CloudKitTradeProfileService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudKitTradeProfileService.swift; sourceTree = "<group>"; };
+		91D1B8C82FDC65470049CAF7 /* BATMANWidgetsExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = BATMANWidgetsExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		91D1B8CA2FDC65470049CAF7 /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
+		91D1B8CC2FDC65470049CAF7 /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
+		91D1B8E42FDC65BC0049CAF7 /* Messaging.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Messaging.swift; sourceTree = "<group>"; };
+		91D1B8E62FDC66240049CAF7 /* CloudKitMessagingService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudKitMessagingService.swift; sourceTree = "<group>"; };
+		91D1B8E92FDC670F0049CAF7 /* BATMANWidgetsExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = BATMANWidgetsExtension.entitlements; sourceTree = "<group>"; };
+		91D1B8EA2FDC67DD0049CAF7 /* WidgetData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetData.swift; sourceTree = "<group>"; };
+		91D1B8EC2FDC69DF0049CAF7 /* MessagingViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessagingViews.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		91D1B8B12FDA66470049CAF7 /* Exceptions for "BATMANReader" folder in "BATMANReader" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 91B5643B2FDA47E400D38BBE /* BATMANReader */;
+		};
+		91D1B8E22FDC65490049CAF7 /* Exceptions for "BATMANWidgets" folder in "BATMANWidgetsExtension" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 91D1B8C72FDC65470049CAF7 /* BATMANWidgetsExtension */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		91B5643E2FDA47E400D38BBE /* BATMANReader */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				91D1B8B12FDA66470049CAF7 /* Exceptions for "BATMANReader" folder in "BATMANReader" target */,
+			);
 			path = BATMANReader;
+			sourceTree = "<group>";
+		};
+		91D1B8CE2FDC65470049CAF7 /* BATMANWidgets */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				91D1B8E22FDC65490049CAF7 /* Exceptions for "BATMANWidgets" folder in "BATMANWidgetsExtension" target */,
+			);
+			path = BATMANWidgets;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -24,14 +158,61 @@
 			files = (
 			);
 		};
+		91D1B8C52FDC65470049CAF7 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			files = (
+				91D1B8CD2FDC65470049CAF7 /* SwiftUI.framework in Frameworks */,
+				91D1B8CB2FDC65470049CAF7 /* WidgetKit.framework in Frameworks */,
+			);
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
 		91B564332FDA47E400D38BBE = {
 			isa = PBXGroup;
 			children = (
+				91D1B8E92FDC670F0049CAF7 /* BATMANWidgetsExtension.entitlements */,
 				91B5643E2FDA47E400D38BBE /* BATMANReader */,
+				91D1B8CE2FDC65470049CAF7 /* BATMANWidgets */,
+				91D1B8C92FDC65470049CAF7 /* Frameworks */,
 				91B5643D2FDA47E400D38BBE /* Products */,
+				91D1B88A2FDA65050049CAF7 /* AIScheduleSummaryIntent.swift */,
+				91D1B88B2FDA65050049CAF7 /* AvailabilityIntents.swift */,
+				91D1B88C2FDA65050049CAF7 /* AvailabilityManager.swift */,
+				91D1B88D2FDA65050049CAF7 /* AvailabilityView.swift */,
+				91D1B88E2FDA65050049CAF7 /* BATMANReaderApp.swift */,
+				91D1B88F2FDA65050049CAF7 /* ContentView.swift */,
+				91D1B8902FDA65050049CAF7 /* EventKitManager.swift */,
+				91D1B8912FDA65050049CAF7 /* NotificationManager.swift */,
+				91D1B8922FDA65050049CAF7 /* README_ShortcutsSetup.md */,
+				91D1B8932FDA65050049CAF7 /* ScheduleDiff.swift */,
+				91D1B8942FDA65050049CAF7 /* ScheduleIntents.swift */,
+				91D1B8952FDA65050049CAF7 /* ScheduleParser.swift */,
+				91D1B8962FDA65050049CAF7 /* SettingsManager.swift */,
+				91D1B8972FDA65050049CAF7 /* SettingsView.swift */,
+				91D1B8982FDA65050049CAF7 /* Shift.swift */,
+				91D1B8992FDA65050049CAF7 /* ShiftAvailability.swift */,
+				91D1B89A2FDA65050049CAF7 /* ShiftEntity.swift */,
+				91D1B89B2FDA65050049CAF7 /* ShiftStore.swift */,
+				91D1B89C2FDA65050049CAF7 /* WebController.swift */,
+				91D1B8B42FDBDEA40049CAF7 /* RosterShift.swift */,
+				91D1B8B62FDBDEB30049CAF7 /* RosterStore.swift */,
+				91D1B8B82FDBE47C0049CAF7 /* TradeMatcher.swift */,
+				91D1B8BA2FDBF20A0049CAF7 /* ScheduleStripView.swift */,
+				91D1B8BC2FDBF3850049CAF7 /* ShiftSelectCalendar.swift */,
+				91D1B8BE2FDC488D0049CAF7 /* TradeIntentStore.swift */,
+				91D1B8C02FDC49AD0049CAF7 /* TradeProfile.swift */,
+				91D1B8C22FDC5B2E0049CAF7 /* CloudKitTradeProfileService.swift */,
+				91D1B8E42FDC65BC0049CAF7 /* Messaging.swift */,
+				91D1B8E62FDC66240049CAF7 /* CloudKitMessagingService.swift */,
+				91D1B8EA2FDC67DD0049CAF7 /* WidgetData.swift */,
+				91D1B8EC2FDC69DF0049CAF7 /* MessagingViews.swift */,
+				916E53FF2FDCE21900A1CE2B /* CloudKitRosterService.swift */,
+				916E54012FDCE50200A1CE2B /* CloudPush.swift */,
+				916E54032FDCF23700A1CE2B /* HelpView.swift */,
+				916E54052FDCF7FF00A1CE2B /* AccountService.swift */,
+				916E54142FDE2F0A00A1CE2B /* TradeEngineModels.swift */,
+				916E54162FDE2F2B00A1CE2B /* DayIntentStore.swift */,
 			);
 			sourceTree = "<group>";
 		};
@@ -39,8 +220,18 @@
 			isa = PBXGroup;
 			children = (
 				91B5643C2FDA47E400D38BBE /* BATMANReader.app */,
+				91D1B8C82FDC65470049CAF7 /* BATMANWidgetsExtension.appex */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		91D1B8C92FDC65470049CAF7 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				91D1B8CA2FDC65470049CAF7 /* WidgetKit.framework */,
+				91D1B8CC2FDC65470049CAF7 /* SwiftUI.framework */,
+			);
+			name = Frameworks;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -53,8 +244,12 @@
 				91B564382FDA47E400D38BBE /* Sources */,
 				91B564392FDA47E400D38BBE /* Frameworks */,
 				91B5643A2FDA47E400D38BBE /* Resources */,
+				91D1B8E32FDC65490049CAF7 /* Embed Foundation Extensions */,
 			);
 			buildRules = (
+			);
+			dependencies = (
+				91D1B8DD2FDC65490049CAF7 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				91B5643E2FDA47E400D38BBE /* BATMANReader */,
@@ -63,6 +258,24 @@
 			productName = BATMANReader;
 			productReference = 91B5643C2FDA47E400D38BBE /* BATMANReader.app */;
 			productType = "com.apple.product-type.application";
+		};
+		91D1B8C72FDC65470049CAF7 /* BATMANWidgetsExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 91D1B8DF2FDC65490049CAF7 /* Build configuration list for PBXNativeTarget "BATMANWidgetsExtension" */;
+			buildPhases = (
+				91D1B8C42FDC65470049CAF7 /* Sources */,
+				91D1B8C52FDC65470049CAF7 /* Frameworks */,
+				91D1B8C62FDC65470049CAF7 /* Resources */,
+			);
+			buildRules = (
+			);
+			fileSystemSynchronizedGroups = (
+				91D1B8CE2FDC65470049CAF7 /* BATMANWidgets */,
+			);
+			name = BATMANWidgetsExtension;
+			productName = BATMANWidgetsExtension;
+			productReference = 91D1B8C82FDC65470049CAF7 /* BATMANWidgetsExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -75,6 +288,10 @@
 				LastUpgradeCheck = 2700;
 				TargetAttributes = {
 					91B5643B2FDA47E400D38BBE = {
+						CreatedOnToolsVersion = 27.0;
+						LastSwiftMigration = 2700;
+					};
+					91D1B8C72FDC65470049CAF7 = {
 						CreatedOnToolsVersion = 27.0;
 					};
 				};
@@ -94,12 +311,19 @@
 			projectRoot = "";
 			targets = (
 				91B5643B2FDA47E400D38BBE /* BATMANReader */,
+				91D1B8C72FDC65470049CAF7 /* BATMANWidgetsExtension */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		91B5643A2FDA47E400D38BBE /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			files = (
+				91D1B8AF2FDA65050049CAF7 /* README_ShortcutsSetup.md in Resources */,
+			);
+		};
+		91D1B8C62FDC65470049CAF7 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			files = (
 			);
@@ -110,9 +334,58 @@
 		91B564382FDA47E400D38BBE /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			files = (
+				91D1B89D2FDA65050049CAF7 /* ShiftAvailability.swift in Sources */,
+				916E54022FDCE50200A1CE2B /* CloudPush.swift in Sources */,
+				91D1B89E2FDA65050049CAF7 /* AIScheduleSummaryIntent.swift in Sources */,
+				91D1B8B92FDBE47C0049CAF7 /* TradeMatcher.swift in Sources */,
+				91D1B8ED2FDC69DF0049CAF7 /* MessagingViews.swift in Sources */,
+				91D1B8C12FDC49AD0049CAF7 /* TradeProfile.swift in Sources */,
+				91D1B89F2FDA65050049CAF7 /* SettingsManager.swift in Sources */,
+				91D1B8A02FDA65050049CAF7 /* ShiftEntity.swift in Sources */,
+				916E54172FDE2F2B00A1CE2B /* DayIntentStore.swift in Sources */,
+				91D1B8A12FDA65050049CAF7 /* BATMANReaderApp.swift in Sources */,
+				916E54062FDCF7FF00A1CE2B /* AccountService.swift in Sources */,
+				91D1B8A22FDA65050049CAF7 /* SettingsView.swift in Sources */,
+				91D1B8A32FDA65050049CAF7 /* AvailabilityIntents.swift in Sources */,
+				91D1B8BF2FDC488D0049CAF7 /* TradeIntentStore.swift in Sources */,
+				91D1B8A42FDA65050049CAF7 /* Shift.swift in Sources */,
+				91D1B8A52FDA65050049CAF7 /* ScheduleIntents.swift in Sources */,
+				91D1B8A62FDA65050049CAF7 /* ScheduleDiff.swift in Sources */,
+				91D1B8A72FDA65050049CAF7 /* EventKitManager.swift in Sources */,
+				916E54042FDCF23700A1CE2B /* HelpView.swift in Sources */,
+				91D1B8A82FDA65050049CAF7 /* NotificationManager.swift in Sources */,
+				91D1B8EB2FDC67DD0049CAF7 /* WidgetData.swift in Sources */,
+				91D1B8E72FDC66240049CAF7 /* CloudKitMessagingService.swift in Sources */,
+				916E54152FDE2F0A00A1CE2B /* TradeEngineModels.swift in Sources */,
+				91D1B8B72FDBDEB30049CAF7 /* RosterStore.swift in Sources */,
+				91D1B8BD2FDBF3850049CAF7 /* ShiftSelectCalendar.swift in Sources */,
+				91D1B8E52FDC65BC0049CAF7 /* Messaging.swift in Sources */,
+				91D1B8C32FDC5B2E0049CAF7 /* CloudKitTradeProfileService.swift in Sources */,
+				91D1B8A92FDA65050049CAF7 /* ContentView.swift in Sources */,
+				916E54002FDCE21900A1CE2B /* CloudKitRosterService.swift in Sources */,
+				91D1B8AA2FDA65050049CAF7 /* ScheduleParser.swift in Sources */,
+				91D1B8B52FDBDEA40049CAF7 /* RosterShift.swift in Sources */,
+				91D1B8AB2FDA65050049CAF7 /* AvailabilityManager.swift in Sources */,
+				91D1B8BB2FDBF20A0049CAF7 /* ScheduleStripView.swift in Sources */,
+				91D1B8AC2FDA65050049CAF7 /* WebController.swift in Sources */,
+				91D1B8AD2FDA65050049CAF7 /* ShiftStore.swift in Sources */,
+				91D1B8AE2FDA65050049CAF7 /* AvailabilityView.swift in Sources */,
+			);
+		};
+		91D1B8C42FDC65470049CAF7 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			files = (
 			);
 		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		91D1B8DD2FDC65490049CAF7 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 91D1B8C72FDC65470049CAF7 /* BATMANWidgetsExtension */;
+			targetProxy = 91D1B8DC2FDC65490049CAF7 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		91B564452FDA47E600D38BBE /* Debug configuration for PBXProject "BATMANReader" */ = {
@@ -236,14 +509,20 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_ENTITLEMENTS = BATMANReader/BATMANReader.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = 22H8QL42ZY;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = BATMANReader/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "BATMAN Watcher";
+				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "BATMANReader adds your work shifts to Apple Calendar and marks your availability on the shared dispatcher calendar.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
@@ -254,23 +533,25 @@
 				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphonesimulator*]" = UIStatusBarStyleDefault;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 27.0;
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.1;
 				PRODUCT_BUNDLE_IDENTIFIER = DX.BATMANReader;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				REGISTER_APP_GROUPS = YES;
 				SDKROOT = auto;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx xros xrsimulator";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2,7";
+				TARGETED_DEVICE_FAMILY = "1,2";
 				XROS_DEPLOYMENT_TARGET = 27.0;
 			};
 			name = Debug;
@@ -280,14 +561,20 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_ENTITLEMENTS = BATMANReader/BATMANReader.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = 22H8QL42ZY;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = BATMANReader/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "BATMAN Watcher";
+				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "BATMANReader adds your work shifts to Apple Calendar and marks your availability on the shared dispatcher calendar.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
@@ -298,24 +585,94 @@
 				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphonesimulator*]" = UIStatusBarStyleDefault;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 27.0;
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.1;
 				PRODUCT_BUNDLE_IDENTIFIER = DX.BATMANReader;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				REGISTER_APP_GROUPS = YES;
 				SDKROOT = auto;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx xros xrsimulator";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2,7";
+				TARGETED_DEVICE_FAMILY = "1,2";
 				XROS_DEPLOYMENT_TARGET = 27.0;
+			};
+			name = Release;
+		};
+		91D1B8E02FDC65490049CAF7 /* Debug configuration for PBXNativeTarget "BATMANWidgetsExtension" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
+				CODE_SIGN_ENTITLEMENTS = BATMANWidgetsExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 2;
+				DEVELOPMENT_TEAM = 22H8QL42ZY;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = BATMANWidgets/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = BATMANWidgets;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.1;
+				PRODUCT_BUNDLE_IDENTIFIER = DX.BATMANReader.BATMANWidgets;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		91D1B8E12FDC65490049CAF7 /* Release configuration for PBXNativeTarget "BATMANWidgetsExtension" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
+				CODE_SIGN_ENTITLEMENTS = BATMANWidgetsExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 2;
+				DEVELOPMENT_TEAM = 22H8QL42ZY;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = BATMANWidgets/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = BATMANWidgets;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.1;
+				PRODUCT_BUNDLE_IDENTIFIER = DX.BATMANReader.BATMANWidgets;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
 			};
 			name = Release;
 		};
@@ -335,6 +692,14 @@
 			buildConfigurations = (
 				91B564482FDA47E600D38BBE /* Debug configuration for PBXNativeTarget "BATMANReader" */,
 				91B564492FDA47E600D38BBE /* Release configuration for PBXNativeTarget "BATMANReader" */,
+			);
+			defaultConfigurationName = Release;
+		};
+		91D1B8DF2FDC65490049CAF7 /* Build configuration list for PBXNativeTarget "BATMANWidgetsExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				91D1B8E02FDC65490049CAF7 /* Debug configuration for PBXNativeTarget "BATMANWidgetsExtension" */,
+				91D1B8E12FDC65490049CAF7 /* Release configuration for PBXNativeTarget "BATMANWidgetsExtension" */,
 			);
 			defaultConfigurationName = Release;
 		};
