@@ -248,7 +248,8 @@ enum TradeMatcher {
     static func twoWayExplore(withWorker workerID: String, name: String,
                               windowStart: Date, windowEnd: Date,
                               mySeeking: Set<String>, theirSeeking: Set<String>,
-                              myProfile: TradeProfile, myID: String) async -> TwoWayPlan {
+                              myProfile: TradeProfile, myID: String,
+                              ignoreOwnBlacklist: Bool = false) async -> TwoWayPlan {
         let cal = Calendar.current
         let myEntries = await RosterStore.shared.schedule(forWorker: myID)
         let pEntries  = await RosterStore.shared.schedule(forWorker: workerID)
@@ -269,10 +270,17 @@ enum TradeMatcher {
             let weekday = cal.component(.weekday, from: day)
             let region  = DeskRules.region(forDesk: pe.desk).rawValue
             let type    = ShiftAvailabilityType.infer(fromStartHour: pe.startHour).rawValue
-            if myProfile.blacklistedWeekdays.contains(weekday) { continue }
-            if myProfile.blacklistedDesks.contains(pe.desk) { continue }
-            if myProfile.blacklistedShiftTypes.contains(type) { continue }
-            if myProfile.blacklistedRegions.contains(region) { continue }
+            // Active-outbound override: the blacklist OWNER doing a manual search
+            // can choose to see (and override) their own blocked slots.
+            if !ignoreOwnBlacklist {
+                if myProfile.blacklistedWeekdays.contains(weekday) { continue }
+                if myProfile.blacklistedDesks.contains(pe.desk) { continue }
+                if myProfile.blacklistedShiftTypes.contains(type) { continue }
+                if myProfile.blacklistedRegions.contains(region) { continue }
+            }
+            // Hard: my weekly-hour cap — covering this shift can't blow my limit.
+            if let cap = SettingsManager.shared.maxWeeklyHours,
+               weeklyWorkedHours(map: myMap, around: day, cal: cal) + 9 > cap { continue }
             guard anchored(day: day, map: myMap, plan: [pe.day], cal: cal) else { continue }
             iTake.append(TwoWayLeg(dayID: pe.day, date: day, desk: pe.desk, startHour: pe.startHour,
                                    bookend: true, wanted: theirSeeking.contains(pe.day)))
@@ -423,6 +431,16 @@ enum TradeMatcher {
         var map: [String: String] = [:]
         for e in entries { map[e.day] = e.isOff ? "" : typeLetter(e.startHour) }
         return map
+    }
+
+    /// Worked hours in the Sun–Sat week containing `day` (each shift = 9h).
+    static func weeklyWorkedHours(map: [String: RosterEntry], around day: Date, cal: Calendar) -> Int {
+        guard let week = cal.dateInterval(of: .weekOfYear, for: day) else { return 0 }
+        var hours = 0
+        for entry in map.values where !entry.isOff {
+            if let d = dateFromISO(entry.day), week.contains(d) { hours += 9 }
+        }
+        return hours
     }
 
     /// 8-hour rest before/after a shift on `day` vs the map owner's adjacent shifts.

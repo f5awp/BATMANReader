@@ -154,6 +154,13 @@ enum TradeRouter {
                 myProfile: myProfile, myID: myID)
             guard plan.isViable else { continue }
 
+            // Protect high-value dates: if the only days I'd give are high-demand /
+            // milestone, don't surface the swap unless What If? is on.
+            if constraints.enforceTopology, !plan.iGive.isEmpty,
+               plan.iGive.allSatisfy({ DayIntentStore.shared.topology(forDay: $0.dayID) != .standard }) {
+                continue
+            }
+
             let iWant = plan.iGive.contains { $0.wanted }      // I actively seek a give-day
             let theyWant = plan.iTake.contains { $0.wanted }   // they actively seek a give-day
             let bookended = plan.iGive.allSatisfy(\.bookend) && plan.iTake.allSatisfy(\.bookend)
@@ -221,6 +228,9 @@ enum TradeRouter {
             guard let day = TradeMatcher.dayDate(fromISO: entry.day) else { return false }
             guard DeskRules.qualified(quals: cover.quals, forDesk: entry.desk) else { return false }
             guard TradeMatcher.isRested(map: covererMap, day: day, startHour: entry.startHour) else { return false }
+            // Hard: weekly-hour cap (always enforced, even in What If?).
+            if let cap = weeklyCap(forWorker: covererID),
+               weeklyWorkedHours(map: covererMap, around: day) + 9 > cap { return false }
             // Soft: chaining (bookend) — only when enforced.
             if constraints.enforceChaining,
                !TradeMatcher.isAnchored(day: day, map: covererMap, plan: [entry.day]) { return false }
@@ -256,7 +266,7 @@ enum TradeRouter {
                         let route = NWayRoute(
                             participants: participants, legs: legs,
                             tier: .matchingIntents,
-                            score: Double(participants.count),
+                            score: Double(participants.count) + topologyWeight(of: legs, selfID: selfID),
                             usesBookends: constraints.enforceChaining)
                         if seen.insert(route.id).inserted { routes.append(route) }
                         break
@@ -283,8 +293,11 @@ enum TradeRouter {
             }
         }
 
-        // Seed: self gives each seeking day to a first coverer.
+        // Seed: self gives each seeking day to a first coverer. High-value dates
+        // (high-demand / personal milestone) are protected from auto give-away
+        // unless What If? mode is on.
         for s in giveDays {
+            if constraints.enforceTopology, DayIntentStore.shared.topology(forDay: s.id) != .standard { continue }
             guard let myEntry = selfMap[s.id] else { continue }
             for (nextID, nextMap) in maps where nextID != selfID {
                 guard canCover(covererID: nextID, covererMap: nextMap, giver: myEntry) else { continue }
@@ -297,6 +310,31 @@ enum TradeRouter {
     }
 
     // MARK: Helpers
+
+    /// The weekly-hour cap for a worker, if any (self from Settings, peers from
+    /// their published profile).
+    private static func weeklyCap(forWorker id: String) -> Int? {
+        if id == SettingsManager.shared.username { return SettingsManager.shared.maxWeeklyHours }
+        return TradeProfileStore.shared.profile(forWorker: id)?.maxWeeklyHours
+    }
+
+    /// Worked hours in the Sun–Sat week containing `day` (each shift = 9h).
+    private static func weeklyWorkedHours(map: DayMap, around day: Date) -> Int {
+        let cal = Calendar.current
+        guard let week = cal.dateInterval(of: .weekOfYear, for: day) else { return 0 }
+        var hours = 0
+        for entry in map.values where !entry.isOff {
+            if let d = TradeMatcher.dayDate(fromISO: entry.day), week.contains(d) { hours += 9 }
+        }
+        return hours
+    }
+
+    /// Score bonus for resolving higher-gravity dates (weight − 1 per self give-leg;
+    /// standard days add nothing).
+    private static func topologyWeight(of legs: [NWayLeg], selfID: String) -> Double {
+        legs.filter { $0.fromID == selfID }
+            .reduce(0) { $0 + DayIntentStore.shared.topology(forDay: $1.dayID).weight - 1 }
+    }
 
     /// The user's working days they're actively seeking to give away, as `Shift`s.
     private static func selfSeekingShifts(myID: String, start: Date, end: Date) async -> [Shift] {
