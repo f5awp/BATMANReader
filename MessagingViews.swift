@@ -332,7 +332,7 @@ struct ChannelView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                composer
+                ChannelHeader(name: "trades", subtitle: "What you're trading away — everyone sees it")
                 Divider()
                 if store.broadcasts.isEmpty {
                     ContentUnavailableView("No Posts Yet", systemImage: "megaphone",
@@ -340,10 +340,19 @@ struct ChannelView: View {
                         .frame(maxHeight: .infinity)
                 } else {
                     List {
-                        ForEach(store.broadcasts) { post in postRow(post) }
+                        ForEach(store.broadcasts) { post in
+                            postRow(post)
+                                .listRowSeparator(.hidden)
+                                .listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
+                        }
                     }
                     .listStyle(.plain)
                     .refreshable { await store.refresh() }
+                }
+                Divider()
+                SlackComposer(placeholder: "Message #trades", text: $draft) {
+                    let text = draft; draft = ""
+                    Task { await store.post(text: text) }
                 }
             }
             .navigationTitle("Trade Channel")
@@ -357,123 +366,100 @@ struct ChannelView: View {
         }
     }
 
-    private var composer: some View {
-        VStack(spacing: 4) {
-            HStack(spacing: 8) {
-                TextField("Trading away…", text: $draft, axis: .vertical)
-                    .textFieldStyle(.roundedBorder)
-                Button {
-                    let text = draft
-                    draft = ""
-                    Task { await store.post(text: text) }
-                } label: { Image(systemName: "paperplane.fill") }
-                    .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
-            HStack {
-                FormatBar(text: $draft)
-                Spacer()
-                Text("**bold** *italic* ~~strike~~").font(.caption2).foregroundStyle(.tertiary)
-            }
-        }
-        .padding(.horizontal).padding(.vertical, 8)
-    }
-
     private func postRow(_ post: BroadcastPost) -> some View {
         let isOpen = expanded.contains(post.id)
-        return VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text(post.authorName).font(.subheadline.bold())
-                Spacer()
-                Text(post.createdAt, style: .relative).font(.caption2).foregroundStyle(.secondary)
+        let reps = store.visibleReplies(for: post)
+        return VStack(alignment: .leading, spacing: 6) {
+            SlackMessageRow(name: post.authorName, authorID: post.authorID,
+                            timestamp: post.createdAt, message: post.text) {
+                postMenu(post)
             }
-            mdText(post.text)
-                .font(.subheadline)
-                .lineLimit(isOpen ? nil : 2)
+
+            if !reps.isEmpty && !isOpen {
+                Button { expanded.insert(post.id) } label: {
+                    Label("^[\(reps.count) reply](inflect: true)", systemImage: "bubble.left.and.bubble.right.fill")
+                        .font(.caption.weight(.semibold))
+                }
+                .buttonStyle(.plain).foregroundStyle(.blue).padding(.leading, 46)
+            }
+
             if isOpen {
-                let reps = store.visibleReplies(for: post)
-                if !reps.isEmpty {
-                    VStack(alignment: .leading, spacing: 5) {
-                        ForEach(reps) { r in
-                            HStack(alignment: .top, spacing: 6) {
-                                Image(systemName: r.isPublic ? "globe" : "lock.fill")
-                                    .font(.system(size: 9)).foregroundStyle(r.isPublic ? .blue : .orange)
-                                VStack(alignment: .leading, spacing: 1) {
-                                    HStack(spacing: 6) {
-                                        Text(r.authorID == myID ? "You" : r.authorName).font(.caption.bold())
-                                        Text(r.isPublic ? "public" : "private")
-                                            .font(.caption2).foregroundStyle(r.isPublic ? .blue : .orange)
-                                        Text(r.createdAt, style: .relative).font(.caption2).foregroundStyle(.tertiary)
-                                    }
-                                    mdText(r.text).font(.caption)
-                                }
-                                Spacer(minLength: 0)
-                                if r.authorID == myID {
-                                    Button(role: .destructive) {
-                                        Task { await store.deleteReply(r.id) }
-                                    } label: { Image(systemName: "xmark.circle.fill").font(.caption2) }
-                                        .buttonStyle(.borderless)
-                                } else if dev.unlocked {
-                                    Button(role: .destructive) {
-                                        Task { await store.hide(r.id) }
-                                    } label: { Image(systemName: "eye.slash.fill").font(.caption2) }
-                                        .buttonStyle(.borderless)
-                                }
-                            }
-                            .padding(6)
-                            .background((r.isPublic ? Color.blue : Color.orange).opacity(0.10))
-                            .clipShape(RoundedRectangle(cornerRadius: 6))
+                HStack(spacing: 8) {
+                    Rectangle().fill(.quaternary).frame(width: 2)
+                    VStack(alignment: .leading, spacing: 2) {
+                        ForEach(reps) { r in replyRow(r) }
+                        BroadcastReplyComposer(isAuthor: store.isMine(post)) { text, isPublic in
+                            Task { await store.addReply(to: post, text: text, isPublic: isPublic) }
                         }
                     }
-                    .padding(.leading, 6).padding(.top, 2)
                 }
+                .padding(.leading, 18)
 
-                BroadcastReplyComposer(isAuthor: store.isMine(post)) { text, isPublic in
-                    Task { await store.addReply(to: post, text: text, isPublic: isPublic) }
-                }
-
-                HStack(spacing: 14) {
-                    if store.isMine(post) {
-                        Button { editingPost = post } label: {
-                            Label("Edit", systemImage: "pencil").font(.caption)
-                        }
-                        .buttonStyle(.borderless)
-                        Button(role: .destructive) {
-                            Task { await store.deletePost(post.id) }
-                        } label: { Label("Delete", systemImage: "trash").font(.caption) }
-                            .buttonStyle(.borderless)
-                    } else {
-                        Button {
-                            Task {
-                                await store.sendRequest(
-                                    to: post.authorID, toName: post.authorName,
-                                    note: "Re: your channel post — “\(post.text)”. I'm interested.",
-                                    take: [], give: [])
-                                WidgetData.update()
-                                respondedNote = "Trade request sent to \(post.authorName). Track it in your Inbox."
-                            }
-                        } label: { Label("Send trade request", systemImage: "arrowshape.turn.up.left.fill").font(.caption) }
-                            .buttonStyle(.borderless)
-                    }
-                    // Dev moderation — available on EVERY post when unlocked.
-                    if dev.unlocked {
-                        Button(role: .destructive) {
-                            Task { await store.hide(post.id) }
-                        } label: { Label("Hide (dev)", systemImage: "eye.slash.fill").font(.caption) }
-                            .buttonStyle(.borderless)
-                            .tint(.red)
-                    }
-                    Spacer()
-                    Text("Expires \(post.expiresAt, style: .relative)")
-                        .font(.caption2).foregroundStyle(.tertiary)
-                }
-                .padding(.top, 2)
+                actionRow(post)
             }
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, 2)
         .contentShape(Rectangle())
         .onTapGesture {
-            if isOpen { expanded.remove(post.id) } else { expanded.insert(post.id) }
+            if !isOpen { expanded.insert(post.id) }
         }
+    }
+
+    @ViewBuilder private func postMenu(_ post: BroadcastPost) -> some View {
+        if store.isMine(post) {
+            Menu {
+                Button { editingPost = post } label: { Label("Edit", systemImage: "pencil") }
+                Button(role: .destructive) { Task { await store.deletePost(post.id) } } label: { Label("Delete", systemImage: "trash") }
+                if expanded.contains(post.id) {
+                    Button { expanded.remove(post.id) } label: { Label("Collapse", systemImage: "chevron.up") }
+                }
+            } label: {
+                Image(systemName: "ellipsis").font(.caption).foregroundStyle(.secondary).padding(4)
+            }
+        } else if dev.unlocked {
+            Button(role: .destructive) { Task { await store.hide(post.id) } } label: {
+                Image(systemName: "eye.slash.fill").font(.caption2)
+            }.buttonStyle(.borderless)
+        }
+    }
+
+    private func replyRow(_ r: BroadcastReply) -> some View {
+        SlackMessageRow(name: r.authorID == myID ? "You" : r.authorName, authorID: r.authorID,
+                        timestamp: r.createdAt, message: r.text,
+                        meta: (r.isPublic ? "public" : "private", r.isPublic ? .blue : .orange),
+                        avatarSize: 26) {
+            if r.authorID == myID {
+                Button(role: .destructive) { Task { await store.deleteReply(r.id) } } label: {
+                    Image(systemName: "xmark.circle.fill").font(.caption2)
+                }.buttonStyle(.borderless)
+            } else if dev.unlocked {
+                Button(role: .destructive) { Task { await store.hide(r.id) } } label: {
+                    Image(systemName: "eye.slash.fill").font(.caption2)
+                }.buttonStyle(.borderless)
+            }
+        }
+    }
+
+    private func actionRow(_ post: BroadcastPost) -> some View {
+        HStack(spacing: 14) {
+            if !store.isMine(post) {
+                Button {
+                    Task {
+                        await store.sendRequest(
+                            to: post.authorID, toName: post.authorName,
+                            note: "Re: your channel post — “\(post.text)”. I'm interested.",
+                            take: [], give: [])
+                        WidgetData.update()
+                        respondedNote = "Trade request sent to \(post.authorName). Track it in your Inbox."
+                    }
+                } label: { Label("Send trade request", systemImage: "arrowshape.turn.up.left.fill").font(.caption) }
+                    .buttonStyle(.borderless)
+            }
+            Spacer()
+            Text("Expires \(post.expiresAt, style: .relative)")
+                .font(.caption2).foregroundStyle(.tertiary)
+        }
+        .padding(.leading, 46)
     }
 }
 

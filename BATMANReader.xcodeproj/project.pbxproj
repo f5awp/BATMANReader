@@ -20,6 +20,7 @@
 		916E54212FDE32F800A1CE2B /* TradesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 916E54202FDE32F800A1CE2B /* TradesView.swift */; };
 		916E54232FDE332F00A1CE2B /* TradeIntentsFeed.swift in Sources */ = {isa = PBXBuildFile; fileRef = 916E54222FDE332F00A1CE2B /* TradeIntentsFeed.swift */; };
 		916E54252FDE376100A1CE2B /* DispatchPalette.swift in Sources */ = {isa = PBXBuildFile; fileRef = 916E54242FDE376100A1CE2B /* DispatchPalette.swift */; };
+		916E54272FDE3B6B00A1CE2B /* SlackKit.swift in Sources */ = {isa = PBXBuildFile; fileRef = 916E54262FDE3B6B00A1CE2B /* SlackKit.swift */; };
 		91D1B89D2FDA65050049CAF7 /* ShiftAvailability.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B8992FDA65050049CAF7 /* ShiftAvailability.swift */; };
 		91D1B89E2FDA65050049CAF7 /* AIScheduleSummaryIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B88A2FDA65050049CAF7 /* AIScheduleSummaryIntent.swift */; };
 		91D1B89F2FDA65050049CAF7 /* SettingsManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B8962FDA65050049CAF7 /* SettingsManager.swift */; };
@@ -92,6 +93,7 @@
 		916E54202FDE32F800A1CE2B /* TradesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TradesView.swift; sourceTree = "<group>"; };
 		916E54222FDE332F00A1CE2B /* TradeIntentsFeed.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TradeIntentsFeed.swift; sourceTree = "<group>"; };
 		916E54242FDE376100A1CE2B /* DispatchPalette.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DispatchPalette.swift; sourceTree = "<group>"; };
+		916E54262FDE3B6B00A1CE2B /* SlackKit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SlackKit.swift; sourceTree = "<group>"; };
 		91B5643C2FDA47E400D38BBE /* BATMANReader.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = BATMANReader.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		91D1B88A2FDA65050049CAF7 /* AIScheduleSummaryIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIScheduleSummaryIntent.swift; sourceTree = "<group>"; };
 		91D1B88B2FDA65050049CAF7 /* AvailabilityIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AvailabilityIntents.swift; sourceTree = "<group>"; };
@@ -234,6 +236,7 @@
 				916E54202FDE32F800A1CE2B /* TradesView.swift */,
 				916E54222FDE332F00A1CE2B /* TradeIntentsFeed.swift */,
 				916E54242FDE376100A1CE2B /* DispatchPalette.swift */,
+				916E54262FDE3B6B00A1CE2B /* SlackKit.swift */,
 			);
 			sourceTree = "<group>";
 		};
@@ -394,6 +397,7 @@
 				91D1B8AA2FDA65050049CAF7 /* ScheduleParser.swift in Sources */,
 				91D1B8B52FDBDEA40049CAF7 /* RosterShift.swift in Sources */,
 				91D1B8AB2FDA65050049CAF7 /* AvailabilityManager.swift in Sources */,
+				916E54272FDE3B6B00A1CE2B /* SlackKit.swift in Sources */,
 				91D1B8BB2FDBF20A0049CAF7 /* ScheduleStripView.swift in Sources */,
 				91D1B8AC2FDA65050049CAF7 /* WebController.swift in Sources */,
 				91D1B8AD2FDA65050049CAF7 /* ShiftStore.swift in Sources */,
