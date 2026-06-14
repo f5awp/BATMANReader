@@ -28,8 +28,8 @@ struct ContentView: View {
 
     var body: some View {
         TabView(selection: $selectedTab) {
-            ScheduleTab()
-                .tabItem { Label("Schedule", systemImage: "calendar") }
+            HomeView()
+                .tabItem { Label("Home", systemImage: "calendar") }
                 .tag(0)
 
             AvailabilityView()
