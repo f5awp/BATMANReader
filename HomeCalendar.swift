@@ -171,31 +171,23 @@ struct IntentCalendarView: View {
         return isWorking ? Color.accentColor.opacity(0.14) : Color(.systemGray5)
     }
 
-    /// Purple/green/red intent fill, or nil when the day has no explicit intent.
+    /// Dispatch "brick" intent fill, or nil when the day has no explicit intent.
     private func intentTint(dayID: String, isWorking: Bool) -> Color? {
         if isWorking {
-            switch intents.workingIntent(forDay: dayID) {
-            case .dontWantToWork: return Color.purple.opacity(0.30)
-            case .mustWork:       return Color.red.opacity(0.20)
-            case .wantToWork:     return Color.green.opacity(0.20)
-            case .neutralOpen:    return Color.gray.opacity(0.18)
-            case .none:           return nil
-            }
+            guard let s = intents.workingIntent(forDay: dayID) else { return nil }
+            return s.brickColor.opacity(0.30)
         } else {
-            switch intents.offIntent(forDay: dayID) {
-            case .wantToWork:  return Color.green.opacity(0.28)
-            case .mustBeOff:   return Color.red.opacity(0.16)
-            case .neutralOpen: return Color.gray.opacity(0.18)
-            case .none:        return nil
-            }
+            guard let s = intents.offIntent(forDay: dayID) else { return nil }
+            return s.brickColor.opacity(0.28)
         }
     }
 
     private func borderColor(dayID: String, isToday: Bool, isOff: Bool, hasShift: Bool) -> Color {
-        if flashDays.contains(dayID) { return .orange }
-        if isToday { return .orange }
-        if hasShift, isOff, intents.offIntent(forDay: dayID) == .mustBeOff { return .red }
-        if intents.topology(forDay: dayID) != .standard { return .indigo }
+        if flashDays.contains(dayID) { return BrickPalette.warning }
+        if isToday { return BrickPalette.warning }
+        if hasShift, isOff, intents.offIntent(forDay: dayID) == .mustBeOff { return BrickPalette.critical }
+        let topo = intents.topology(forDay: dayID)
+        if topo != .standard { return topo.accent }
         return .clear
     }
 

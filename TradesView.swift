@@ -57,11 +57,11 @@ struct StatusAnchorButton: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 14) {
-                badge("🟢", counts.accepted, .green)
-                badge("🟡", counts.pending, .yellow)
-                badge("🔴", counts.denied, .red)
-                badge("💬", counts.unread, .blue)
+            HStack(spacing: 12) {
+                badge(counts.accepted, BrickPalette.clear, "checkmark.seal.fill", "Accepted")
+                badge(counts.pending, BrickPalette.caution, "clock.fill", "Pending")
+                badge(counts.denied, BrickPalette.critical, "xmark.octagon.fill", "Denied")
+                badge(counts.unread, BrickPalette.info, "bubble.left.fill", "Unread")
                 Spacer()
                 Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary)
             }
@@ -71,12 +71,14 @@ struct StatusAnchorButton: View {
         .buttonStyle(.plain)
     }
 
-    private func badge(_ glyph: String, _ n: Int, _ tint: Color) -> some View {
-        HStack(spacing: 4) {
-            Text(glyph)
+    private func badge(_ n: Int, _ tint: Color, _ symbol: String, _ label: String) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: symbol).font(.system(size: 13, weight: .semibold)).foregroundStyle(tint)
             Text("\(n)").font(.headline.monospacedDigit())
                 .foregroundStyle(n > 0 ? .primary : .secondary)
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(label): \(n)")
     }
 }
 

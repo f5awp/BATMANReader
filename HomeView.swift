@@ -49,7 +49,11 @@ struct HomeView: View {
                 if showBanner, !changedDays.isEmpty {
                     updateBanner
                 }
-                snapshotTag
+                HStack(spacing: 10) {
+                    snapshotTag
+                    VisibilityToolbar(layers: $layers)
+                }
+                .padding(.horizontal).padding(.top, 2)
                 MarkIntentsToolbar(mode: $mode)
                 Divider()
 
@@ -75,7 +79,6 @@ struct HomeView: View {
                     Button { showImporter = true } label: { Image(systemName: "square.and.arrow.down") }
                         .accessibilityLabel("Import schedule CSV")
                 }
-                ToolbarItem(placement: .topBarTrailing) { layerMenu }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { showTradeSettings = true } label: { Image(systemName: "gearshape") }
                 }
@@ -183,15 +186,6 @@ struct HomeView: View {
         }
     }
 
-    private var layerMenu: some View {
-        Menu {
-            Toggle(isOn: $layers.shiftCircles) { Label("Shift circles (AM/PM/MID)", systemImage: "circle.grid.2x2") }
-            Toggle(isOn: $layers.notes) { Label("Date notes", systemImage: "note.text") }
-            Toggle(isOn: $layers.intentOverlays) { Label("Intent overlays", systemImage: "paintpalette") }
-        } label: {
-            Image(systemName: "square.3.layers.3d")
-        }
-    }
 
     private var lastSyncText: String {
         guard let date = ShiftStore.shared.lastFetchDate else { return "Schedule not yet synced" }
@@ -252,11 +246,11 @@ struct MarkIntentsToolbar: View {
     @ViewBuilder private var legend: some View {
         HStack(spacing: 14) {
             if mode == .workingShifts {
-                swatch(.purple, "Trade away")
-                swatch(.red, "Keep")
+                swatch(BrickPalette.change, "Trade away")
+                swatch(BrickPalette.critical, "Keep")
             } else {
-                swatch(.green, "Want to work")
-                swatch(.red, "Must be off")
+                swatch(BrickPalette.clear, "Want to work")
+                swatch(BrickPalette.critical, "Must be off")
             }
             Spacer()
             Text("Tap to set · long-press for options")
@@ -270,6 +264,39 @@ struct MarkIntentsToolbar: View {
             Circle().fill(color).frame(width: 10, height: 10)
             Text(label).font(.caption2)
         }
+    }
+}
+
+// MARK: - Visibility toolbar (WSI-style icon strip)
+
+/// A compact horizontal strip of icon toggles controlling which calendar layers
+/// are drawn — modeled on the dispatch desk's icon toolbar, with Slack-grade
+/// spacing and clear on/off states.
+struct VisibilityToolbar: View {
+    @Binding var layers: LayerVisibility
+
+    var body: some View {
+        HStack(spacing: 2) {
+            toggle("circle.grid.2x2.fill", on: $layers.shiftCircles, label: "Shift circles")
+            toggle("note.text", on: $layers.notes, label: "Notes")
+            toggle("paintpalette.fill", on: $layers.intentOverlays, label: "Intent colors")
+        }
+        .padding(3)
+        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 9))
+    }
+
+    private func toggle(_ symbol: String, on: Binding<Bool>, label: String) -> some View {
+        Button { on.wrappedValue.toggle() } label: {
+            Image(systemName: symbol)
+                .font(.system(size: 13, weight: .semibold))
+                .frame(width: 30, height: 26)
+                .foregroundStyle(on.wrappedValue ? Color.white : Color.secondary)
+                .background(on.wrappedValue ? Color.accentColor : Color.clear,
+                            in: RoundedRectangle(cornerRadius: 7))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+        .accessibilityAddTraits(on.wrappedValue ? [.isSelected] : [])
     }
 }
 

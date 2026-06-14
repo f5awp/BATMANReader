@@ -19,6 +19,7 @@
 		916E541F2FDE328200A1CE2B /* HomeCalendar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 916E541E2FDE328200A1CE2B /* HomeCalendar.swift */; };
 		916E54212FDE32F800A1CE2B /* TradesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 916E54202FDE32F800A1CE2B /* TradesView.swift */; };
 		916E54232FDE332F00A1CE2B /* TradeIntentsFeed.swift in Sources */ = {isa = PBXBuildFile; fileRef = 916E54222FDE332F00A1CE2B /* TradeIntentsFeed.swift */; };
+		916E54252FDE376100A1CE2B /* DispatchPalette.swift in Sources */ = {isa = PBXBuildFile; fileRef = 916E54242FDE376100A1CE2B /* DispatchPalette.swift */; };
 		91D1B89D2FDA65050049CAF7 /* ShiftAvailability.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B8992FDA65050049CAF7 /* ShiftAvailability.swift */; };
 		91D1B89E2FDA65050049CAF7 /* AIScheduleSummaryIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B88A2FDA65050049CAF7 /* AIScheduleSummaryIntent.swift */; };
 		91D1B89F2FDA65050049CAF7 /* SettingsManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B8962FDA65050049CAF7 /* SettingsManager.swift */; };
@@ -90,6 +91,7 @@
 		916E541E2FDE328200A1CE2B /* HomeCalendar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeCalendar.swift; sourceTree = "<group>"; };
 		916E54202FDE32F800A1CE2B /* TradesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TradesView.swift; sourceTree = "<group>"; };
 		916E54222FDE332F00A1CE2B /* TradeIntentsFeed.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TradeIntentsFeed.swift; sourceTree = "<group>"; };
+		916E54242FDE376100A1CE2B /* DispatchPalette.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DispatchPalette.swift; sourceTree = "<group>"; };
 		91B5643C2FDA47E400D38BBE /* BATMANReader.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = BATMANReader.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		91D1B88A2FDA65050049CAF7 /* AIScheduleSummaryIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIScheduleSummaryIntent.swift; sourceTree = "<group>"; };
 		91D1B88B2FDA65050049CAF7 /* AvailabilityIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AvailabilityIntents.swift; sourceTree = "<group>"; };
@@ -231,6 +233,7 @@
 				916E541E2FDE328200A1CE2B /* HomeCalendar.swift */,
 				916E54202FDE32F800A1CE2B /* TradesView.swift */,
 				916E54222FDE332F00A1CE2B /* TradeIntentsFeed.swift */,
+				916E54242FDE376100A1CE2B /* DispatchPalette.swift */,
 			);
 			sourceTree = "<group>";
 		};
@@ -372,6 +375,7 @@
 				916E541F2FDE328200A1CE2B /* HomeCalendar.swift in Sources */,
 				91D1B8A42FDA65050049CAF7 /* Shift.swift in Sources */,
 				91D1B8A52FDA65050049CAF7 /* ScheduleIntents.swift in Sources */,
+				916E54252FDE376100A1CE2B /* DispatchPalette.swift in Sources */,
 				91D1B8A62FDA65050049CAF7 /* ScheduleDiff.swift in Sources */,
 				91D1B8A72FDA65050049CAF7 /* EventKitManager.swift in Sources */,
 				916E54232FDE332F00A1CE2B /* TradeIntentsFeed.swift in Sources */,
