@@ -19,7 +19,7 @@ enum TradeOpenness: String, CaseIterable, Sendable {
         switch self {
         case .none:     return "Not accepting trades"
         case .bookends: return "Open to bookend trades"
-        case .all:      return "Open to all trades & ECB"
+        case .all:      return "Open to all trades"
         }
     }
 
@@ -34,7 +34,7 @@ enum TradeOpenness: String, CaseIterable, Sendable {
 
 // MARK: - Desk → region / qualification rules
 
-enum DeskRegion: String, Sendable {
+enum DeskRegion: String, Sendable, CaseIterable {
     case domestic   = "Domestic"
     case european   = "European"
     case latin      = "Latin America"

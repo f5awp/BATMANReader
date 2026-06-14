@@ -19,9 +19,10 @@ enum IntentMode: String, CaseIterable, Identifiable {
 
 /// Which optional overlays the calendar draws.
 struct LayerVisibility {
-    var shiftCircles = true   // AM/PM/MID
+    var shiftCircles = true   // AM/PM/MID on worked days
     var notes = true          // DayNote markers
-    var intentOverlays = true // purple/green/red intent tints
+    var intentOverlays = true // intent tints
+    var availability = true   // AM/PM/MID pickup markers on off days
 }
 
 // MARK: - Home
@@ -44,6 +45,7 @@ struct HomeView: View {
     @State private var importError: String?
     @State private var offBrush: ShiftAvailabilityType?   // nil = generic "want to work"
     @State private var pendingConflict: PendingConflict?
+    @State private var showKey = false
 
     var body: some View {
         NavigationStack {
@@ -51,6 +53,7 @@ struct HomeView: View {
                 if showBanner, !changedDays.isEmpty {
                     updateBanner
                 }
+                StatusHeaderBar()
                 HStack(spacing: 10) {
                     snapshotTag
                     VisibilityToolbar(layers: $layers)
@@ -82,13 +85,18 @@ struct HomeView: View {
                         .accessibilityLabel("Import schedule CSV")
                 }
                 ToolbarItem(placement: .topBarTrailing) {
+                    Button { showKey = true } label: { Image(systemName: "info.circle") }
+                        .accessibilityLabel("Color key")
+                }
+                ToolbarItem(placement: .topBarTrailing) {
                     Button { showTradeSettings = true } label: { Image(systemName: "gearshape") }
                 }
             }
             .sheet(isPresented: $showTradeSettings) { TradeSettingsSheet() }
+            .sheet(isPresented: $showKey) { IntentKeySheet() }
             .sheet(item: $editTarget) { target in
                 DayIntentEditor(target: target)
-                    .presentationDetents([.medium, .large])
+                    .presentationDetents([.large])
             }
             .fileImporter(isPresented: $showImporter,
                           allowedContentTypes: [.commaSeparatedText, .plainText, .text],
@@ -338,6 +346,7 @@ struct VisibilityToolbar: View {
             toggle("circle.grid.2x2.fill", on: $layers.shiftCircles, label: "Shift circles")
             toggle("note.text", on: $layers.notes, label: "Notes")
             toggle("paintpalette.fill", on: $layers.intentOverlays, label: "Intent colors")
+            toggle("a.circle.fill", on: $layers.availability, label: "Availability")
         }
         .padding(3)
         .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 9))
@@ -372,4 +381,59 @@ struct PendingConflict: Identifiable {
     let existing: String
     let apply: () -> Void
     var id: String { dayID }
+}
+
+// MARK: - Color key
+
+/// Explains what every calendar color / marker means.
+struct IntentKeySheet: View {
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("Working shifts") {
+                    keyRow(BrickPalette.change, "Trade away", "You want to give this shift away")
+                    keyRow(BrickPalette.critical, "Keep", "Locked — don't trade this shift")
+                    keyRow(BrickPalette.clear, "Want to work", "Happy to work it")
+                    keyRow(BrickPalette.neutral, "Neutral / open", "No strong preference")
+                }
+                Section("Days off") {
+                    keyRow(BrickPalette.clear, "Want to work", "Available to pick up a shift")
+                    keyRow(BrickPalette.critical, "Must be off", "Hard do-not-schedule")
+                }
+                Section("Markers & borders") {
+                    borderRow(BrickPalette.warning, "High-Demand date")
+                    borderRow(BrickPalette.milestone, "Personal Milestone")
+                    iconRow("note.text", BrickPalette.info, "Has a note (tap the day to read)")
+                    iconRow("a.circle.fill", BrickPalette.clear, "AM/PM/MID pickup availability")
+                }
+            }
+            .navigationTitle("Color Key")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+        }
+    }
+
+    private func keyRow(_ color: Color, _ title: String, _ desc: String) -> some View {
+        HStack(spacing: 12) {
+            RoundedRectangle(cornerRadius: 6).fill(color.opacity(0.62)).frame(width: 26, height: 26)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title).font(.subheadline.weight(.semibold))
+                Text(desc).font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+    private func borderRow(_ color: Color, _ title: String) -> some View {
+        HStack(spacing: 12) {
+            RoundedRectangle(cornerRadius: 6).strokeBorder(color, lineWidth: 2).frame(width: 26, height: 26)
+            Text(title).font(.subheadline.weight(.semibold))
+        }
+    }
+    private func iconRow(_ symbol: String, _ color: Color, _ title: String) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: symbol).foregroundStyle(color).frame(width: 26)
+            Text(title).font(.subheadline.weight(.semibold))
+        }
+    }
 }

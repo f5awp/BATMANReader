@@ -133,6 +133,30 @@ struct SlackComposer: View {
     }
 }
 
+// MARK: - User status header (shown atop Home + Trades)
+
+/// The signed-in dispatcher's avatar + name + public status line.
+struct StatusHeaderBar: View {
+    private var settings = SettingsManager.shared
+
+    var body: some View {
+        let name = settings.displayName.isEmpty ? settings.username : settings.displayName
+        HStack(spacing: 8) {
+            Avatar(name: name, id: settings.username, size: 28)
+            VStack(alignment: .leading, spacing: 0) {
+                Text(name).font(.system(size: 13, weight: .semibold)).lineLimit(1)
+                Text(settings.statusBroadcast.isEmpty ? "Set a status in Trade Settings →" : settings.statusBroadcast)
+                    .font(.system(size: 11))
+                    .foregroundStyle(settings.statusBroadcast.isEmpty ? .tertiary : .secondary)
+                    .lineLimit(1)
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 12).padding(.vertical, 5)
+        .background(.bar)
+    }
+}
+
 // MARK: - Channel header
 
 /// A "# channel-name" header strip, Slack-style.

@@ -140,7 +140,7 @@ struct IntentCalendarView: View {
                 Text(shift.shiftShortLabel)
                     .font(.system(size: 11, weight: .heavy)).lineLimit(1).minimumScaleFactor(0.6)
             }
-        } else if isOff, layers.intentOverlays, !intents.availability(forDay: dayID).isEmpty {
+        } else if isOff, layers.availability, !intents.availability(forDay: dayID).isEmpty {
             HStack(spacing: 1) {
                 ForEach(ShiftAvailabilityType.allCases.filter { intents.availability(forDay: dayID).contains($0) }, id: \.self) { t in
                     Text(String(t.rawValue.prefix(1)))
@@ -155,9 +155,11 @@ struct IntentCalendarView: View {
 
     @ViewBuilder private func noteDot(_ dayID: String) -> some View {
         if layers.notes, intents.note(forDay: dayID) != nil {
-            Circle().fill(.blue).frame(width: 5, height: 5)
+            Image(systemName: "note.text")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(BrickPalette.info)
         } else {
-            Color.clear.frame(height: 5)
+            Color.clear.frame(height: 9)
         }
     }
 
@@ -183,10 +185,10 @@ struct IntentCalendarView: View {
     private func intentTint(dayID: String, isWorking: Bool) -> Color? {
         if isWorking {
             guard let s = intents.workingIntent(forDay: dayID) else { return nil }
-            return s.brickColor.opacity(0.30)
+            return s.brickColor.opacity(0.62)
         } else {
             guard let s = intents.offIntent(forDay: dayID) else { return nil }
-            return s.brickColor.opacity(0.28)
+            return s.brickColor.opacity(0.58)
         }
     }
 
@@ -315,6 +317,8 @@ struct TradeSettingsSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var tab = 0
     @State private var capWeeklyHours: Bool = SettingsManager.shared.maxWeeklyHours != nil
+    @State private var notesExpanded = false
+    @State private var myQuals: [String] = []
 
     private var openness: Binding<TradeOpenness> {
         Binding(get: { TradeOpenness(rawValue: settings.tradeOpenness) ?? .bookends },
@@ -330,21 +334,61 @@ struct TradeSettingsSheet: View {
         NavigationStack {
             Form {
                 Picker("", selection: $tab) {
-                    Text("Profile & Rules").tag(0)
-                    Text("Calendar Gravity").tag(1)
+                    Text("Profile").tag(0)
+                    Text("Trade Settings").tag(1)
                 }
                 .pickerStyle(.segmented)
                 .listRowBackground(Color.clear)
 
-                if tab == 0 { profileAndRules } else { calendarGravity }
+                if tab == 0 { profile } else { tradeSettings }
             }
             .navigationTitle("Trade Settings")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+            .task {
+                myQuals = await RosterStore.shared.schedule(forWorker: settings.username)
+                    .first?.quals ?? []
+            }
         }
     }
 
-    @ViewBuilder private var profileAndRules: some View {
+    // MARK: Profile tab
+
+    @ViewBuilder private var profile: some View {
+        Section("Status (public, 140 chars)") {
+            TextField("e.g. \"Happy to take weekend PMs\"", text: Binding(
+                get: { settings.statusBroadcast },
+                set: { settings.statusBroadcast = String($0.prefix(140)) }), axis: .vertical)
+                .lineLimit(1...3)
+        }
+        Section("Qualifications") {
+            if myQuals.isEmpty {
+                Text("No quals loaded — import your roster.").font(.caption).foregroundStyle(.secondary)
+            } else {
+                HStack {
+                    ForEach(myQuals, id: \.self) { q in
+                        Text(q).font(.caption.bold())
+                            .padding(.horizontal, 8).padding(.vertical, 3)
+                            .background(Color.accentColor.opacity(0.15), in: Capsule())
+                    }
+                }
+            }
+        }
+        Section {
+            DisclosureGroup("Private notes", isExpanded: $notesExpanded) {
+                TextEditor(text: Binding(
+                    get: { settings.privateNotes },
+                    set: { settings.privateNotes = String($0.prefix(2000)) }))
+                    .frame(minHeight: 120)
+            }
+        } footer: {
+            Text("Private notes are stored on your device only and never shared.")
+        }
+    }
+
+    // MARK: Trade Settings tab
+
+    @ViewBuilder private var tradeSettings: some View {
         Section("Openness") {
             Picker("Accepting", selection: openness) {
                 ForEach(TradeOpenness.allCases, id: \.self) { Text($0.label).tag($0) }
@@ -362,22 +406,37 @@ struct TradeSettingsSheet: View {
                 Color.clear.frame(height: 0).onAppear { settings.maxWeeklyHours = nil }
             }
         }
-        Section("Status (140 chars, public)") {
-            TextField("e.g. \"Happy to take weekend PMs\"", text: Binding(
-                get: { settings.statusBroadcast },
-                set: { settings.statusBroadcast = String($0.prefix(140)) }), axis: .vertical)
-                .lineLimit(1...3)
-        }
-    }
-
-    @ViewBuilder private var calendarGravity: some View {
         Section {
             TextField("e.g. 29, 82", text: deskText)
                 .autocorrectionDisabled().textInputAutocapitalization(.characters)
         } header: {
             Text("Blacklisted desks")
         } footer: {
-            Text("You won't be offered automated pickups on these desks. High-Demand and Personal Milestone dates are set by long-pressing a date on the calendar.")
+            Text("You won't be offered automated pickups on these desks.")
+        }
+        Section("Blacklisted shift types") {
+            ForEach(ShiftAvailabilityType.allCases, id: \.self) { type in
+                Toggle(type.rawValue, isOn: Binding(
+                    get: { settings.blacklistedShiftTypes.contains(type.rawValue) },
+                    set: { on in
+                        if on { settings.blacklistedShiftTypes.insert(type.rawValue) }
+                        else { settings.blacklistedShiftTypes.remove(type.rawValue) }
+                    }))
+            }
+        }
+        Section {
+            ForEach(DeskRegion.allCases, id: \.self) { region in
+                Toggle(region.rawValue, isOn: Binding(
+                    get: { settings.blacklistedRegions.contains(region.rawValue) },
+                    set: { on in
+                        if on { settings.blacklistedRegions.insert(region.rawValue) }
+                        else { settings.blacklistedRegions.remove(region.rawValue) }
+                    }))
+            }
+        } header: {
+            Text("Blacklisted regions")
+        } footer: {
+            Text("High-Demand and Personal Milestone dates are set by long-pressing a date on the calendar.")
         }
     }
 }

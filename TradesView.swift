@@ -24,6 +24,7 @@ struct TradesView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
+                StatusHeaderBar()
                 StatusAnchorButton(counts: counts) { showDashboard = true }
                     .padding(.horizontal).padding(.vertical, 8)
 
