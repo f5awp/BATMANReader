@@ -36,6 +36,10 @@ final class DayIntentStore {
     private(set) var notes: [String: DayNote] {
         didSet { persist(notes, Keys.notes) }
     }
+    /// ISO off-day → which shift types the user would pick up (AM/PM/MID pills).
+    private(set) var offAvailability: [String: Set<ShiftAvailabilityType>] {
+        didSet { persist(offAvailability, Keys.availability) }
+    }
 
     // MARK: Derived (drop-in replacement for TradeIntentStore.seekingDayIDs)
 
@@ -48,10 +52,11 @@ final class DayIntentStore {
     // MARK: Init + one-time migration
 
     private init() {
-        workingIntents = Self.load(Keys.working) ?? [:]
-        offIntents     = Self.load(Keys.off) ?? [:]
-        topologies     = Self.load(Keys.topology) ?? [:]
-        notes          = Self.load(Keys.notes) ?? [:]
+        workingIntents  = Self.load(Keys.working) ?? [:]
+        offIntents      = Self.load(Keys.off) ?? [:]
+        topologies      = Self.load(Keys.topology) ?? [:]
+        notes           = Self.load(Keys.notes) ?? [:]
+        offAvailability = Self.load(Keys.availability) ?? [:]
         migrateFromTradeIntentStoreIfNeeded()
     }
 
@@ -85,10 +90,25 @@ final class DayIntentStore {
         if let note, !note.message.isEmpty { notes[dayID] = note } else { notes[dayID] = nil }
     }
 
+    /// Toggle one shift type in an off-day's availability. Sets/clears the day's
+    /// `.wantToWork` intent to stay consistent with whether any type is selected.
+    func toggleAvailability(_ type: ShiftAvailabilityType, forDay dayID: String) {
+        var set = offAvailability[dayID] ?? []
+        if set.contains(type) { set.remove(type) } else { set.insert(type) }
+        if set.isEmpty {
+            offAvailability[dayID] = nil
+            if offIntent(forDay: dayID) == .wantToWork { offIntents[dayID] = nil }
+        } else {
+            offAvailability[dayID] = set
+            offIntents[dayID] = .wantToWork
+        }
+    }
+
     /// Removes the worked/off intent for a date (keeps topology + note).
     func clearIntent(forDay dayID: String) {
         workingIntents[dayID] = nil
         offIntents[dayID] = nil
+        offAvailability[dayID] = nil
     }
 
     // MARK: Reads
@@ -97,6 +117,7 @@ final class DayIntentStore {
     func offIntent(forDay dayID: String) -> OffIntentState? { offIntents[dayID] }
     func topology(forDay dayID: String) -> DayTopology { topologies[dayID] ?? .standard }
     func note(forDay dayID: String) -> DayNote? { notes[dayID] }
+    func availability(forDay dayID: String) -> Set<ShiftAvailabilityType> { offAvailability[dayID] ?? [] }
 
     // MARK: Snapshot-cleanse
 
@@ -120,6 +141,10 @@ final class DayIntentStore {
             offIntents[day] = nil
             wiped.insert(day)
         }
+        for day in offAvailability.keys where isOffByDay[day] == false {
+            offAvailability[day] = nil
+            wiped.insert(day)
+        }
         return wiped
     }
 
@@ -130,6 +155,7 @@ final class DayIntentStore {
         static let off      = "batman.v2.offIntents"
         static let topology = "batman.v2.topologies"
         static let notes    = "batman.v2.dayNotes"
+        static let availability = "batman.v2.offAvailability"
         static let migrated = "batman.v2.intentMigrated"
     }
 

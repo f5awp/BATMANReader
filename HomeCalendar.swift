@@ -110,7 +110,7 @@ struct IntentCalendarView: View {
         VStack(spacing: 2) {
             Text("\(cal.component(.day, from: date))")
                 .font(.system(size: isToday ? 16 : 13, weight: isToday ? .black : .medium))
-            label(for: shift, isWorking: isWorking)
+            dayContent(shift: shift, isWorking: isWorking, isOff: isOff, dayID: dayID)
                 .frame(minHeight: 14)
             noteDot(dayID)
         }
@@ -129,7 +129,7 @@ struct IntentCalendarView: View {
         .onLongPressGesture(minimumDuration: 0.35) { if inMonth, hasShift { onLongPress(dayID, isOff) } }
     }
 
-    @ViewBuilder private func label(for shift: Shift?, isWorking: Bool) -> some View {
+    @ViewBuilder private func dayContent(shift: Shift?, isWorking: Bool, isOff: Bool, dayID: String) -> some View {
         if isWorking, let shift {
             if layers.shiftCircles {
                 Text(shift.shiftLetter)
@@ -139,6 +139,14 @@ struct IntentCalendarView: View {
             } else {
                 Text(shift.shiftShortLabel)
                     .font(.system(size: 11, weight: .heavy)).lineLimit(1).minimumScaleFactor(0.6)
+            }
+        } else if isOff, layers.intentOverlays, !intents.availability(forDay: dayID).isEmpty {
+            HStack(spacing: 1) {
+                ForEach(ShiftAvailabilityType.allCases.filter { intents.availability(forDay: dayID).contains($0) }, id: \.self) { t in
+                    Text(String(t.rawValue.prefix(1)))
+                        .font(.system(size: 9, weight: .black))
+                        .foregroundStyle(BrickPalette.clear)
+                }
             }
         } else {
             Color.clear.frame(height: 14)

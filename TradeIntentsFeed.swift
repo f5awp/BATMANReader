@@ -8,21 +8,22 @@ import SwiftUI
 
 struct TradeByIntentsFeed: View {
 
+    @Binding var whatIf: Bool
+
     @State private var tiers: [(tier: SolutionTier, routes: [NWayRoute])] = []
     @State private var loading = true
-    @State private var whatIf = false
     @State private var twoWayCandidate: PlanCandidate?
     @State private var execRoute: NWayRoute?
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 10) {
-                Toggle(isOn: $whatIf) {
-                    Label("What If? Mode", systemImage: "wand.and.stars")
-                        .font(.subheadline.weight(.semibold))
+                if whatIf {
+                    Label("What If? on — extended matches (toggle in Trade Search)",
+                          systemImage: "wand.and.stars")
+                        .font(.caption).foregroundStyle(.purple)
+                        .padding(.horizontal).padding(.top, 8)
                 }
-                .padding(.horizontal).padding(.top, 8)
-                .onChange(of: whatIf) { _, _ in Task { await reload() } }
 
                 if loading {
                     ProgressView("Finding intent matches…")
@@ -61,6 +62,7 @@ struct TradeByIntentsFeed: View {
         .sheet(item: $twoWayCandidate) { TwoWaySheet(candidate: $0) }
         .sheet(item: $execRoute) { ExecutionConfirmationView(route: $0) }
         .task { await reload() }
+        .onChange(of: whatIf) { _, _ in Task { await reload() } }
     }
 
     private func reload() async {
@@ -86,6 +88,12 @@ struct RouteCard: View {
     let onOpenSwap: () -> Void
     let onExecute: () -> Void
 
+    @State private var miniDays: [MiniDay] = []
+
+    private var peerID: String {
+        route.participants.count == 2 ? route.participants[1] : route.participants[0]
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if route.participants.count <= 2 {
@@ -97,25 +105,60 @@ struct RouteCard: View {
         .padding(12)
         .background(.bar, in: RoundedRectangle(cornerRadius: 12))
         .padding(.horizontal)
+        .task {
+            // Direct 1-to-1 cards keep a mini-schedule of the peer's next 2 weeks.
+            if route.participants.count <= 2 { miniDays = await Self.loadMini(workerID: peerID) }
+        }
     }
 
-    // Direct 1-to-1: name + status + open the two-way sheet.
+    // Direct 1-to-1: name + status + a mini-schedule + open the two-way sheet.
     private var directSwap: some View {
-        let peerID = route.participants.count == 2 ? route.participants[1] : route.participants[0]
-        return HStack(alignment: .top) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(participantName(peerID)).font(.subheadline.bold())
-                if let status = participantStatus(peerID) {
-                    Text(status).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(participantName(peerID)).font(.subheadline.bold())
+                    if let status = participantStatus(peerID) {
+                        Text(status).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                    if route.tier == .matchingIntents {
+                        Label("Mutual intent", systemImage: "flame.fill")
+                            .font(.caption2).foregroundStyle(.orange)
+                    }
                 }
-                if route.tier == .matchingIntents {
-                    Label("Mutual intent", systemImage: "flame.fill")
-                        .font(.caption2).foregroundStyle(.orange)
+                Spacer()
+                Button("Open swap", action: onOpenSwap)
+                    .buttonStyle(.borderedProminent).controlSize(.small)
+            }
+            if !miniDays.isEmpty { miniSchedule }
+        }
+    }
+
+    private var miniSchedule: some View {
+        HStack(spacing: 3) {
+            ForEach(miniDays) { d in
+                VStack(spacing: 1) {
+                    Text(d.weekday).font(.system(size: 8)).foregroundStyle(.secondary)
+                    Text(d.letter.isEmpty ? "·" : d.letter)
+                        .font(.system(size: 10, weight: .bold))
+                        .frame(width: 16, height: 16)
+                        .background(d.letter.isEmpty ? Color.clear : Color.accentColor.opacity(0.18),
+                                    in: RoundedRectangle(cornerRadius: 4))
                 }
             }
-            Spacer()
-            Button("Open swap", action: onOpenSwap)
-                .buttonStyle(.borderedProminent).controlSize(.small)
+        }
+    }
+
+    /// The peer's next 14 days as weekday + shift letter.
+    static func loadMini(workerID: String) async -> [MiniDay] {
+        let letters = await TradeMatcher.dayLetters(forWorker: workerID)
+        let cal = Calendar.current
+        let iso = DateFormatter(); iso.dateFormat = "yyyy-MM-dd"
+        let wf = DateFormatter(); wf.dateFormat = "EEEEE"   // single-letter weekday
+        let today = cal.startOfDay(for: Date())
+        return (0..<14).compactMap { off in
+            guard let d = cal.date(byAdding: .day, value: off, to: today) else { return nil }
+            let key = iso.string(from: d)
+            return MiniDay(id: key, weekday: wf.string(from: d), letter: letters[key] ?? "")
         }
     }
 
@@ -143,6 +186,13 @@ struct RouteCard: View {
             }
         }
     }
+}
+
+/// One day in a route card's mini-schedule strip.
+struct MiniDay: Identifiable, Hashable {
+    let id: String       // ISO day
+    let weekday: String  // single-letter
+    let letter: String   // shift letter or ""
 }
 
 // MARK: - Execution confirmation (checkout)

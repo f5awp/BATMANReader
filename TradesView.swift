@@ -13,6 +13,7 @@ struct TradesView: View {
 
     @State private var segment = 0
     @State private var showDashboard = false
+    @State private var whatIf = false
 
     private var counts: DashboardCounts {
         DashboardCounts.from(requests: messaging.requests,
@@ -36,9 +37,9 @@ struct TradesView: View {
                 Divider()
 
                 if segment == 0 {
-                    TradeByIntentsFeed()
+                    TradeByIntentsFeed(whatIf: $whatIf)
                 } else {
-                    FindCandidatesSection()
+                    FindCandidatesSection(whatIf: $whatIf)
                 }
             }
             .navigationTitle("Trades")

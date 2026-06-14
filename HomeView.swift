@@ -42,6 +42,8 @@ struct HomeView: View {
     @State private var showImporter = false
     @State private var importResult: String?
     @State private var importError: String?
+    @State private var offBrush: ShiftAvailabilityType?   // nil = generic "want to work"
+    @State private var pendingConflict: PendingConflict?
 
     var body: some View {
         NavigationStack {
@@ -54,7 +56,7 @@ struct HomeView: View {
                     VisibilityToolbar(layers: $layers)
                 }
                 .padding(.horizontal).padding(.top, 2)
-                MarkIntentsToolbar(mode: $mode)
+                MarkIntentsToolbar(mode: $mode, offBrush: $offBrush)
                 Divider()
 
                 if store.shifts.isEmpty {
@@ -99,6 +101,13 @@ struct HomeView: View {
                 get: { importResult != nil }, set: { if !$0 { importResult = nil } })) {
                 Button("OK", role: .cancel) {}
             } message: { Text(importResult ?? "") }
+            .alert("Change this day's intent?", isPresented: Binding(
+                get: { pendingConflict != nil }, set: { if !$0 { pendingConflict = nil } })) {
+                Button("Overwrite", role: .destructive) { pendingConflict?.apply(); pendingConflict = nil }
+                Button("Cancel", role: .cancel) { pendingConflict = nil }
+            } message: {
+                Text("This day is already marked \"\(pendingConflict?.existing ?? "")\". Overwrite it?")
+            }
             .onAppear(perform: reconcileSnapshot)
         }
     }
@@ -196,17 +205,35 @@ struct HomeView: View {
     // MARK: Actions
 
     /// Single tap: apply the mode's default intent, toggling it off if already set.
+    /// If the day already carries a *different* explicit intent, confirm first.
     private func handleTap(day: String, isOff: Bool) {
         switch mode {
         case .off:
             editTarget = DayEditTarget(dayID: day, isOff: isOff)
         case .workingShifts:
             guard !isOff else { return }
-            intents.setWorkingIntent(intents.workingIntent(forDay: day) == .dontWantToWork ? nil : .dontWantToWork,
-                                     forDay: day)
+            let current = intents.workingIntent(forDay: day)
+            if let current, current != .dontWantToWork {
+                pendingConflict = PendingConflict(dayID: day, existing: current.label) {
+                    intents.setWorkingIntent(.dontWantToWork, forDay: day)
+                }
+                return
+            }
+            intents.setWorkingIntent(current == .dontWantToWork ? nil : .dontWantToWork, forDay: day)
         case .daysOff:
             guard isOff else { return }
-            intents.setOffIntent(intents.offIntent(forDay: day) == .wantToWork ? nil : .wantToWork, forDay: day)
+            if let brush = offBrush {                       // AM/PM/MID pill brush
+                intents.toggleAvailability(brush, forDay: day)
+                return
+            }
+            let current = intents.offIntent(forDay: day)
+            if let current, current != .wantToWork {
+                pendingConflict = PendingConflict(dayID: day, existing: current.label) {
+                    intents.setOffIntent(.wantToWork, forDay: day)
+                }
+                return
+            }
+            intents.setOffIntent(current == .wantToWork ? nil : .wantToWork, forDay: day)
         }
     }
 
@@ -225,6 +252,7 @@ struct HomeView: View {
 
 struct MarkIntentsToolbar: View {
     @Binding var mode: IntentMode
+    @Binding var offBrush: ShiftAvailabilityType?
 
     var body: some View {
         VStack(spacing: 8) {
@@ -236,6 +264,10 @@ struct MarkIntentsToolbar: View {
 
             if mode != .off {
                 legend
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
+            if mode == .daysOff {
+                availabilityPills
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
@@ -255,6 +287,32 @@ struct MarkIntentsToolbar: View {
             Spacer()
             Text("Tap to set · long-press for options")
                 .font(.caption2).foregroundStyle(.secondary)
+        }
+        .padding(.horizontal)
+    }
+
+    /// AM/PM/MID "brush" — pick one and tap off days to set that availability.
+    private var availabilityPills: some View {
+        HStack(spacing: 6) {
+            Text("Pick up:").font(.caption2).foregroundStyle(.secondary)
+            ForEach(ShiftAvailabilityType.allCases, id: \.self) { type in
+                let on = offBrush == type
+                Button {
+                    offBrush = on ? nil : type
+                } label: {
+                    Text(type.rawValue)
+                        .font(.caption2.weight(.bold))
+                        .padding(.horizontal, 10).padding(.vertical, 4)
+                        .background(on ? BrickPalette.clear : Color(.tertiarySystemFill),
+                                    in: Capsule())
+                        .foregroundStyle(on ? .white : .primary)
+                }
+                .buttonStyle(.plain)
+            }
+            Spacer()
+            if offBrush != nil {
+                Text("Tap off days to set").font(.caption2).foregroundStyle(.secondary)
+            }
         }
         .padding(.horizontal)
     }
@@ -305,5 +363,13 @@ struct VisibilityToolbar: View {
 struct DayEditTarget: Identifiable {
     let dayID: String
     let isOff: Bool
+    var id: String { dayID }
+}
+
+/// A queued single-tap that would overwrite an existing, different intent.
+struct PendingConflict: Identifiable {
+    let dayID: String
+    let existing: String
+    let apply: () -> Void
     var id: String { dayID }
 }

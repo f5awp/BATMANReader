@@ -30,7 +30,7 @@ struct AvailabilityView: View {
                 if selectedSegment == 0 {
                     MyAvailabilitySection()
                 } else {
-                    FindCandidatesSection()
+                    FindCandidatesSection(whatIf: .constant(false))
                 }
             }
             .navigationTitle("Availability")
@@ -327,6 +327,8 @@ struct AvailabilityRow: View {
 
 struct FindCandidatesSection: View {
 
+    @Binding var whatIf: Bool
+
     private let store    = ShiftStore.shared
     private let settings = SettingsManager.shared
     private var intent   = TradeIntentStore.shared
@@ -345,7 +347,8 @@ struct FindCandidatesSection: View {
         store.shifts.filter { selectedIDs.contains($0.id) }.sorted { $0.date < $1.date }
     }
     private var displayed: [PlanCandidate] {
-        bookendsOnly ? candidates.filter { $0.bookendCount > 0 } : candidates
+        // What If? widens results: ignore the bookends-only filter.
+        (bookendsOnly && !whatIf) ? candidates.filter { $0.bookendCount > 0 } : candidates
     }
     private let resultColumns = [GridItem(.flexible(), spacing: 6), GridItem(.flexible(), spacing: 6)]
 
@@ -393,6 +396,13 @@ struct FindCandidatesSection: View {
                     ShiftSelectCalendar(shifts: store.shifts, selection: $selectedIDs)
                         .transition(.move(edge: .top).combined(with: .opacity))
                 }
+
+                Toggle(isOn: $whatIf.animation()) {
+                    Label("What If? Mode — show every legal option", systemImage: "wand.and.stars")
+                        .font(.caption.weight(.semibold))
+                }
+                .tint(.purple)
+                .onChange(of: whatIf) { _, _ in if hasSearched { Task { await search() } } }
             }
         }
         .padding(.horizontal).padding(.vertical, 8)
@@ -488,7 +498,8 @@ struct FindCandidatesSection: View {
             let w = TradeProfile.classify(coveredShifts: covered,
                                           bookendIDs: c.bookendShiftIDs,
                                           profile: profiles.profile(forWorker: c.workerID))
-            guard w != .declined else { return nil }
+            // What If? keeps even opted-out (declined) candidates in the fallback set.
+            guard whatIf || w != .declined else { return nil }
             var x = c
             x.willingness = w
             return x
