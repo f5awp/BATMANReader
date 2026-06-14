@@ -182,20 +182,25 @@ struct IntentCalendarView: View {
         let faded     = isFaded(isWorking: isWorking, inMonth: inMonth)
 
         VStack(spacing: 2) {
-            Text("\(cal.component(.day, from: date))")
-                .font(.system(size: isToday ? 16 : 13, weight: isToday ? .black : .medium))
+            ZStack {
+                if isToday { Circle().fill(Color.accentColor).frame(width: 24, height: 24) }
+                Text("\(cal.component(.day, from: date))")
+                    .font(.system(size: 16, weight: isToday ? .black : .semibold))
+                    .foregroundStyle(isToday ? .white : .primary)
+            }
+            .frame(height: 24)
             dayContent(shift: shift, isWorking: isWorking, isOff: isOff, dayID: dayID)
                 .frame(minHeight: 14)
             noteDot(dayID)
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, isToday ? 9 : 7)
+        .padding(.vertical, 6)
         .background(background(dayID: dayID, isToday: isToday, isWorking: isWorking, hasShift: hasShift))
         .clipShape(RoundedRectangle(cornerRadius: 7))
         .overlay(
             RoundedRectangle(cornerRadius: 7)
                 .stroke(borderColor(dayID: dayID, isToday: isToday, isOff: isOff, hasShift: hasShift),
-                        lineWidth: flashDays.contains(dayID) ? 3 : (isToday ? 2 : borderWidth(dayID: dayID, isOff: isOff)))
+                        lineWidth: flashDays.contains(dayID) ? 3 : borderWidth(dayID: dayID, isOff: isOff))
         )
         .opacity(inMonth ? (faded ? 0.3 : (isPast ? 0.45 : 1)) : 0.12)
         .contentShape(Rectangle())
@@ -265,10 +270,9 @@ struct IntentCalendarView: View {
     }
 
     private func background(dayID: String, isToday: Bool, isWorking: Bool, hasShift: Bool) -> Color {
-        if isToday { return Color.yellow.opacity(0.5) }
         if layers.intentOverlays, let tint = intentTint(dayID: dayID, isWorking: isWorking) { return tint }
         if !hasShift { return Color(.systemGray6) }
-        return isWorking ? Color.accentColor.opacity(0.14) : Color(.systemGray5)
+        return isWorking ? Color.accentColor.opacity(0.20) : Color(.systemGray5)
     }
 
     /// Dispatch "brick" intent fill, or nil when the day has no explicit intent.
@@ -285,7 +289,6 @@ struct IntentCalendarView: View {
 
     private func borderColor(dayID: String, isToday: Bool, isOff: Bool, hasShift: Bool) -> Color {
         if flashDays.contains(dayID) { return BrickPalette.warning }
-        if isToday { return BrickPalette.warning }
         let topo = intents.topology(forDay: dayID)
         if topo != .standard { return topo.accent }
         return .clear
