@@ -78,24 +78,28 @@ struct ShiftSelectCalendar: View {
                 if selection.contains(s.id) { selection.remove(s.id) } else { selection.insert(s.id) }
             }
         } label: {
-            VStack(spacing: 2) {
-                Text("\(cal.component(.day, from: date))")
-                    .font(.system(size: 13, weight: isToday ? .heavy : .medium))
+            VStack(spacing: 1) {
+                ZStack {
+                    if isToday { Circle().fill(Color.accentColor).frame(width: 24, height: 24) }
+                    Text("\(cal.component(.day, from: date))")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(isToday ? .white : .primary)
+                }
+                .frame(height: 24)
                 Text(isWorking ? (shift?.shiftShortLabel ?? "") : "")
                     .font(.system(size: 13, weight: .heavy))
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(isSelected ? .white : .primary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
                     .frame(minHeight: 15)
             }
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 9)
+            .padding(.vertical, 6)
             .background(background(isWorking: isWorking, isSelected: isSelected))
-            .clipShape(RoundedRectangle(cornerRadius: 7))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
             .overlay(
-                RoundedRectangle(cornerRadius: 7)
-                    .stroke(borderColor(isSelected: isSelected, isToday: isToday),
-                            lineWidth: isSelected ? 2 : (isToday ? 1.5 : 0))
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(isSelected ? Color.accentColor : .clear, lineWidth: 2.5)
             )
             .opacity(inMonth ? (isPast ? 0.3 : 1) : 0.18)
         }
@@ -105,14 +109,8 @@ struct ShiftSelectCalendar: View {
 
     // Working days are clearly tinted; off days are flat grey.
     private func background(isWorking: Bool, isSelected: Bool) -> Color {
-        if isSelected { return Color.accentColor.opacity(0.35) }
-        if isWorking  { return Color.accentColor.opacity(0.13) }
+        if isSelected { return Color.accentColor.opacity(0.85) }
+        if isWorking  { return Color.accentColor.opacity(0.18) }
         return Color(.systemGray5)
-    }
-
-    private func borderColor(isSelected: Bool, isToday: Bool) -> Color {
-        if isSelected { return .accentColor }
-        if isToday    { return .accentColor.opacity(0.6) }
-        return .clear
     }
 }

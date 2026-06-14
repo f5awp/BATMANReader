@@ -346,6 +346,17 @@ struct FindCandidatesSection: View {
     private var selectedShifts: [Shift] {
         store.shifts.filter { selectedIDs.contains($0.id) }.sorted { $0.date < $1.date }
     }
+    /// Selected shifts listed by date, annotating the year only when it's not the
+    /// current year (e.g. rolls into January).
+    private var selectedDatesLabel: String {
+        let cal = Calendar.current
+        let thisYear = cal.component(.year, from: Date())
+        let f  = DateFormatter(); f.dateFormat  = "EEE MMM d"
+        let fy = DateFormatter(); fy.dateFormat = "EEE MMM d, yyyy"
+        return selectedShifts.map {
+            cal.component(.year, from: $0.date) == thisYear ? f.string(from: $0.date) : fy.string(from: $0.date)
+        }.joined(separator: ", ")
+    }
     private var displayed: [PlanCandidate] {
         // What If? widens results: ignore the bookends-only filter.
         (bookendsOnly && !whatIf) ? candidates.filter { $0.bookendCount > 0 } : candidates
@@ -373,10 +384,11 @@ struct FindCandidatesSection: View {
                 HStack(spacing: 10) {
                     VStack(alignment: .leading, spacing: 1) {
                         Text("Trading away").font(.caption2).foregroundStyle(.secondary)
-                        Text(selectedIDs.isEmpty
-                             ? "Tap days on the calendar"
-                             : "\(selectedIDs.count) shift\(selectedIDs.count == 1 ? "" : "s") selected")
-                            .font(.subheadline).bold().lineLimit(1)
+                        if selectedIDs.isEmpty {
+                            Text("Tap days on the calendar").font(.subheadline).bold()
+                        } else {
+                            Text(selectedDatesLabel).font(.subheadline).bold().lineLimit(2)
+                        }
                     }
                     Spacer()
                     Button { Task { await search() } } label: {
