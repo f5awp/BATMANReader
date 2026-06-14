@@ -176,28 +176,31 @@ struct RequestRow: View {
         let mine = request.fromID == myID            // I sent it
         let status = store.status(of: request)
         let needsMe = status == .pending && !mine     // action required from me
-        let waiting: String = {
-            if status == .pending { return mine ? "Awaiting their reply" : "Awaiting your reply" }
-            return mine ? "They replied" : "You replied"
-        }()
-        return HStack(spacing: 10) {
-            Image(systemName: status.icon)
-                .font(.title3).foregroundStyle(status.tint).frame(width: 24)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(mine ? "To \(request.toName)" : "From \(request.fromName)")
-                    .font(.subheadline).bold()
-                Text("\(waiting) · \(status.label)")
-                    .font(.caption).foregroundStyle(needsMe ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+        let otherName = mine ? request.toName : request.fromName
+        let otherID   = mine ? request.toID : request.fromID
+        return HStack(alignment: .top, spacing: 12) {
+            Avatar(name: otherName, id: otherID, size: 40)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack {
+                    Text(otherName).font(.system(size: 15, weight: .semibold))
+                    Spacer()
+                    Text(request.createdAt, style: .relative).font(.caption2).foregroundStyle(.secondary)
+                }
+                Text(mine ? "You proposed a swap" : "Proposed a swap with you")
+                    .font(.caption).foregroundStyle(.secondary)
                 if !request.note.isEmpty {
-                    Text(request.note).font(.caption2).foregroundStyle(.tertiary).lineLimit(1)
+                    mdText(request.note).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                }
+                HStack(spacing: 8) {
+                    StatusBadge(status: status)
+                    if needsMe {
+                        Label("Your move", systemImage: "exclamationmark.circle.fill")
+                            .font(.caption2.weight(.semibold)).foregroundStyle(.orange)
+                    }
                 }
             }
-            Spacer()
-            if needsMe {
-                Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.orange)
-            }
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, 4)
     }
 }
 
@@ -249,15 +252,11 @@ struct ThreadView: View {
             if !replies.isEmpty {
                 Section("Replies") {
                     ForEach(replies) { r in
-                        VStack(alignment: .leading, spacing: 2) {
-                            HStack {
-                                Text(r.responderID == myID ? "You" : r.responderName).font(.caption.bold())
-                                Spacer()
-                                StatusBadge(status: r.statusValue)
-                            }
-                            if !r.note.isEmpty { Text(r.note).font(.subheadline) }
-                            Text(r.createdAt, style: .relative)
-                                .font(.caption2).foregroundStyle(.tertiary)
+                        SlackMessageRow(name: r.responderID == myID ? "You" : r.responderName,
+                                        authorID: r.responderID, timestamp: r.createdAt,
+                                        message: r.note.isEmpty ? "_(no note)_" : r.note,
+                                        avatarSize: 30) {
+                            StatusBadge(status: r.statusValue)
                         }
                     }
                 }
