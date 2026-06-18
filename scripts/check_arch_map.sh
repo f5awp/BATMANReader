@@ -13,8 +13,8 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-MAP="${MAP:-ARCHITECTURE_MAP.md}"
-SPECS=(SPEC_STRUCTURAL.md SPEC_UIUX.md)
+MAP="${MAP:-Documentation/ARCHITECTURE_MAP.md}"
+SPECS=(Documentation/SPEC_STRUCTURAL.md Documentation/SPEC_UIUX.md)
 errors=0
 
 # 1) Swift filenames referenced in the map must exist somewhere in the repo.
