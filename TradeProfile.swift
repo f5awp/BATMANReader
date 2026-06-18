@@ -78,6 +78,45 @@ struct TradeProfile: Sendable, Hashable, Codable, Identifiable {
     // ISO days whose effective openness is "bookends" (base or a date-range override),
     // so peers can apply the no-split gate per-day. nil = fall back to opennessLevel.
     var bookendDays: [String]? = nil
+    // NEGATIVE intents, published so the matcher can hard-exclude them cross-user
+    // (SPEC S-ENG-9/10). Without these the matcher never sees a Must-Be-Off day and
+    // wrongly offers it (the June-23 bug). All optional ⇒ old records still decode.
+    var mustBeOffDayIDs: Set<String>? = nil   // off days they refuse to be asked to work
+    var keepDayIDs: Set<String>? = nil        // working days they refuse to trade away
+    var wantToWorkDayIDs: Set<String>? = nil  // off days they actively want to work (overrides bookend gate, S-ENG-10)
+    // Qual-swap preference VALUES (Q4). Set POST-init (not in the explicit init) to avoid
+    // churning the init symbol. qual code → preference value: HIGHER = more preferred.
+    // 0 = blacklisted (never accept that qual). A qual ABSENT from the map = no preference
+    // = fully open (treated as the highest value). nil map = open to everything.
+    var qualValues: [String: Int]? = nil
+    // Specific DESK NUMBERS the user will never qual-swap into, regardless of qual value.
+    var qualSwapBlacklistDesks: Set<String>? = nil
+    // Relief dispatcher: last date this person's schedule is REAL. nil = not a relief dispatcher.
+    // Published so EVERY peer's matcher ignores their bogus post-relief shifts. Set post-init.
+    var reliefThrough: Date? = nil
+
+    // EXPLICIT init — this REPLACES Swift's synthesized memberwise init and FREEZES the
+    // construction signature. Adding a NEW optional published field above does NOT change
+    // this init, so callers' compiled object files stay valid — preventing the stale
+    // "Undefined symbol: TradeProfile.init(…old signature…)" linker error. New optional
+    // fields are set via assignment after construction, NOT added here.
+    init(workerID: String, displayName: String, openness: String,
+         blacklistedWeekdays: Set<Int>, blacklistedDesks: Set<String>,
+         blacklistedShiftTypes: Set<String>, blacklistedRegions: Set<String>,
+         seekingDayIDs: Set<String>, updatedAt: Date,
+         personalEmail: String? = nil, aaEmail: String? = nil, phone: String? = nil,
+         statusBroadcast: String? = nil, maxWeeklyHours: Int? = nil, minWeeklyHours: Int? = nil,
+         isMercenaryMode: Bool? = nil, availabilitySlots: [String]? = nil, bookendDays: [String]? = nil,
+         mustBeOffDayIDs: Set<String>? = nil, keepDayIDs: Set<String>? = nil, wantToWorkDayIDs: Set<String>? = nil) {
+        self.workerID = workerID; self.displayName = displayName; self.openness = openness
+        self.blacklistedWeekdays = blacklistedWeekdays; self.blacklistedDesks = blacklistedDesks
+        self.blacklistedShiftTypes = blacklistedShiftTypes; self.blacklistedRegions = blacklistedRegions
+        self.seekingDayIDs = seekingDayIDs; self.updatedAt = updatedAt
+        self.personalEmail = personalEmail; self.aaEmail = aaEmail; self.phone = phone
+        self.statusBroadcast = statusBroadcast; self.maxWeeklyHours = maxWeeklyHours; self.minWeeklyHours = minWeeklyHours
+        self.isMercenaryMode = isMercenaryMode; self.availabilitySlots = availabilitySlots; self.bookendDays = bookendDays
+        self.mustBeOffDayIDs = mustBeOffDayIDs; self.keepDayIDs = keepDayIDs; self.wantToWorkDayIDs = wantToWorkDayIDs
+    }
 
     var id: String { workerID }
     var bookendDaySet: Set<String> { Set(bookendDays ?? []) }
@@ -122,28 +161,50 @@ struct TradeProfile: Sendable, Hashable, Codable, Identifiable {
     /// True only when the user has actually published per-day pills (≥ 1 slot).
     var hasPublishedAvailability: Bool { !(availabilitySlots?.isEmpty ?? true) }
 
+    /// PURE: is `day` past this person's relief horizon (their schedule isn't real there)?
+    /// False when they aren't a relief dispatcher (nil horizon). The horizon date is inclusive.
+    static func isPastRelief(day: Date, reliefThrough: Date?, cal: Calendar = .current) -> Bool {
+        guard let rt = reliefThrough else { return false }
+        return cal.startOfDay(for: day) > cal.startOfDay(for: rt)
+    }
+    /// Instance form: is `day` past THIS profile's relief horizon?
+    func scheduleUnknown(on day: Date, cal: Calendar = .current) -> Bool {
+        Self.isPastRelief(day: day, reliefThrough: reliefThrough, cal: cal)
+    }
+
+    /// Q4: would this person accept moving INTO `newDesk` (off their `currentDesk`)
+    /// for a qual swap, given their preference values?
+    func acceptsQualSwap(into newDesk: String, fromCurrentDesk currentDesk: String) -> Bool {
+        DeskRules.acceptsQualSwap(into: newDesk, fromCurrentDesk: currentDesk,
+                                  values: qualValues, blacklistDesks: qualSwapBlacklistDesks)
+    }
+
     /// Whether this person would take a pickup on a SPECIFIC day. Uses published
     /// per-day availability pills when present; falls back to openness otherwise.
     func wouldPickUp(onDay dayID: String, weekday: Int, desk: String,
                      shiftType: String, region: String, isBookend: Bool) -> Bool {
+        // Hard disqualifier (SPEC S-ENG-9/10): a day marked Must-Be-Off is NEVER
+        // offered — even under mercenary. This is the June-23 "offered as You Take" fix.
+        if mustBeOffDayIDs?.contains(dayID) == true { return false }
         guard passesBlacklist(weekday: weekday, desk: desk, shiftType: shiftType, region: region) else { return false }
         // Mercenary mode: take ANY qualifying shift — ignore availability pills,
         // openness, and bookend protection (the hard legal gates still apply
         // outside this method: off + qualified + 8h rest + weekly cap).
         if isMercenaryMode == true { return true }
+        // Want-to-Work OVERRIDES the bookend requirement for THIS person (S-ENG-10):
+        // they explicitly want this day regardless of contiguity. Does NOT override
+        // blacklist (above) or per-day availability (the pill gate below).
+        let isWantToWork = wantToWorkDayIDs?.contains(dayID) == true
         if hasPublishedAvailability {
             guard let t = ShiftAvailabilityType(rawValue: shiftType),
                   availabilityMap[dayID]?.contains(t) == true else { return false }
-            // Per-day "bookends" gate: only pickups that don't split the break (the
-            // day attaches to existing work). When the profile publishes a per-day
-            // set (range overrides), use it; otherwise fall back to profile openness.
             let bookendGated = bookendDays != nil ? bookendDaySet.contains(dayID)
                                                   : (opennessLevel == .bookends)
-            if bookendGated, !isBookend { return false }
+            if bookendGated, !isBookend, !isWantToWork { return false }
             return true
         }
         guard opennessLevel != .none else { return false }
-        return opennessLevel == .all || isBookend
+        return opennessLevel == .all || isBookend || isWantToWork
     }
 
     /// Classify a candidate's willingness to COVER the shifts they can physically
@@ -251,7 +312,7 @@ final class TradeProfileStore {
     /// Your current profile, assembled from settings + seeking marks.
     func myProfile() -> TradeProfile {
         let s = SettingsManager.shared
-        return TradeProfile(
+        var p = TradeProfile(
             workerID:              s.username,
             displayName:           s.displayName.isEmpty ? s.username : s.displayName,
             openness:              s.tradeOpenness,
@@ -273,8 +334,16 @@ final class TradeProfileStore {
             },
             bookendDays:           DayIntentStore.shared.bookendGatedDays(
                 base: TradeOpenness(rawValue: s.tradeOpenness) ?? .bookends,
-                shifts: ShiftStore.shared.shifts)
+                shifts: ShiftStore.shared.shifts),
+            mustBeOffDayIDs:       DayIntentStore.shared.mustBeOffDayIDs,
+            keepDayIDs:            DayIntentStore.shared.keepDayIDs,
+            wantToWorkDayIDs:      DayIntentStore.shared.wantToWorkDayIDs
         )
+        // Qual-swap preference values (Q4) — set post-init to keep the init symbol stable.
+        p.qualValues = s.qualValues.isEmpty ? nil : s.qualValues
+        p.qualSwapBlacklistDesks = s.qualSwapBlacklistDesks.isEmpty ? nil : s.qualSwapBlacklistDesks
+        p.reliefThrough = s.effectiveReliefThrough   // nil unless relief toggled ON + dated
+        return p
     }
 
     /// Push your latest profile to the backend.
@@ -286,8 +355,25 @@ final class TradeProfileStore {
     func refreshOthers() async {
         let all  = await service.fetchAll()
         let myID = SettingsManager.shared.username
-        others = Dictionary(uniqueKeysWithValues:
-            all.filter { $0.workerID != myID }.map { ($0.workerID, $0) })
+        let fetched = all.filter { $0.workerID != myID }
+        // P0/R-A: a transient empty fetch must not wipe the visible roster of peers.
+        let merged = FetchMerge.keepCacheOnEmpty(existing: Array(others.values), fetched: fetched)
+        others = Dictionary(uniqueKeysWithValues: merged.map { ($0.workerID, $0) })
+    }
+
+    /// A3: restore the user's public STATUS from their own published profile on a fresh device,
+    /// last-write-wins against the local edit clock. Call at launch.
+    func syncMyStatus() async {
+        let myID = SettingsManager.shared.username
+        guard !myID.isEmpty,
+              let mine = await service.fetchAll().first(where: { $0.workerID == myID }) else { return }
+        let s = SettingsManager.shared
+        let resolved = LWW.pick(local: s.statusBroadcast, localAt: s.statusUpdatedAt ?? .distantPast,
+                                remote: mine.statusBroadcast ?? "", remoteAt: mine.updatedAt)
+        if resolved != s.statusBroadcast {
+            s.statusBroadcast = resolved          // didSet bumps statusUpdatedAt → corrected below
+            s.statusUpdatedAt = mine.updatedAt
+        }
     }
 
     func profile(forWorker workerID: String) -> TradeProfile? { others[workerID] }

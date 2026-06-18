@@ -11,6 +11,21 @@ import UIKit
 
 // MARK: - Find Candidates
 
+/// #7: open a prefilled draft in the OUTLOOK app (ms-outlook://compose); if Outlook isn't installed,
+/// fall back to the default mail app via mailto. To = the dispatch trades DL.
+@MainActor func openDispatchDraft(subject: String, body: String) {
+    let dl = SettingsManager.shared.tradeEmailDL
+    if let outlook = TradeEmail.outlookURL(dl: dl, subject: subject, body: body) {
+        UIApplication.shared.open(outlook, options: [:]) { ok in
+            if !ok, let mail = TradeEmail.mailtoURL(dl: dl, subject: subject, body: body) {
+                UIApplication.shared.open(mail)
+            }
+        }
+    } else if let mail = TradeEmail.mailtoURL(dl: dl, subject: subject, body: body) {
+        UIApplication.shared.open(mail)
+    }
+}
+
 struct FindCandidatesSection: View {
 
     @Binding var whatIf: Bool
@@ -28,9 +43,12 @@ struct FindCandidatesSection: View {
     @State private var calendarExpanded = true
     @State private var twoWayCandidate: PlanCandidate?
     @State private var packages: [TradePackage] = []
+    @State private var searchText = ""                 // C4: filter candidates by name
+    @State private var pinnedPeople: Set<String> = []  // C4: pinned to top (per session)
     @State private var execRoute: NWayRoute?
     @State private var packageSent: String?
     @State private var detailPackage: TradePackage?
+    @State private var pkgSwap: PackageSwapContext?    // Q1: qual-swap package → blast picker
 
     private var hasShifts: Bool { !store.upcomingWorkingShifts().isEmpty }
     private var selectedShifts: [Shift] {
@@ -49,7 +67,10 @@ struct FindCandidatesSection: View {
     }
     private var displayed: [PlanCandidate] {
         // What If? widens results: ignore the bookends-only filter.
-        (bookendsOnly && !whatIf) ? candidates.filter { $0.bookendCount > 0 } : candidates
+        let base = (bookendsOnly && !whatIf) ? candidates.filter { $0.bookendCount > 0 } : candidates
+        // C4: name search + pinned-to-top.
+        return PeopleFilter.arrange(base, query: searchText, pinned: pinnedPeople,
+                                    id: { $0.workerID }, name: { $0.name })
     }
     private let resultColumns = [GridItem(.flexible(), spacing: 6), GridItem(.flexible(), spacing: 6)]
 
@@ -72,12 +93,29 @@ struct FindCandidatesSection: View {
             get: { packageSent != nil }, set: { if !$0 { packageSent = nil } })) {
             Button("OK", role: .cancel) {}
         } message: { Text(packageSent ?? "") }
+        .sheet(item: $pkgSwap) { ctx in
+            QualSwapPickerSheet(giveDeskLabel: "desk \(ctx.leg.giveDesk) (\(ctx.leg.giveQual))",
+                                takerName: ctx.leg.takerName, dayLabel: ctx.dayLabel,
+                                candidates: ctx.leg.candidates) { chosen in
+                Task {
+                    var sendLeg = ctx.leg
+                    sendLeg.candidates = ctx.leg.candidates.filter { chosen.contains($0.workerID) }
+                    await MessagingStore.shared.sendRequest(
+                        to: ctx.leg.takerID, toName: ctx.leg.takerName,
+                        note: "Qual swap to give away \(ctx.dayLabel) — \(ctx.leg.takerName) takes a freed desk.",
+                        take: [], give: [ctx.leg.giveShiftDayID], qualSwap: sendLeg)
+                    WidgetData.update()
+                    pkgSwap = nil
+                    packageSent = "Qual-swap request sent. Track it in your Inbox."
+                }
+            }
+        }
     }
 
     private var controls: some View {
         VStack(spacing: 8) {
             if !hasShifts {
-                Text("Import your schedule to pick shifts to trade away.")
+                Text("Waiting for your schedule to sync — pull to refresh, or check your Employee ID in Settings.")
                     .font(.subheadline).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
             } else {
@@ -91,7 +129,12 @@ struct FindCandidatesSection: View {
                         }
                     }
                     Spacer()
-                    Button { Task { await search() } } label: {
+                    Button { emailSelectedToDispatch() } label: {
+                        Image(systemName: "envelope.fill")
+                    }
+                    .controlSize(.small).disabled(selectedIDs.isEmpty)
+                    .accessibilityLabel("Email selected days to dispatch DL")
+                    Button { TradeHistoryStore.shared.recordSearch(at: Date()); Task { await search() } } label: {
                         Label("Find", systemImage: "magnifyingglass")
                     }
                     .buttonStyle(.borderedProminent).controlSize(.small)
@@ -115,6 +158,9 @@ struct FindCandidatesSection: View {
                 }
                 .tint(.purple)
                 .onChange(of: whatIf) { _, _ in if hasSearched { Task { await search() } } }
+                // Re-run the search when any matching input changes (openness / mercenary /
+                // intents / blacklist) so results aren't stale. S-ENG-9.
+                .onChange(of: MatchInputsSignature.current) { _, _ in if hasSearched { Task { await search() } } }
             }
         }
         .padding(.horizontal).padding(.vertical, 8)
@@ -127,53 +173,30 @@ struct FindCandidatesSection: View {
             ProgressView("Searching roster…").frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if !hasSearched {
             ContentUnavailableView("Pick Shifts to Trade", systemImage: "person.2.badge.gearshape",
-                description: Text("Tap the days you want to give away, then Find. (Import the roster file first.)"))
+                description: Text("Tap the days you want to give away, then Find."))
         } else if candidates.isEmpty && packages.isEmpty {
             ContentUnavailableView("No Matches", systemImage: "person.slash",
                 description: Text("No one is off, desk-qualified, and rested for these shifts. Try other days or What If? mode."))
+        } else if packages.isEmpty {
+            ContentUnavailableView("No Package", systemImage: "shippingbox",
+                description: Text(candidates.isEmpty
+                    ? "No one is off, desk-qualified, and rested for these shifts. Try other days or What If? mode."
+                    : "No single package covers all your selected days. Use the “Just 2” tab to explore one-person swaps for a single day."))
         } else {
-            VStack(spacing: 0) {
-                if !displayed.isEmpty { resultsHeader }
-                ScrollView {
-                    if !packages.isEmpty {
-                        Text("Packages").font(.headline)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal).padding(.top, 8)
-                        Text("Swap away all selected days — fewest people first.")
-                            .font(.caption).foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal)
-                        ForEach(packages) { pkg in
-                            PackageCard(package: pkg,
-                                        onPropose: { Task { await propose(pkg) } },
-                                        onExecute: { if let r = pkg.route { execRoute = r } },
-                                        onOpen: { detailPackage = pkg })
-                        }
-                        if !displayed.isEmpty {
-                            Divider().padding(.vertical, 6)
-                            Text("Individual takers").font(.headline)
-                                .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal)
-                        }
-                    }
-                    if displayed.isEmpty && !packages.isEmpty {
-                        Text("No single person can take all your days — but the package(s) above do.")
-                            .font(.caption).foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal).padding(.top, 4)
-                    }
-                    // Many selected shifts → 1 full-width column so the coverage
-                    // grid has room; few → dense 2-column.
-                    LazyVGrid(columns: resultColumns, spacing: 6) {
-                        ForEach(displayed) { c in
-                            PlanCandidateCell(candidate: c, selectedShifts: selectedShifts,
-                                              total: selectedShifts.count,
-                                              isSelected: selected.contains(c.id),
-                                              onTap: { toggle(c.id) },
-                                              onEnter: { twoWayCandidate = c })
-                        }
-                    }
-                    .padding(8)
+            // Packages only (U5): every solution is a card, sorted fewest-people → 🔥 → bookends.
+            ScrollView {
+                Text("Trade Solutions").font(.headline)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal).padding(.top, 8)
+                Text("Swap away all selected days — fewest people first, then most 🔥 and bookends.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal)
+                ForEach(packages) { pkg in
+                    PackageCard(package: pkg,
+                                onPropose: { Task { await propose(pkg) } },
+                                onExecute: { if let r = pkg.route { execRoute = r } },
+                                onOpen: { detailPackage = pkg })
                 }
-                if !displayed.isEmpty { messageBar }
             }
         }
     }
@@ -276,8 +299,19 @@ struct FindCandidatesSection: View {
         withAnimation(.snappy) { calendarExpanded = false }
     }
 
-    /// Greedy package: send a cover request to each assigned dispatcher.
+    /// #7: email the selected give-days to the dispatch DL (Outlook draft) + Must-Be-Off blackout days.
+    private func emailSelectedToDispatch() {
+        let me = settings.displayName.isEmpty ? settings.username : settings.displayName
+        let give = selectedShifts.map { prettyDay($0.id) }
+        let blackout = DayIntentStore.shared.mustBeOffDayIDs.sorted().map { prettyDay($0) }
+        openDispatchDraft(subject: TradeEmail.dispatchSubject(giver: me),
+                          body: TradeEmail.dispatchBody(giver: me, giveDays: give, blackoutDays: blackout))
+    }
+
+    /// Greedy package: send a cover request to each assigned dispatcher. A qual-swap package
+    /// instead opens the blast picker so the user chooses which bridges to ask (Q1).
     private func propose(_ pkg: TradePackage) async {
+        if let leg = pkg.qualSwap { pkgSwap = PackageSwapContext(leg: leg); return }
         for a in pkg.assignments {
             await MessagingStore.shared.sendRequest(
                 to: a.workerID, toName: a.name, note: swapNote(a),
@@ -303,6 +337,154 @@ struct FindCandidatesSection: View {
     }
 }
 
+// MARK: - Just 2 (single-date two-person swaps + per-dispatcher filter)
+
+/// Pick a day to give away → only DIRECT two-person swaps (you + one), sorted by the
+/// same priority (fewest people → 🔥 → bookends). A dropdown filters to one dispatcher.
+struct JustTwoSection: View {
+    private let store    = ShiftStore.shared
+    private let settings = SettingsManager.shared
+
+    @State private var selectedIDs: Set<String> = []
+    @State private var packages: [TradePackage] = []
+    @State private var isSearching = false
+    @State private var hasSearched = false
+    @State private var personFilter: String? = nil
+    @State private var calendarExpanded = true
+    @State private var detailPackage: TradePackage?
+    @State private var execRoute: NWayRoute?
+    @State private var packageSent: String?
+    @State private var pkgSwap: PackageSwapContext?
+
+    /// Only direct two-person packages (you + exactly one counterparty).
+    private var twoOnly: [TradePackage] { packages.filter { $0.peopleCount == 2 } }
+    private var shown: [TradePackage] {
+        guard let pid = personFilter else { return twoOnly }
+        return twoOnly.filter { p in p.assignments.contains { $0.workerID == pid } }
+    }
+    /// Dispatchers who appear in the two-person results — drives the filter dropdown.
+    private var people: [(id: String, name: String)] {
+        var seen = Set<String>(); var out: [(String, String)] = []
+        for p in twoOnly { for a in p.assignments where seen.insert(a.workerID).inserted { out.append((a.workerID, a.name)) } }
+        return out.sorted { $0.1 < $1.1 }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            controls
+            Divider()
+            content
+        }
+        .fullScreenCover(item: $detailPackage) { pkg in
+            PackageDetailView(package: pkg,
+                              onPropose: { Task { await propose(pkg) } },
+                              onExecute: { if let r = pkg.route { execRoute = r } })
+        }
+        .sheet(item: $execRoute) { ExecutionConfirmationView(route: $0) }
+        .sheet(item: $pkgSwap) { ctx in
+            QualSwapPickerSheet(giveDeskLabel: "desk \(ctx.leg.giveDesk) (\(ctx.leg.giveQual))",
+                                takerName: ctx.leg.takerName, dayLabel: ctx.dayLabel,
+                                candidates: ctx.leg.candidates) { chosen in
+                Task {
+                    var sendLeg = ctx.leg
+                    sendLeg.candidates = ctx.leg.candidates.filter { chosen.contains($0.workerID) }
+                    await MessagingStore.shared.sendRequest(
+                        to: ctx.leg.takerID, toName: ctx.leg.takerName,
+                        note: "Qual swap to give away \(ctx.dayLabel) — \(ctx.leg.takerName) takes a freed desk.",
+                        take: [], give: [ctx.leg.giveShiftDayID], qualSwap: sendLeg)
+                    WidgetData.update()
+                    pkgSwap = nil
+                    packageSent = "Qual-swap request sent. Track it in your Inbox."
+                }
+            }
+        }
+        .alert("Sent", isPresented: Binding(get: { packageSent != nil }, set: { if !$0 { packageSent = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: { Text(packageSent ?? "") }
+    }
+
+    private var controls: some View {
+        VStack(spacing: 8) {
+            HStack {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Pick a day to trade away").font(.caption2).foregroundStyle(.secondary)
+                    Text(selectedIDs.isEmpty ? "Tap a day" : "\(selectedIDs.count) selected").font(.subheadline).bold()
+                }
+                Spacer()
+                Button { Task { await search() } } label: { Label("Find", systemImage: "magnifyingglass") }
+                    .buttonStyle(.borderedProminent).controlSize(.small)
+                    .disabled(selectedIDs.isEmpty || isSearching)
+                Button { withAnimation(.snappy) { calendarExpanded.toggle() } } label: {
+                    Image(systemName: calendarExpanded ? "chevron.up" : "chevron.down").foregroundStyle(.secondary)
+                }
+            }
+            if calendarExpanded {
+                ShiftSelectCalendar(shifts: store.shifts, selection: $selectedIDs)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
+            if hasSearched && !people.isEmpty {
+                Menu {
+                    Button("All dispatchers") { personFilter = nil }
+                    ForEach(people, id: \.id) { p in Button(p.name) { personFilter = p.id } }
+                } label: {
+                    HStack {
+                        Image(systemName: "line.3.horizontal.decrease.circle")
+                        Text(personFilter.flatMap { id in people.first { $0.id == id }?.name } ?? "All dispatchers")
+                        Spacer(); Image(systemName: "chevron.down").font(.caption2)
+                    }
+                    .font(.caption).padding(.horizontal, 10).padding(.vertical, 6)
+                    .background(.bar, in: Capsule())
+                }
+            }
+        }
+        .padding(.horizontal).padding(.vertical, 8).background(.bar)
+    }
+
+    @ViewBuilder private var content: some View {
+        if isSearching {
+            ProgressView("Searching…").frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if !hasSearched {
+            ContentUnavailableView("Two-Person Swaps", systemImage: "arrow.left.arrow.right",
+                description: Text("Pick a day you want to give away, then Find. Only direct two-person swaps (you + one) are shown."))
+        } else if shown.isEmpty {
+            ContentUnavailableView("No Two-Person Swaps", systemImage: "person.slash",
+                description: Text("No single dispatcher can reciprocally swap for that day. Try Trade Solutions for multi-person packages."))
+        } else {
+            ScrollView {
+                ForEach(shown) { pkg in
+                    PackageCard(package: pkg,
+                                onPropose: { Task { await propose(pkg) } },
+                                onExecute: { if let r = pkg.route { execRoute = r } },
+                                onOpen: { detailPackage = pkg })
+                }
+            }
+        }
+    }
+
+    private func search() async {
+        let shifts = store.shifts.filter { selectedIDs.contains($0.id) }
+        guard !shifts.isEmpty else { return }
+        isSearching = true
+        await TradeProfileStore.shared.refreshOthers()
+        packages = await TradeRouter.packages(forGiveShifts: shifts, excluding: settings.username)
+        personFilter = nil
+        isSearching = false; hasSearched = true
+        withAnimation(.snappy) { calendarExpanded = false }
+    }
+
+    private func propose(_ pkg: TradePackage) async {
+        if let leg = pkg.qualSwap { pkgSwap = PackageSwapContext(leg: leg); return }
+        for a in pkg.assignments {
+            await MessagingStore.shared.sendRequest(
+                to: a.workerID, toName: a.name,
+                note: "Two-person swap — you take \(a.giveDayIDs.count), I take \(a.takeDayIDs.count).",
+                take: a.takeDayIDs, give: a.giveDayIDs)
+        }
+        WidgetData.update()
+        packageSent = "Sent to \(pkg.assignments.first?.name ?? "dispatcher"). Track replies in your Inbox."
+    }
+}
+
 // MARK: - ECB Trades (one-way, points-for-coverage)
 
 /// One-way trades: find who can cover shifts you want off, offer ECB points, and
@@ -315,9 +497,10 @@ struct ECBTradesView: View {
     @State private var candidates: [PlanCandidate] = []
     @State private var isSearching = false
     @State private var hasSearched = false
-    @State private var ecb = 9
+    @State private var ecb: Double = 9
     @State private var calendarExpanded = true
     @State private var sentMsg: String?
+    @Environment(\.horizontalSizeClass) private var hSize
 
     private var hasShifts: Bool { !store.upcomingWorkingShifts().isEmpty }
     private var selectedShifts: [Shift] {
@@ -332,7 +515,12 @@ struct ECBTradesView: View {
             cal.component(.year, from: $0.date) == thisYear ? f.string(from: $0.date) : fy.string(from: $0.date)
         }.joined(separator: ", ")
     }
-    private let columns = [GridItem(.flexible(), spacing: 6)]
+    // #6: two columns on regular-width (iPad), one on compact (iPhone portrait).
+    private var columns: [GridItem] {
+        Array(repeating: GridItem(.flexible(), spacing: 6), count: hSize == .regular ? 2 : 1)
+    }
+    /// Candidates who'd cover at least one selected day as a bookend (for the bookend-only broadcast).
+    private var bookendCandidates: [PlanCandidate] { candidates.filter { $0.bookendCount > 0 } }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -349,14 +537,14 @@ struct ECBTradesView: View {
     private var controls: some View {
         VStack(spacing: 8) {
             if !hasShifts {
-                Text("Import your schedule to offer one-way ECB trades.")
+                Text("Waiting for your schedule to sync — pull to refresh.")
                     .font(.subheadline).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
             } else {
-                Stepper(value: $ecb, in: 0...50) {
+                Stepper(value: $ecb, in: 5...25, step: 0.5) {
                     HStack(spacing: 8) {
                         Label("ECB offered", systemImage: "star.circle.fill").foregroundStyle(.orange)
-                        Text("\(ecb)").font(.headline.monospacedDigit())
+                        Text(ecbText(ecb)).font(.headline.monospacedDigit())
                         Spacer()
                     }
                 }
@@ -367,7 +555,10 @@ struct ECBTradesView: View {
                             .font(.subheadline).bold().lineLimit(2)
                     }
                     Spacer()
-                    Button { Task { await search() } } label: { Label("Find", systemImage: "magnifyingglass") }
+                    Button { emailECBToDispatch() } label: { Image(systemName: "envelope.fill") }
+                        .controlSize(.small).disabled(selectedIDs.isEmpty)
+                        .accessibilityLabel("Email ECB offer to dispatch DL")
+                    Button { TradeHistoryStore.shared.recordSearch(at: Date()); Task { await search() } } label: { Label("Find", systemImage: "magnifyingglass") }
                         .buttonStyle(.borderedProminent).controlSize(.small)
                         .disabled(selectedIDs.isEmpty || isSearching)
                     Button { withAnimation(.snappy) { calendarExpanded.toggle() } } label: {
@@ -395,6 +586,7 @@ struct ECBTradesView: View {
         } else {
             VStack(spacing: 0) {
                 Text("\(candidates.count) can take").font(.caption).foregroundStyle(.secondary).padding(.vertical, 6)
+                IntentColorKey().padding(.horizontal, 8)   // #5: intent-color legend in ECB
                 ScrollView {
                     LazyVGrid(columns: columns, spacing: 6) {
                         ForEach(candidates) { c in
@@ -405,13 +597,30 @@ struct ECBTradesView: View {
                     }
                     .padding(8)
                 }
-                Button { Task { await requestAll() } } label: {
-                    Label("Request all \(candidates.count) · offer \(ecb) ECB", systemImage: "paperplane.fill")
-                        .frame(maxWidth: .infinity)
+                HStack(spacing: 10) {
+                    Button { Task { await requestAll(bookendsOnly: true) } } label: {
+                        Label("Bookends (\(bookendCandidates.count))", systemImage: "book.fill")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered).tint(.green)
+                    .disabled(bookendCandidates.isEmpty)
+                    Button { Task { await requestAll(bookendsOnly: false) } } label: {
+                        Label("All \(candidates.count)", systemImage: "paperplane.fill")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
                 }
-                .buttonStyle(.borderedProminent).padding(10).background(.bar)
+                .padding(10).background(.bar)
             }
         }
+    }
+
+    /// #7: email the ECB offer (selected days + ECB count, NO blackout) to the dispatch DL (Outlook).
+    private func emailECBToDispatch() {
+        let me = settings.displayName.isEmpty ? settings.username : settings.displayName
+        let give = selectedShifts.map { prettyDay($0.id) }
+        openDispatchDraft(subject: TradeEmail.ecbSubject(giver: me, ecb: ecb),
+                          body: TradeEmail.ecbBody(giver: me, giveDays: give, ecb: ecb))
     }
 
     private func search() async {
@@ -420,9 +629,32 @@ struct ECBTradesView: View {
         isSearching = true
         let able = await TradeMatcher.candidatesForTrades(shifts: shifts, excluding: settings.username)
         await TradeProfileStore.shared.refreshOthers()
+        // ECB broadcast filter (U2/U5): only offer to recipients whose OWN rules accept it —
+        // weekly cap, must-be-off, and published shift availability (the unified `.full` gate).
+        // Want-to-work is NOT a filter (it's surfaced as 🔥 + sorted first below). The initiating
+        // searcher is ungated. Load the roster span once (perf rule), then filter.
+        let cal = Calendar.current
+        let dates = shifts.map { cal.startOfDay(for: $0.date) }
+        let lower = cal.date(byAdding: .day, value: -8, to: dates.min() ?? Date()) ?? Date()
+        let upper = cal.date(byAdding: .day, value: 8, to: dates.max() ?? Date()) ?? Date()
+        let entries = await RosterStore.shared.entries(from: lower, to: upper)
+        var maps: [String: [String: RosterEntry]] = [:]
+        for e in entries { maps[e.workerID, default: [:]][e.day] = e }
+        let eligible = able.filter { c in
+            guard let prof = TradeProfileStore.shared.profile(forWorker: c.workerID) else { return true }
+            let map = maps[c.workerID] ?? [:]
+            return shifts.contains { s in
+                guard c.coveredShiftIDs.contains(s.id) else { return false }
+                let day = cal.startOfDay(for: s.date)
+                return TradeEligibility.canCover(
+                    coverDayID: TradeMatcher.isoDay(day), coverDay: day, desk: s.desk, startHour: s.startHour,
+                    coverMap: map, coverQuals: c.quals, coverProfile: prof, options: .full).eligible
+            }
+        }
         // People who actively marked WANT-TO-WORK (published availability) on these
-        // off days are looking for a shift — surface them first.
-        candidates = able.sorted {
+        // off days are looking for a shift — surface them first (🔥).
+        candidates = eligible.sorted {
+            if $0.bookendCount != $1.bookendCount { return $0.bookendCount > $1.bookendCount }  // #6: bookends first
             let aw = wantsToWork($0), bw = wantsToWork($1)
             if aw != bw { return aw }
             if $0.matchCount != $1.matchCount { return $0.matchCount > $1.matchCount }
@@ -443,22 +675,23 @@ struct ECBTradesView: View {
         }
     }
 
-    private func requestAll() async {
+    private func requestAll(bookendsOnly: Bool) async {
         let offerID = UUID().uuidString   // groups the broadcast; queue is per shift
+        let targets = bookendsOnly ? bookendCandidates : candidates   // #6: bookends-only or everyone
         var sent = 0
-        for c in candidates {
+        for c in targets {
             // Only the selected days THIS person can actually cover.
             let theirDays = selectedShifts.filter { c.coveredShiftIDs.contains($0.id) }.map(\.id)
             guard !theirDays.isEmpty else { continue }
             let dates = theirDays.map { prettyDay($0) }.joined(separator: ", ")
             await MessagingStore.shared.sendRequest(
                 to: c.workerID, toName: c.name,
-                note: "One-way ECB trade — take my \(dates). Offering \(ecb) ECB. Accept the shifts you can take; first to accept each shift gets it. Reply with your employee #.",
-                take: [], give: theirDays, ecb: ecb, offerID: offerID)
+                note: "One-way ECB trade — take my \(dates). Offering \(ecbText(ecb)) ECB. Accept the shifts you can take; first to accept each shift gets it. Reply with your employee #.",
+                take: [], give: theirDays, ecb: Int(ecb.rounded()), ecbValue: ecb, offerID: offerID)
             sent += 1
         }
         WidgetData.update()
-        sentMsg = "Sent ECB requests to \(sent) dispatcher\(sent == 1 ? "" : "s") offering \(ecb) ECB. Track replies in your Inbox."
+        sentMsg = "Sent ECB requests to \(sent) dispatcher\(sent == 1 ? "" : "s") offering \(ecbText(ecb)) ECB. Track replies in your Inbox."
     }
 }
 
@@ -674,9 +907,12 @@ struct TwoWaySheet: View {
     @State private var selectedTake: Set<String> = []       // their days you'll take
     @State private var selectedGive: Set<String> = []       // your days they'll take
     @State private var theirSeeking: Set<String> = []       // days they want to trade away
+    @State private var theirStatus: String?                  // R-B: peer's published status, shown in-context
     @State private var ignoreMyBlacklist = false            // active-outbound override
     @State private var zoom: CGFloat = 1
     @State private var showIntents = true                   // intent tint overlay on both calendars
+    @State private var qualSwapPicker: QualSwapPickerContext?  // Q1/Q2: blast-picker when a give-desk needs a qual swap
+    @State private var qualSwapNoBridge: String?               // Q1: a needed swap has no eligible bridge
 
     private let youColor  = BrickPalette.mineScheme
     private let themColor = BrickPalette.peerScheme
@@ -736,6 +972,28 @@ struct TwoWaySheet: View {
                 Button("OK") { dismiss() }
             } message: {
                 Text("Sent to \(candidate.name). Track it in your Trade Inbox.")
+            }
+            .alert("Qual swap needed", isPresented: Binding(
+                get: { qualSwapNoBridge != nil }, set: { if !$0 { qualSwapNoBridge = nil } })) {
+                Button("OK", role: .cancel) { qualSwapNoBridge = nil }
+            } message: {
+                Text(qualSwapNoBridge ?? "")
+            }
+            .sheet(item: $qualSwapPicker) { ctx in
+                QualSwapPickerSheet(
+                    giveDeskLabel: "desk \(ctx.giveLeg.desk) (\(ctx.giveQual))",
+                    takerName: candidate.name, dayLabel: Self.dayF.string(from: ctx.giveLeg.date),
+                    candidates: ctx.candidates) { chosen in
+                        Task {
+                            let leg = await TradeMatcher.buildQualSwapLeg(
+                                giveDayID: ctx.giveLeg.dayID, giveDesk: ctx.giveLeg.desk,
+                                giveStartHour: ctx.giveLeg.startHour, giverID: SettingsManager.shared.username,
+                                takerID: candidate.workerID, takerName: candidate.name,
+                                takerQuals: candidate.quals, chosenCandidateIDs: chosen)
+                            await sendTwoWay(note: ctx.note, takes: ctx.takes, gives: ctx.gives, qualSwap: leg)
+                            qualSwapPicker = nil
+                        }
+                    }
             }
         }
     }
@@ -848,6 +1106,16 @@ struct TwoWaySheet: View {
     private var content: some View {
         ScrollView {
             VStack(spacing: 16) {
+                if let theirStatus {   // R-B: show the peer's published status in-context
+                    HStack(alignment: .top, spacing: 6) {
+                        Image(systemName: "quote.bubble").font(.caption).foregroundStyle(themColor)
+                        Text(theirStatus).font(.caption).italic().foregroundStyle(.secondary)
+                        Spacer(minLength: 0)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(10)
+                    .background(themColor.opacity(0.10), in: RoundedRectangle(cornerRadius: 10))
+                }
                 scheduleGlance
                 MiniScheduleLegend()
                 Toggle(isOn: $ignoreMyBlacklist.animation()) {
@@ -899,6 +1167,7 @@ struct TwoWaySheet: View {
                 Button { if windowIndex < maxWindow { windowIndex += 1 } } label: { Image(systemName: "chevron.right").font(.headline) }
                     .disabled(windowIndex >= maxWindow)
             }
+            IntentColorKey()   // #5: intent-color legend in the two-way sheet
             columns(takes: winTakes, gives: winGives)
         }
     }
@@ -943,7 +1212,10 @@ struct TwoWaySheet: View {
                 Text(Self.dayF.string(from: leg.date)).font(.caption).bold().lineLimit(1)
             }
             Text(legLabel(leg)).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
-            Text("bookend").font(.system(size: 10, weight: .bold)).foregroundStyle(bookendGreen)
+            // #5: only label legs that are ACTUALLY bookends (was printed unconditionally).
+            if leg.bookend {
+                Text("bookend").font(.system(size: 10, weight: .bold)).foregroundStyle(bookendGreen)
+            }
         }
         .padding(8)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -964,6 +1236,8 @@ struct TwoWaySheet: View {
                             seekingDayIDs: [], updatedAt: Date())
         let theirSeek    = theirProf.seekingDayIDs
         theirSeeking = theirSeek
+        let trimmedStatus = theirProf.statusBroadcast?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        theirStatus  = trimmedStatus.isEmpty ? nil : trimmedStatus
         let mySeeking    = DayIntentStore.shared.seekingDayIDs
         let horizonEnd   = cal.date(byAdding: .month, value: TradeMatcher.twoWayHorizonMonths, to: today) ?? today
         full = await TradeMatcher.twoWayExplore(
@@ -994,12 +1268,112 @@ struct TwoWaySheet: View {
         if !takes.isEmpty { parts.append("I take your \(takes.map { Self.dayF.string(from: $0.date) }.joined(separator: ", "))") }
         if !gives.isEmpty { parts.append("you take my \(gives.map { Self.dayF.string(from: $0.date) }.joined(separator: ", "))") }
         let note = "Swap: " + parts.joined(separator: "; ") + "."
+        let takeIDs = takes.map(\.dayID), giveIDs = gives.map(\.dayID)
         Task {
-            await MessagingStore.shared.sendRequest(
-                to: candidate.workerID, toName: candidate.name, note: note,
-                take: takes.map(\.dayID), give: gives.map(\.dayID))
-            WidgetData.update()
-            sentConfirmation = true
+            // Q1 (shared SSOT): a give-desk the taker can't work needs a qual swap before the trade can go through.
+            if let gap = gives.first(where: { !$0.desk.isEmpty && DeskRules.qualSwapNeeded(forDesk: $0.desk, takerQuals: candidate.quals) }) {
+                let bridges = await TradeMatcher.qualSwapBridges(
+                    giveDayID: gap.dayID, giveDesk: gap.desk, giveStartHour: gap.startHour,
+                    takerID: candidate.workerID, takerQuals: candidate.quals,
+                    excludeIDs: [SettingsManager.shared.username])
+                guard !bridges.isEmpty else {
+                    qualSwapNoBridge = "\(candidate.name) isn't qualified for desk \(gap.desk), and no one working that day can qual-swap onto it. Adjust the days you give away."
+                    return
+                }
+                let qual = DeskRules.requiredQual(forDesk: gap.desk) ?? "D"
+                qualSwapPicker = QualSwapPickerContext(giveLeg: gap, giveQual: qual, candidates: bridges,
+                                                       takes: takeIDs, gives: giveIDs, note: note)
+                return
+            }
+            await sendTwoWay(note: note, takes: takeIDs, gives: giveIDs, qualSwap: nil)
+        }
+    }
+
+    private func sendTwoWay(note: String, takes: [String], gives: [String], qualSwap: QualSwapLegData?) async {
+        await MessagingStore.shared.sendRequest(
+            to: candidate.workerID, toName: candidate.name, note: note,
+            take: takes, give: gives, qualSwap: qualSwap)
+        WidgetData.update()
+        sentConfirmation = true
+    }
+}
+
+/// Context for the qual-swap blast picker (Q1/Q2): the give leg that needs a swap, the
+/// eligible bridges, and the pending proposal to send once the user picks who to ask.
+struct QualSwapPickerContext: Identifiable {
+    let id = UUID()
+    let giveLeg: TwoWayLeg
+    let giveQual: String
+    let candidates: [QualSwapCandidate]
+    let takes: [String]
+    let gives: [String]
+    let note: String
+}
+
+/// Identifiable wrapper so a qual-swap PACKAGE's leg can drive the blast picker sheet (Q1).
+struct PackageSwapContext: Identifiable {
+    let id = UUID()
+    let leg: QualSwapLegData
+    var dayLabel: String {
+        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"
+        let out = DateFormatter(); out.dateFormat = "EEE MMM d"
+        guard let d = f.date(from: leg.giveShiftDayID) else { return leg.giveShiftDayID }
+        return out.string(from: d)
+    }
+}
+
+/// Q2: the multi-select "who to ask" blast picker. Lists every dispatcher who could
+/// qual-swap onto the give-desk; the user selects which to blast (default = all).
+struct QualSwapPickerSheet: View {
+    let giveDeskLabel: String
+    let takerName: String
+    let dayLabel: String
+    let candidates: [QualSwapCandidate]
+    let onSend: (Set<String>) -> Void
+    @State private var selected: Set<String>
+    @Environment(\.dismiss) private var dismiss
+
+    init(giveDeskLabel: String, takerName: String, dayLabel: String,
+         candidates: [QualSwapCandidate], onSend: @escaping (Set<String>) -> Void) {
+        self.giveDeskLabel = giveDeskLabel; self.takerName = takerName; self.dayLabel = dayLabel
+        self.candidates = candidates; self.onSend = onSend
+        _selected = State(initialValue: Set(candidates.map(\.workerID)))   // default: ask everyone eligible
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    Text("\(takerName) can't work \(giveDeskLabel) on \(dayLabel). These dispatchers are working that day and could **qual-swap** onto it, freeing their desk for \(takerName). Pick who to ask — the first 5 to accept can respond.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+                Section("Who to ask (\(selected.count)/\(candidates.count))") {
+                    ForEach(candidates) { c in
+                        Button {
+                            if selected.contains(c.workerID) { selected.remove(c.workerID) }
+                            else { selected.insert(c.workerID) }
+                        } label: {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text(c.name).font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
+                                    Text("frees desk \(c.desk) (\(c.qual))").font(.caption).foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Image(systemName: selected.contains(c.workerID) ? "checkmark.circle.fill" : "circle")
+                                    .foregroundStyle(selected.contains(c.workerID) ? .green : .secondary)
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Request qual swap")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Send") { onSend(selected) }.disabled(selected.isEmpty)
+                }
+            }
         }
     }
 }

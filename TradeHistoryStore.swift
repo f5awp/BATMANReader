@@ -43,6 +43,12 @@ final class TradeHistoryStore {
     }
 
     private static let key = "batman.v2.tradeHistory"
+    private static let searchKey = "batman.v2.searchLog"
+
+    /// Timestamps of trade searches the user has run — drives the Home metrics header (H1).
+    private(set) var searchLog: [Date] {
+        didSet { if let d = try? JSONEncoder().encode(searchLog) { UserDefaults.standard.set(d, forKey: Self.searchKey) } }
+    }
 
     private init() {
         if let data = UserDefaults.standard.data(forKey: Self.key),
@@ -51,13 +57,24 @@ final class TradeHistoryStore {
         } else {
             entries = []
         }
+        searchLog = (UserDefaults.standard.data(forKey: Self.searchKey))
+            .flatMap { try? JSONDecoder().decode([Date].self, from: $0) } ?? []
     }
+
+    /// Record a trade search (H1). Caller passes the time so the store stays testable.
+    func recordSearch(at date: Date) { searchLog.append(date); MetricsStore.shared.log(.search) }
+    /// Admin: clear the metrics baseline.
+    func resetMetrics() { searchLog = []; UserDefaults.standard.set(Date(), forKey: "batman.v2.metricsResetAt") }
+    /// Completed (non-pending) trades — the "accepted" numerator for success %.
+    var completedCount: Int { entries.filter { !$0.pending }.count }
 
     /// Append a settled trade to the ledger. `completedAt` is passed in by the
     /// caller (the store does not read the clock, to stay deterministic/testable).
     func record(_ entry: TradeHistoryEntry) {
         entries.removeAll { $0.id == entry.id }
         entries.insert(entry, at: 0)
+        // NOTE (#9): success is NOT logged here — a recorded/completed trade isn't "successful" until
+        // it's ACCEPTED *and* ARCHIVED. The `.trade` metric fires from MessagingStore.archiveRequest.
     }
 
     /// Pending ECB transfers (form submitted, receipt not yet confirmed).

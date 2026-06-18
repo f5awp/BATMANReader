@@ -13,35 +13,13 @@ enum Legality {
     private static let isoF: DateFormatter = {
         let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; return f
     }()
-    private static let minRest: TimeInterval = 8 * 3600
-    private static let shiftLen: TimeInterval = 9 * 3600
 
+    /// Legal pickup types for an off day. Delegates to the SINGLE source of truth
+    /// (`AvailabilityManager.eligibleTypes`) so the calendar, the want-to-work gate, and the
+    /// tests can never diverge (was a duplicate rest-rule implementation — the meta-seam bug).
     static func legalTypes(forDayID dayID: String, shifts: [Shift]) -> Set<ShiftAvailabilityType> {
-        let cal = Calendar.current
-        guard let day = isoF.date(from: dayID).map({ cal.startOfDay(for: $0) }) else { return [] }
-        let byDay = Dictionary(shifts.map { (isoF.string(from: $0.date), $0) }, uniquingKeysWith: { a, _ in a })
-        func shift(_ offset: Int) -> Shift? {
-            guard let d = cal.date(byAdding: .day, value: offset, to: day) else { return nil }
-            return byDay[isoF.string(from: d)]
-        }
-        let prev = shift(-1), next = shift(1)
-
-        var legal = Set<ShiftAvailabilityType>()
-        for t in ShiftAvailabilityType.allCases {
-            guard let coverStart = cal.date(byAdding: .hour, value: t.startHour, to: day) else { continue }
-            let coverEnd = coverStart.addingTimeInterval(shiftLen)
-            var ok = true
-            if let p = prev, !p.isOff {
-                let pStart = cal.date(byAdding: .hour, value: p.startHour, to: cal.startOfDay(for: p.date)) ?? p.date
-                if coverStart.timeIntervalSince(pStart.addingTimeInterval(shiftLen)) < minRest { ok = false }
-            }
-            if let n = next, !n.isOff {
-                let nStart = cal.date(byAdding: .hour, value: n.startHour, to: cal.startOfDay(for: n.date)) ?? n.date
-                if nStart.timeIntervalSince(coverEnd) < minRest { ok = false }
-            }
-            if ok { legal.insert(t) }
-        }
-        return legal
+        guard let day = isoF.date(from: dayID) else { return [] }
+        return AvailabilityManager.eligibleTypes(forOffDay: day, workedShifts: shifts.filter { !$0.isOff })
     }
 }
 
@@ -260,9 +238,16 @@ struct IntentCalendarView: View {
         if isWorking, let shift {
             Text(shift.shiftShortLabel)
                 .font(.caption.weight(.heavy)).lineLimit(1).minimumScaleFactor(0.6)
-        } else if isOff, mode == .daysOff {
+        } else if let shift, shift.isVacation {
+            // Vacation reads as a distinct teal state, not a plain day off. (U-VAC)
+            Image(systemName: "beach.umbrella.fill")
+                .font(.caption2.weight(.bold))
+                .foregroundStyle(BrickPalette.vacation)
+                .accessibilityLabel("Vacation")
+        } else if isOff, mode == .daysOff, layers.availability {
             // A/P/M availability pills appear only while you're marking days-off
-            // intents — the resting calendar stays clean.
+            // intents — the resting calendar stays clean. #2: now gated by the
+            // "Shift availability" layer toggle.
             offAvailability(dayID)
         } else {
             Color.clear.frame(height: 14)
@@ -285,7 +270,11 @@ struct IntentCalendarView: View {
             let tint = intents.offIntent(forDay: dayID) == .wantToWork
                 ? BrickPalette.availableOff : BrickPalette.openOff
             if legal.isEmpty {
-                Color.clear.frame(height: 14)
+                // #1: no legal shift is coverable here (rest / legal-start) → auto-X; can't want-to-work it.
+                Image(systemName: "nosign")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(BrickPalette.critical.opacity(0.75))
+                    .accessibilityLabel("No tradeable shift available")
             } else {
                 HStack(spacing: 2) {
                     ForEach(ShiftAvailabilityType.allCases.filter { legal.contains($0) }, id: \.self) { t in
@@ -463,8 +452,11 @@ struct DayIntentEditor: View {
                 }
 
                 Section("Note (≤ 50 chars)") {
-                    TextField("Short note", text: $noteText)
-                        .onChange(of: noteText) { _, v in if v.count > 50 { noteText = String(v.prefix(50)) } }
+                    HStack {
+                        TextField("Short note", text: $noteText)
+                            .onChange(of: noteText) { _, v in if v.count > 50 { noteText = String(v.prefix(50)) } }
+                        CharCounter(text: noteText, limit: 50)
+                    }
                     Toggle("Make Private", isOn: $notePrivate)
                 }
 
@@ -558,6 +550,46 @@ struct TradeSettingsSheet: View {
                     .map { String($0).trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }) })
     }
 
+    // ── Qual-swap settings (Q4) ──────────────────────────────────────────
+    /// Comma/space-separated list of desk numbers the user won't qual-swap into.
+    private var qualSwapDeskText: Binding<String> {
+        Binding(get: { settings.qualSwapBlacklistDesks.sorted().joined(separator: ", ") },
+                set: { v in
+                    settings.qualSwapBlacklistDesks = Set(v.split { $0 == "," || $0 == " " }
+                        .map { String($0).uppercased().trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty })
+                    publishProfile()
+                })
+    }
+    /// Per-qual preference value: `-1` = Open (no preference, absent from the map),
+    /// `0` = won't work (blacklisted), `1…` = least→most preferred.
+    private func qualValueBinding(_ qual: String) -> Binding<Int> {
+        Binding(get: { settings.qualValues[qual] ?? -1 },
+                set: { newVal in
+                    var v = settings.qualValues
+                    if newVal < 0 { v.removeValue(forKey: qual) } else { v[qual] = newVal }
+                    settings.qualValues = v
+                    publishProfile()
+                })
+    }
+    private func publishProfile() { Task { await TradeProfileStore.shared.publishMine() } }
+
+    // ── Relief dispatcher (schedule known only ~45 days out) ─────────────
+    private var reliefOn: Binding<Bool> {
+        Binding(get: { settings.isReliefDispatcher },
+                set: { on in
+                    settings.isReliefDispatcher = on
+                    // Force a date when toggled on (default 45 days out).
+                    if on && settings.reliefScheduleThrough == nil {
+                        settings.reliefScheduleThrough = Calendar.current.date(byAdding: .day, value: 45, to: Date())
+                    }
+                    publishProfile()
+                })
+    }
+    private var reliefDate: Binding<Date> {
+        Binding(get: { settings.reliefScheduleThrough ?? (Calendar.current.date(byAdding: .day, value: 45, to: Date()) ?? Date()) },
+                set: { settings.reliefScheduleThrough = Calendar.current.startOfDay(for: $0); publishProfile() })
+    }
+
     var body: some View {
         NavigationStack {
             Form {
@@ -573,6 +605,9 @@ struct TradeSettingsSheet: View {
             .navigationTitle("Trade Settings")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+            // R-B: single publish funnel — guarantees status/settings edits reach peers even
+            // when a vertical TextField swallows .onSubmit (status was blank cross-device).
+            .onDisappear { publishProfile() }
             .sheet(isPresented: $showOverrideEditor) {
                 OpennessOverrideEditor { ov in
                     settings.opennessOverrides.append(ov)
@@ -608,6 +643,8 @@ struct TradeSettingsSheet: View {
                 get: { settings.statusBroadcast },
                 set: { settings.statusBroadcast = String($0.prefix(140)) }), axis: .vertical)
                 .lineLimit(1...3)
+                .onSubmit { publishProfile() }   // publish status on change (A3 cross-device)
+            HStack { Spacer(); CharCounter(text: settings.statusBroadcast, limit: 140) }
         }
         Section("Qualifications") {
             if myQuals.isEmpty {
@@ -727,6 +764,61 @@ struct TradeSettingsSheet: View {
         } footer: {
             Text("High-Demand and Personal Milestone dates are set by long-pressing a date on the calendar.")
         }
+
+        qualSwapSettings
+        reliefSettings
+    }
+
+    // MARK: Relief dispatcher
+
+    @ViewBuilder private var reliefSettings: some View {
+        Section {
+            Toggle("Relief Dispatcher", isOn: reliefOn)
+            if settings.isReliefDispatcher {
+                DatePicker("Schedule known through", selection: reliefDate, displayedComponents: .date)
+            }
+        } header: {
+            Text("Relief schedule")
+        } footer: {
+            Text("Relief dispatchers only get their schedule ~45 days out; the master roster pads the rest of the year with placeholder AMs. Set the last real date — your shifts after it are hidden from your calendar and from trading (for everyone), and stay hidden across roster updates.")
+        }
+    }
+
+    // MARK: Qual-swap preferences (Q4)
+
+    private var qualSwapMaxValue: Int { max(myQuals.count, 2) }
+
+    @ViewBuilder private var qualSwapSettings: some View {
+        Section {
+            if myQuals.isEmpty {
+                Text("No quals loaded — import your roster to set qual-swap preferences.")
+                    .font(.caption).foregroundStyle(.secondary)
+            } else {
+                ForEach(myQuals, id: \.self) { q in
+                    Picker(q, selection: qualValueBinding(q)) {
+                        Text("Open").tag(-1)
+                        Text("Won't work").tag(0)
+                        ForEach(1...qualSwapMaxValue, id: \.self) { v in
+                            Text(v == 1 ? "1 (least)"
+                                 : v == qualSwapMaxValue ? "\(v) (most)" : "\(v)").tag(v)
+                        }
+                    }
+                }
+            }
+        } header: {
+            Text("Qual-swap preferences")
+        } footer: {
+            Text("When a trade needs a qual swap, you'll be asked to move onto a different desk. You'll accept only if that desk's qual is ranked EQUAL OR HIGHER than the qual of the desk you're already working that day.\n\n• Open = no preference (you'll take it).\n• Won't work (0) = never swap into that qual.\n• 1 = least preferred … higher = more preferred.")
+        }
+
+        Section {
+            TextField("e.g. 64, 65", text: qualSwapDeskText)
+                .autocorrectionDisabled().textInputAutocapitalization(.characters)
+        } header: {
+            Text("Qual-swap desk blacklist")
+        } footer: {
+            Text("Specific desk numbers you'll never qual-swap into — blocked regardless of qual preference.")
+        }
     }
 }
 
@@ -744,15 +836,17 @@ struct PrivateNotesEditor: View {
                 Section {
                     TextEditor(text: Binding(
                         get: { settings.privateNotes },
-                        set: { settings.privateNotes = String($0.prefix(2000)) }))
+                        set: { settings.editPrivateNotes(String($0.prefix(2000))) }))
                         .frame(minHeight: 220)
+                    HStack { Spacer(); CharCounter(text: settings.privateNotes, limit: 2000) }
                 } footer: {
-                    Text("Stored on your device only and never shared. \(settings.privateNotes.count)/2000")
+                    Text("Private to you — synced across your own devices, never shared with anyone else.")
                 }
             }
             .navigationTitle("Private Notes")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+            .onDisappear { Task { await PrivateStateStore.shared.publishLocal() } }   // sync up on close (A3)
         }
     }
 }

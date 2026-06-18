@@ -10,8 +10,9 @@ struct TradesView: View {
 
     private var messaging = MessagingStore.shared
     private var history   = TradeHistoryStore.shared
+    private var intents   = DayIntentStore.shared
 
-    @State private var segment = 0
+    @State private var segment = 1   // default to Trade Search (middle). S-UIUX U-TRADES-1
     @State private var showDashboard = false
     @State private var whatIf = false
     @State private var showTradeSettings = false
@@ -31,19 +32,17 @@ struct TradesView: View {
                 StatusAnchorButton(counts: counts) { showDashboard = true }
                     .padding(.horizontal).padding(.vertical, 8)
 
-                Picker("", selection: $segment) {
-                    Text("Intents").tag(0)
-                    Text("Search").tag(1)
-                    Text("ECB").tag(2)
-                }
-                .pickerStyle(.segmented)
-                .padding(.horizontal).padding(.bottom, 8)
+                TradesSegmentBar(segment: $segment, intentCount: intents.tradeIntentCount)
+                    .padding(.horizontal).padding(.bottom, 8)
+
+                IntentTallyBar()   // color-coded per-intent counts (D2a)
 
                 Divider()
 
                 switch segment {
                 case 0: TradeByIntentsFeed(whatIf: $whatIf)
                 case 1: FindCandidatesSection(whatIf: $whatIf)
+                case 2: JustTwoSection()
                 default: ECBTradesView()
                 }
             }
@@ -97,6 +96,73 @@ struct StatusAnchorButton: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(label): \(n)")
+    }
+}
+
+// MARK: - Trades segment bar (custom — so the Intents count can be a CIRCLED badge, #3)
+
+/// 4-way selector. The Intents segment shows its matching-factor count in an orange **circle** so
+/// it reads clearly as a count (vs "Just 2" where the 2 is part of the name).
+struct TradesSegmentBar: View {
+    @Binding var segment: Int
+    let intentCount: Int
+    private let titles = ["Intents", "Trade Solutions", "Just 2", "ECB"]
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(titles.indices, id: \.self) { i in
+                Button { segment = i } label: {
+                    HStack(spacing: 5) {
+                        Text(titles[i])
+                            .font(.subheadline.weight(segment == i ? .semibold : .regular))
+                            .lineLimit(1).minimumScaleFactor(0.8)
+                        if i == 0 && intentCount > 0 {
+                            Text("\(intentCount)")
+                                .font(.caption2.bold()).monospacedDigit().foregroundStyle(.white)
+                                .frame(minWidth: 18, minHeight: 18)
+                                .background(Circle().fill(.orange))
+                        }
+                    }
+                    .frame(maxWidth: .infinity).padding(.vertical, 7)
+                    .background(segment == i ? Color(.secondarySystemFill) : .clear, in: Capsule())
+                    .contentShape(Capsule())
+                    .foregroundStyle(segment == i ? .primary : .secondary)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(3)
+        .background(.bar, in: Capsule())
+    }
+}
+
+// MARK: - Intent tally bar (the two MATCHING factors — Want-to-Trade + Want-to-Work, #3)
+
+/// A thin row of color-coded count chips — one per active intent category — so you can
+/// see your marked intents at a glance. Counts come from `DayIntentStore` (pure).
+struct IntentTallyBar: View {
+    private var intents = DayIntentStore.shared
+    var body: some View {
+        let wc = intents.workingIntentCounts
+        let oc = intents.offIntentCounts
+        // Only the two MATCHING factors (#3) — protective intents (Keep / Must-Be-Off) aren't shown here.
+        let items: [(label: String, color: Color, count: Int)] = [
+            ("Want to Trade", WorkingIntentState.dontWantToWork.brickColor, wc[.dontWantToWork] ?? 0),
+            ("Want to Work",  OffIntentState.wantToWork.brickColor,         oc[.wantToWork] ?? 0),
+        ].filter { $0.count > 0 }
+        if !items.isEmpty {
+            HStack(spacing: 10) {
+                ForEach(items, id: \.label) { it in
+                    HStack(spacing: 4) {
+                        Circle().fill(it.color).frame(width: 7, height: 7)
+                        Text("\(it.count)").font(.caption2.weight(.bold)).monospacedDigit()
+                        Text(it.label).font(.caption2).foregroundStyle(.secondary)
+                    }
+                }
+                Spacer()
+            }
+            .padding(.horizontal).padding(.bottom, 4)
+        }
     }
 }
 

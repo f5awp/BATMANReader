@@ -181,6 +181,12 @@ final class EventKitManager {
     func resyncPersonalEvents(for shifts: [Shift]) -> Int {
         guard isAuthorized else { return 0 }
         let map = personalEventIDMap
+        // Relief: remove any tracked events that are now past the relief horizon.
+        let relief = SettingsManager.shared.effectiveReliefThrough
+        if relief != nil {
+            let stale = shifts.filter { map[$0.id] != nil && TradeProfile.isPastRelief(day: $0.date, reliefThrough: relief) }
+            if !stale.isEmpty { removePersonalEvents(for: stale) }
+        }
         let missing = shifts.filter { shift in
             guard !shift.isOff else { return false }
             guard let eid = map[shift.id] else { return true }   // not tracked → add
@@ -197,10 +203,15 @@ final class EventKitManager {
         var map       = personalEventIDMap
         let leadHours = SettingsManager.shared.notificationLeadHours
 
+        let relief = SettingsManager.shared.effectiveReliefThrough
         for shift in shifts {
+            // Relief dispatcher: never add a shift past the relief horizon (it isn't real).
+            if TradeProfile.isPastRelief(day: shift.date, reliefThrough: relief) { continue }
             let event       = EKEvent(eventStore: ekStore)
             event.calendar  = cal
-            event.title     = shift.title
+            // Title is just the shift + desk, e.g. "AM 82" (CAL1). The event is already
+            // time-positioned, so the raw start time isn't repeated in the title.
+            event.title     = shift.shiftShortLabel.isEmpty ? shift.title : shift.shiftShortLabel
             event.startDate = shift.startDate
             event.endDate   = shift.endDate
             event.notes     = buildPersonalNotes(for: shift)
@@ -248,8 +259,11 @@ final class EventKitManager {
             ? SettingsManager.shared.username
             : SettingsManager.shared.displayName
         var map = sharedEventIDMap
+        let relief = SettingsManager.shared.effectiveReliefThrough
 
         for offDay in offDays {
+            // Relief dispatcher: past the horizon we don't know they're off — don't publish availability.
+            if TradeProfile.isPastRelief(day: offDay.date, reliefThrough: relief) { continue }
             let event        = EKEvent(eventStore: ekStore)
             event.calendar   = cal
             event.title      = "\(name) — Available"

@@ -23,6 +23,7 @@ struct ContentView: View {
     @State private var selectedTab = 0
     @State private var showInbox = false
     @State private var showChannel = false
+    @State private var showChangelog = false   // Z2: startup "What's New"
     private var dev = DevAccess.shared
     private var settings = SettingsManager.shared
 
@@ -60,6 +61,11 @@ struct ContentView: View {
         }
         .fullScreenCover(isPresented: $showInbox) { InboxView() }
         .fullScreenCover(isPresented: $showChannel) { ChannelView() }
+        .sheet(isPresented: $showChangelog) {
+            ChangeLogView(entry: ChangeLog.current) {
+                settings.lastSeenChangelogBuild = AppInfo.build   // mark seen on dismiss
+            }
+        }
         // First-run identity setup — until signed in with Apple AND an ID claimed.
         .fullScreenCover(isPresented: Binding(
             get: { settings.appleUserID.isEmpty || settings.username.trimmingCharacters(in: .whitespaces).isEmpty },
@@ -71,8 +77,15 @@ struct ContentView: View {
         .task {
             await MessagingStore.shared.refresh()
             _ = await RosterStore.shared.syncMasterIfNewer()   // pull the latest master roster
+            await PrivateStateStore.shared.syncOnLaunch()      // private notes across your devices (A3)
+            await TradeProfileStore.shared.syncMyStatus()      // public status across your devices (A3 #12)
             await CloudPush.setup()                            // register push subscriptions
             WidgetData.update()
+            // Z2: show "What's New" on EVERY launch (per user request) — but not over onboarding.
+            // (Was once-per-build via ChangeLog.shouldShow; intentionally every restart now.)
+            if !settings.username.trimmingCharacters(in: .whitespaces).isEmpty {
+                showChangelog = true
+            }
         }
     }
 }

@@ -11,6 +11,7 @@ struct ShiftSelectCalendar: View {
 
     @State private var monthAnchor = Calendar.current.startOfDay(for: Date())
 
+    private var intents = DayIntentStore.shared   // show your marks so the picker isn't blank (C3)
     private let cal = Calendar.current
     private static let headers = ["Su", "M", "T", "W", "Th", "F", "Sa"]
     private static let isoF: DateFormatter = {
@@ -92,6 +93,12 @@ struct ShiftSelectCalendar: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
                     .frame(minHeight: 15)
+                // Your working-intent color (trade-away / keep / …) so the picker shows context. C3
+                if isWorking, let id = shift?.id, let w = intents.workingIntent(forDay: id) {
+                    Capsule().fill(w.brickColor).frame(height: 3)
+                } else {
+                    Color.clear.frame(height: 3)
+                }
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 6)
@@ -101,6 +108,11 @@ struct ShiftSelectCalendar: View {
                 RoundedRectangle(cornerRadius: 8)
                     .stroke(isSelected ? Color.accentColor : .clear, lineWidth: 2.5)
             )
+            .overlay(alignment: .topTrailing) {
+                if let id = shift?.id, intents.note(forDay: id) != nil {
+                    Circle().fill(BrickPalette.info).frame(width: 5, height: 5).padding(3)
+                }
+            }
             .opacity(inMonth ? (isPast ? 0.3 : 1) : 0.18)
         }
         .buttonStyle(.plain)

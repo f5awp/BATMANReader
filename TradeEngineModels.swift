@@ -300,3 +300,310 @@ struct DashboardCounts: Sendable, Hashable {
                                denied: denied, unread: unread)
     }
 }
+
+// MARK: - Match-inputs signature (feed-refresh trigger — SPEC S-ENG-9)
+
+/// A Hashable value that changes whenever ANYTHING affecting trade matching changes
+/// (openness, mercenary, per-day intents, availability pills, blacklist). A view
+/// `.onChange(of: MatchInputsSignature.current)`s it to recompute results — fixing the
+/// "changed my openness/intents but nothing refreshed" bug.
+struct MatchInputsSignature: Hashable {
+    let openness: String
+    let mercenary: Bool
+    let working: [String: WorkingIntentState]
+    let off: [String: OffIntentState]
+    let availability: [String: Set<ShiftAvailabilityType>]
+    let blacklistDesks: Set<String>
+    let blacklistRegions: Set<String>
+    let blacklistWeekdays: Set<Int>
+    let blacklistShiftTypes: Set<String>
+
+    @MainActor static var current: MatchInputsSignature {
+        let s = SettingsManager.shared, d = DayIntentStore.shared
+        return .init(openness: s.tradeOpenness, mercenary: s.isMercenaryMode,
+                     working: d.workingIntents, off: d.offIntents, availability: d.offAvailability,
+                     blacklistDesks: s.blacklistedDesks, blacklistRegions: s.blacklistedRegions,
+                     blacklistWeekdays: s.blacklistedWeekdays, blacklistShiftTypes: s.blacklistedShiftTypes)
+    }
+}
+
+// MARK: - Trade-type label (THE single source of truth — SPEC S-ENG-5 / S-TEST-1)
+
+/// The ONLY function allowed to produce a trade-type badge. Its entire output
+/// universe is exactly three shapes: "1-Way Swap", "Qual Swap", "{n}-Person Swap".
+/// `distinctPeople` counts every participant INCLUDING you (You↔Cary ⇒ 2 ⇒
+/// "2-Person Swap"). Precedence: ECB one-way → qual swap → person count.
+/// Do NOT write trade-type label strings anywhere else (guarded by check_arch_map.sh).
+func tradeTypeLabel(distinctPeople: Int, isOneWayECB: Bool = false, hasQualSwap: Bool = false) -> String {
+    if isOneWayECB { return "1-Way Swap" }
+    if hasQualSwap { return "Qual Swap" }
+    return "\(max(2, distinctPeople))-Person Swap"
+}
+
+/// Distinct participant count for a set of legs (each leg has a from/to worker ID),
+/// including everyone referenced. You↔Cary's two legs ⇒ 2. A 3-loop ⇒ 3.
+func distinctParticipants(in legs: [TradeLeg]) -> Int {
+    Set(legs.flatMap { [$0.fromID, $0.toID] }).count
+}
+
+/// The intent brushes shown in Mark-Intents — the SINGLE source of truth so the UI
+/// can't silently omit an intent (F1). A test asserts these cover the enums.
+enum IntentBrushes {
+    /// Working-day brushes (every WorkingIntentState that's meaningful on a day you work).
+    static let working: [WorkingIntentState] = [.dontWantToWork, .mustWork, .neutralOpen]
+    /// Off-day brushes — must cover ALL OffIntentState cases.
+    static let off: [OffIntentState] = [.mustBeOff, .wantToWork, .neutralOpen]
+}
+
+/// Pure metrics helpers for the Home header (H1). Global aggregation (CloudKit) is a
+/// follow-on; these compute from local data and are unit-tested.
+enum MetricPeriod: String, CaseIterable, Identifiable { case month, year, allTime
+    var id: String { rawValue }
+    var label: String { switch self { case .month: "Month"; case .year: "Year"; case .allTime: "All" } }
+}
+/// One team-wide metric event (H1 #18) — logged to the public DB so the Home header can show
+/// GLOBAL totals (everyone's), not just this device's. `kind` distinguishes the three counters.
+struct MetricEvent: Sendable, Codable, Hashable, Identifiable {
+    enum Kind: String, Sendable, Codable { case search, proposed, trade }
+    let id: String
+    let workerID: String
+    let kind: Kind
+    let createdAt: Date
+}
+
+enum Metrics {
+    /// Whole-percent success rate; 0 when nothing proposed.
+    static func successPercent(accepted: Int, proposed: Int) -> Int {
+        proposed > 0 ? Int((Double(accepted) / Double(proposed) * 100).rounded()) : 0
+    }
+
+    /// #9: a trade is SUCCESSFUL only once it's both ACCEPTED and ARCHIVED — not merely completed.
+    static func isSuccessful(accepted: Bool, archived: Bool) -> Bool { accepted && archived }
+
+    /// Whether `d` falls in the period relative to `now` (shared by all metric counts).
+    static func inPeriod(_ d: Date, _ period: MetricPeriod, _ now: Date, _ cal: Calendar = .current) -> Bool {
+        switch period {
+        case .allTime: return true
+        case .month:   return cal.isDate(d, equalTo: now, toGranularity: .month)
+        case .year:    return cal.isDate(d, equalTo: now, toGranularity: .year)
+        }
+    }
+
+    /// #9: total events of `kind` in `period` — whole company (workerID nil) or just YOU (workerID set).
+    static func count(_ events: [MetricEvent], kind: MetricEvent.Kind, period: MetricPeriod, now: Date,
+                      workerID: String? = nil, cal: Calendar = .current) -> Int {
+        events.filter {
+            $0.kind == kind
+            && (workerID == nil || $0.workerID == workerID!)
+            && inPeriod($0.createdAt, period, now, cal)
+        }.count
+    }
+
+    /// PURE (H1 #18): team-wide counts within `period`, grouped by kind.
+    static func global(_ events: [MetricEvent], period: MetricPeriod, now: Date,
+                       cal: Calendar = .current) -> (searches: Int, proposed: Int, trades: Int) {
+        func inPeriod(_ d: Date) -> Bool {
+            switch period {
+            case .allTime: return true
+            case .month:   return cal.isDate(d, equalTo: now, toGranularity: .month)
+            case .year:    return cal.isDate(d, equalTo: now, toGranularity: .year)
+            }
+        }
+        let scoped = events.filter { inPeriod($0.createdAt) }
+        return (scoped.filter { $0.kind == .search }.count,
+                scoped.filter { $0.kind == .proposed }.count,
+                scoped.filter { $0.kind == .trade }.count)
+    }
+    /// Count of timestamps within the period relative to `now`.
+    static func searchCount(_ events: [Date], period: MetricPeriod, now: Date, cal: Calendar = .current) -> Int {
+        switch period {
+        case .allTime: return events.count
+        case .month:   return events.filter { cal.isDate($0, equalTo: now, toGranularity: .month) }.count
+        case .year:    return events.filter { cal.isDate($0, equalTo: now, toGranularity: .year) }.count
+        }
+    }
+}
+
+// MARK: - Startup changelog (Z2)
+
+/// App version/build, read from the bundle.
+enum AppInfo {
+    static var build: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "" }
+    static var version: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "" }
+}
+
+/// One release's notes for the startup "What's New" sheet (Z2).
+struct ChangeLogEntry: Sendable {
+    let title: String
+    let added: [String]
+    let fixed: [String]
+    let changed: [String]
+    let improved: [String]
+    let toTest: [String]   // short, curated tester checklist
+}
+
+enum ChangeLog {
+    /// Show the sheet once per build the user hasn't seen yet.
+    static func shouldShow(currentBuild: String, lastSeen: String) -> Bool {
+        !currentBuild.isEmpty && currentBuild != lastSeen
+    }
+
+    /// The latest release notes (hand-authored per release).
+    static let current = ChangeLogEntry(
+        title: "What's New",
+        added: [
+            "Qual swaps — automatically suggested in every search when a desk needs a qual the taker lacks (with a blast picker).",
+            "“Just 2” tab — pick a day, see only direct two-person swaps, filter by dispatcher.",
+            "Relief Dispatcher mode — hide your placeholder shifts past your real schedule date.",
+            "Emoji reactions on posts, replies, and 1:1 chats.",
+            "“Perfect Match” push when a trade hits a day you're after.",
+            "Team-wide trade metrics on Home.",
+            "Email a trade to the dispatch DL (prefilled Outlook draft).",
+            "Attach a photo to a channel post.",
+        ],
+        fixed: [
+            "Vacation days no longer read as working shifts (and auto-mark Must-Be-Off).",
+            "Relief placeholder shifts are hidden everywhere — calendar, trading, and your schedule.",
+        ],
+        changed: [
+            "“Search” is now “Trade Solutions” — every result is a clean package card.",
+            "Intents is one sorted list (fewest people → 🔥 → bookends).",
+            "Calendar event titles are just the shift + desk (e.g. “AM 82”).",
+        ],
+        improved: [
+            "One unified matching engine behind Search, Intents, and ECB — consistent, more accurate.",
+            "Faster launch (test scaffolding removed from the shipped app).",
+        ],
+        toTest: [
+            "Mark a few intents on Home, then open Trade Solutions and propose one.",
+            "Try a card with the purple “Q” (qual swap) and send the blast.",
+            "Turn on Relief Dispatcher in Trade Settings + set a date.",
+            "React to a channel post and attach a photo.",
+            "Email a trade to the dispatch DL from a trade thread.",
+        ])
+}
+
+/// Outlook/email trade announcement to the dispatch DL (G1). Pure body/URL builders so
+/// the text is unit-testable; the view just opens the URL. Blackout days = the sender's
+/// Must-Be-Off intents (NOT blacklist).
+enum TradeEmail {
+    /// The email body. `giveDays`/`takeDays`/`blackoutDays` are already human-formatted.
+    static func body(giver: String, taker: String, giveDays: [String], takeDays: [String],
+                     blackoutDays: [String]) -> String {
+        var parts: [String] = []
+        if !giveDays.isEmpty { parts.append("\(giver) gives \(giveDays.joined(separator: ", "))") }
+        if !takeDays.isEmpty { parts.append("\(taker) gives \(takeDays.joined(separator: ", "))") }
+        var s = "Trade request: \(giver) ⇄ \(taker)"
+        if !parts.isEmpty { s += " — " + parts.joined(separator: "; ") }
+        s += ". Sent via BATMAN Watcher."
+        if !blackoutDays.isEmpty {
+            s += "\n\nBlackout days (unavailable): \(blackoutDays.joined(separator: ", "))."
+        }
+        return s
+    }
+
+    static func subject(giver: String, taker: String) -> String { "Trade request: \(giver) ⇄ \(taker)" }
+
+    /// #7: broadcast trade-away email to the dispatch DL (from Trade Solutions) — the days offered
+    /// + the sender's Must-Be-Off blackout days.
+    static func dispatchBody(giver: String, giveDays: [String], blackoutDays: [String]) -> String {
+        let days = giveDays.isEmpty ? "(no days selected)" : giveDays.joined(separator: ", ")
+        var s = "\(giver) is looking to trade away: \(days). Sent via BATMAN Watcher."
+        if !blackoutDays.isEmpty { s += "\n\nBlackout days (unavailable): \(blackoutDays.joined(separator: ", "))." }
+        return s
+    }
+    static func dispatchSubject(giver: String) -> String { "Trade request — \(giver)" }
+
+    /// #7: ECB broadcast email — states the ECB offered for the days, and (per spec) NO blackout days.
+    static func ecbBody(giver: String, giveDays: [String], ecb: Double) -> String {
+        let days = giveDays.isEmpty ? "(no days selected)" : giveDays.joined(separator: ", ")
+        return "\(giver) is offering \(ecbText(ecb)) ECB to cover: \(days). Sent via BATMAN Watcher."
+    }
+    static func ecbSubject(giver: String, ecb: Double) -> String { "ECB trade — \(ecbText(ecb)) ECB — \(giver)" }
+
+    /// `mailto:` draft to the DL (opens the default mail app, incl. Outlook if it's default).
+    static func mailtoURL(dl: String, subject: String, body: String) -> URL? {
+        let allowed = CharacterSet.urlQueryAllowed
+        guard !dl.trimmingCharacters(in: .whitespaces).isEmpty,
+              let s = subject.addingPercentEncoding(withAllowedCharacters: allowed),
+              let b = body.addingPercentEncoding(withAllowedCharacters: allowed) else { return nil }
+        return URL(string: "mailto:\(dl)?subject=\(s)&body=\(b)")
+    }
+
+    /// Outlook compose deep-link (opens Outlook directly if installed).
+    static func outlookURL(dl: String, subject: String, body: String) -> URL? {
+        let allowed = CharacterSet.urlQueryAllowed
+        guard !dl.trimmingCharacters(in: .whitespaces).isEmpty,
+              let to = dl.addingPercentEncoding(withAllowedCharacters: allowed),
+              let s = subject.addingPercentEncoding(withAllowedCharacters: allowed),
+              let b = body.addingPercentEncoding(withAllowedCharacters: allowed) else { return nil }
+        return URL(string: "ms-outlook://compose?to=\(to)&subject=\(s)&body=\(b)")
+    }
+}
+
+/// Guards against a transient CloudKit fetch error (e.g. querying an undeployed field) wiping the
+/// visible list: keep the existing cache when a fetch comes back EMPTY but we had data. (P0 data-wipe)
+enum FetchMerge {
+    static func keepCacheOnEmpty<T>(existing: [T], fetched: [T]) -> [T] {
+        (fetched.isEmpty && !existing.isEmpty) ? existing : fetched
+    }
+}
+
+// MARK: - Match universe (R-A) — the candidate set is the ROSTER, profiles layer on top
+
+/// One matchable dispatcher: from the roster, annotated with published willingness.
+struct MatchCandidate: Sendable, Hashable {
+    let workerID: String
+    let name: String
+    let quals: [String]
+    let willingness: TradeWillingness
+}
+
+enum MatchUniverse {
+    /// THE candidate universe for matching (R-A fix): EVERY roster worker except self, annotated
+    /// with their published willingness. A worker with NO published profile is `.unknown` (kept,
+    /// ranked below willing) — NOT invisible. `.declined` (openness = none) is excluded unless
+    /// `includeDeclined` (What-If). Profiles are the willingness LAYER, not the universe.
+    static func candidates(roster: [(id: String, name: String, quals: [String])],
+                           profiles: [String: TradeProfile], selfID: String,
+                           includeDeclined: Bool = false) -> [MatchCandidate] {
+        roster.compactMap { w in
+            guard w.id != selfID else { return nil }
+            let willingness: TradeWillingness
+            if let p = profiles[w.id] {
+                willingness = (p.opennessLevel == .none) ? .declined : .willing
+            } else {
+                willingness = .unknown   // on the roster but hasn't opted in → still a candidate
+            }
+            if willingness == .declined && !includeDeclined { return nil }
+            return MatchCandidate(workerID: w.id, name: w.name, quals: w.quals, willingness: willingness)
+        }
+    }
+}
+
+/// People search + pin-to-top for the unified people lists (C4). Pure + testable.
+enum PeopleFilter {
+    /// Case-insensitive name filter; pinned ids first, each group keeping its original order.
+    static func arrange<T>(_ items: [T], query: String, pinned: Set<String>,
+                           id: (T) -> String, name: (T) -> String) -> [T] {
+        let q = query.trimmingCharacters(in: .whitespaces).lowercased()
+        let filtered = q.isEmpty ? items : items.filter { name($0).lowercased().contains(q) }
+        return filtered.filter { pinned.contains(id($0)) } + filtered.filter { !pinned.contains(id($0)) }
+    }
+}
+
+/// Last-write-wins merge for cross-device sync (A3). Pure + testable.
+enum LWW {
+    /// Pick the value with the newer timestamp; ties keep `local`.
+    static func pick<T>(local: T, localAt: Date, remote: T, remoteAt: Date) -> T {
+        remoteAt > localAt ? remote : local
+    }
+}
+
+/// Pure char-limit state for the field counters (F3). `nearLimit` at ≥90% used.
+enum CharLimit {
+    static func state(_ text: String, limit: Int) -> (used: Int, remaining: Int, nearLimit: Bool, over: Bool) {
+        let used = text.count
+        return (used, limit - used, limit > 0 && Double(used) >= Double(limit) * 0.9, used > limit)
+    }
+}

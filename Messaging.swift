@@ -16,6 +16,26 @@ import Observation
 // MARK: - Models
 
 /// A post in the shared broadcast channel. Self-maintaining via `expiresAt`.
+/// One emoji reaction by one person (B6).
+struct Reaction: Sendable, Codable, Hashable {
+    let emoji: String
+    let userID: String
+    let userName: String
+
+    /// PURE — **one reaction per user** (#8a): tapping the same emoji clears it; tapping a different
+    /// emoji REPLACES the user's prior one. A user never holds more than one reaction on a thread.
+    static func setSingle(_ reactions: [Reaction], emoji: String, userID: String, userName: String) -> [Reaction] {
+        let hadSame = reactions.contains { $0.userID == userID && $0.emoji == emoji }
+        var others = reactions.filter { $0.userID != userID }   // drop ALL of this user's reactions
+        if !hadSame { others.append(Reaction(emoji: emoji, userID: userID, userName: userName)) }
+        return others
+    }
+    /// Counts per emoji, for the reaction chips.
+    static func counts(_ reactions: [Reaction]) -> [(emoji: String, count: Int)] {
+        Dictionary(grouping: reactions, by: \.emoji).map { ($0.key, $0.value.count) }.sorted { $0.emoji < $1.emoji }
+    }
+}
+
 struct BroadcastPost: Sendable, Codable, Identifiable, Hashable {
     let id: String            // UUID string (recordName)
     let authorID: String
@@ -23,10 +43,23 @@ struct BroadcastPost: Sendable, Codable, Identifiable, Hashable {
     let text: String
     let createdAt: Date
     let expiresAt: Date
-    var channel: String? = nil   // "trades" (default) or "feedback"; nil = legacy = trades
+    var channel: String? = nil   // "general"/"trades"/"feedback"; nil = legacy = trades
+    var pinned: Bool? = nil       // admin-pinned to the top of its channel (B7). Optional ⇒ old records decode.
+    var reactions: [Reaction]? = nil  // emoji reactions (B6). Optional ⇒ old records decode.
+    var imageBase64: String? = nil    // attached photo (downscaled JPEG, base64) — rides the payload (B5).
+
+    // EXPLICIT init — freezes the construction symbol so adding new optional fields above
+    // doesn't churn the memberwise-init symbol (stale-link prevention; see TradeProfile).
+    init(id: String, authorID: String, authorName: String, text: String, createdAt: Date, expiresAt: Date,
+         channel: String? = nil, pinned: Bool? = nil, reactions: [Reaction]? = nil, imageBase64: String? = nil) {
+        self.id = id; self.authorID = authorID; self.authorName = authorName; self.text = text
+        self.createdAt = createdAt; self.expiresAt = expiresAt
+        self.channel = channel; self.pinned = pinned; self.reactions = reactions; self.imageBase64 = imageBase64
+    }
 
     var isExpired: Bool { expiresAt < Date() }
     var channelOrDefault: String { channel ?? "trades" }
+    var isPinned: Bool { pinned == true }
 }
 
 /// A reply on a broadcast post. `isPublic` = everyone sees it; otherwise only the
@@ -40,6 +73,22 @@ struct BroadcastReply: Sendable, Codable, Identifiable, Hashable {
     let text: String
     let isPublic: Bool
     let createdAt: Date
+    var editedAt: Date? = nil    // set on edit → shows "edited · time" (B4). Optional ⇒ old records decode.
+    var deleted: Bool? = nil     // soft-delete tombstone → renders "[Deleted]" (B4).
+    var reactions: [Reaction]? = nil   // emoji reactions (B6). Optional ⇒ old records decode.
+    var imageBase64: String? = nil     // attached photo (downscaled JPEG, base64) — replies (#8b).
+
+    // EXPLICIT init — freezes the construction signature (stale-incremental-link fix); new optional
+    // fields are set via assignment / passed explicitly, never churning callers' object files.
+    init(id: String, postID: String, authorID: String, authorName: String, text: String,
+         isPublic: Bool, createdAt: Date, editedAt: Date? = nil, deleted: Bool? = nil,
+         reactions: [Reaction]? = nil, imageBase64: String? = nil) {
+        self.id = id; self.postID = postID; self.authorID = authorID; self.authorName = authorName
+        self.text = text; self.isPublic = isPublic; self.createdAt = createdAt
+        self.editedAt = editedAt; self.deleted = deleted; self.reactions = reactions; self.imageBase64 = imageBase64
+    }
+
+    var isDeleted: Bool { deleted == true }
 }
 
 /// A moderation flag created by an admin to HIDE a post or reply for everyone
@@ -80,13 +129,41 @@ struct TradeRequest: Sendable, Codable, Identifiable, Hashable {
     let giveDayIDs: [String]   // sender's work days the recipient would take (ISO)
     let createdAt: Date
     let expiresAt: Date
-    var ecb: Int? = nil        // ECB points offered for a one-way (ECB) trade
+    var ecb: Int? = nil        // legacy integer ECB (back-compat; old records). Prefer ecbValue.
+    var ecbValue: Double? = nil // ECB offered, supports 0.5 steps (e.g. 13.5 for 1.5× OT). SPEC S-ENG-8.
     var offerID: String? = nil // shared across the broadcast (first accepter wins)
     var chain: [TradeLeg]? = nil // present for multi-person (circular) trades: the full loop
+    var qualSwap: QualSwapLegData? = nil // embedded qual-swap leg (Q3/Q5/Q6). Optional ⇒ old records decode.
+    var perfectMatch: Bool? = nil        // computed sender-side: hits the recipient's own intents (U6 push).
+
+    // EXPLICIT init — REPLACES the synthesized memberwise init and FREEZES the construction
+    // signature, so adding a NEW optional field above won't churn the init symbol (the
+    // stale-incremental-link fix). New optional fields are set via assignment after construction.
+    init(id: String, fromID: String, fromName: String, toID: String, toName: String,
+         note: String, takeDayIDs: [String], giveDayIDs: [String], createdAt: Date, expiresAt: Date,
+         ecb: Int? = nil, ecbValue: Double? = nil, offerID: String? = nil,
+         chain: [TradeLeg]? = nil, qualSwap: QualSwapLegData? = nil, perfectMatch: Bool? = nil) {
+        self.id = id; self.fromID = fromID; self.fromName = fromName; self.toID = toID; self.toName = toName
+        self.note = note; self.takeDayIDs = takeDayIDs; self.giveDayIDs = giveDayIDs
+        self.createdAt = createdAt; self.expiresAt = expiresAt
+        self.ecb = ecb; self.ecbValue = ecbValue; self.offerID = offerID
+        self.chain = chain; self.qualSwap = qualSwap; self.perfectMatch = perfectMatch
+    }
 
     var isExpired: Bool { expiresAt < Date() }
+    /// The ECB amount to display — new Double field, falling back to the legacy Int.
+    var ecbAmount: Double? { ecbValue ?? ecb.map(Double.init) }
     /// A one-way ECB offer = sender gives days, takes nothing back, offers points.
-    var isECB: Bool { ecb != nil && takeDayIDs.isEmpty }
+    var isECB: Bool { ecbAmount != nil && takeDayIDs.isEmpty }
+
+    /// ECB is offered in 0.5 steps, 5…25 (SPEC S-ENG-8).
+    static func isValidECB(_ v: Double) -> Bool { v >= 5 && v <= 25 && (v * 2).rounded() == v * 2 }
+    static func clampECB(_ v: Double) -> Double { min(25, max(5, (v * 2).rounded() / 2)) }
+}
+
+/// Formats an ECB amount with no trailing ".0" (9 → "9", 13.5 → "13.5").
+func ecbText(_ v: Double) -> String {
+    v == v.rounded() ? String(Int(v)) : String(format: "%.1f", v)
 }
 
 /// One handoff in a multi-person trade — carried in a request so the inbox can show
@@ -100,6 +177,98 @@ struct TradeLeg: Sendable, Codable, Hashable {
     var desk: String? = nil
 }
 
+// MARK: - Qual-swap leg (Q2/Q3/Q5/Q6)
+
+/// One bridge candidate blasted for a qual-swap leg — a dispatcher working the same
+/// day/start-hour who could slide onto the give-desk, freeing their own desk for the taker.
+struct QualSwapCandidate: Sendable, Codable, Hashable, Identifiable {
+    let workerID: String
+    let name: String
+    let desk: String       // the desk they'd FREE (their current desk that day)
+    let qual: String       // that desk's qual — what the taker must hold to take it
+    var id: String { workerID }
+}
+
+/// One bridge ACCEPTANCE — the taker sees name + desk + qual (Q6).
+struct QualSwapAcceptance: Sendable, Codable, Hashable, Identifiable {
+    let workerID: String
+    let name: String
+    let desk: String
+    let qual: String
+    let acceptedAt: Date
+    var id: String { workerID }
+}
+
+/// An embedded qual-swap leg on a `TradeRequest` (Q3/Q5/Q6). Optional on the request so
+/// older records still decode. Status is DERIVED (never stored) via the pure reducer.
+struct QualSwapLegData: Sendable, Codable, Hashable {
+    let giveShiftDayID: String     // ISO day of the give-desk
+    let giveDesk: String           // the desk being given (needs giveQual)
+    let giveQual: String
+    let takerID: String            // the off person who'll take a freed desk
+    let takerName: String
+    var candidates: [QualSwapCandidate]            // the bridges blasted (selected names)
+    var acceptances: [QualSwapAcceptance] = []     // bridges who accepted (first-5 cap)
+    var chosenWorkerID: String? = nil              // bridge the taker finalized on (Q5 desk-choice)
+    var takerDeclined: Bool? = nil                 // taker declined → invalid
+    var expired: Bool? = nil                       // deadline passed with no acceptances
+
+    /// Live leg status (Q3/Q6) — chosen wins, else the pure reducer.
+    var status: QualSwapLegStatus {
+        if chosenWorkerID != nil { return .finalized }
+        return QualSwapLeg.status(acceptedCount: acceptances.count, finalized: false,
+                                  declined: takerDeclined == true, expired: expired == true)
+    }
+    /// Whether another bridge may still accept (first-5 rule).
+    var acceptIsOpen: Bool { QualSwapLeg.acceptIsOpen(acceptedCount: acceptances.count) }
+    /// The acceptance the taker finalized on, if any.
+    var chosenAcceptance: QualSwapAcceptance? {
+        chosenWorkerID.flatMap { id in acceptances.first { $0.workerID == id } }
+    }
+
+    /// PURE upsert of an acceptance honoring the first-5 cap + per-worker idempotency.
+    /// A 6th acceptor (or a duplicate) is ignored — the leg is already filled.
+    func addingAcceptance(_ a: QualSwapAcceptance) -> QualSwapLegData {
+        guard !acceptances.contains(where: { $0.workerID == a.workerID }) else { return self }
+        guard QualSwapLeg.acceptIsOpen(acceptedCount: acceptances.count) else { return self }
+        var copy = self
+        copy.acceptances.append(a)
+        return copy
+    }
+}
+
+/// A person's role in a qual-swap request — drives which inbox UI they see.
+enum QualSwapRole: String, Sendable, CaseIterable {
+    case giver    // the request sender (A), giving away the desk
+    case taker    // the off person (B) who'll take a freed desk
+    case bridge   // a blasted candidate (C) who can slide onto the give-desk
+    case none     // not involved in this leg
+}
+
+extension QualSwapLegData {
+    /// Short status line for the package card / inbox (Q3/Q6).
+    var statusText: String {
+        switch status {
+        case .waiting:    return "Waiting on qual swap"
+        case .offersOpen: return "Qual swap: \(acceptances.count) accepted — choose or wait"
+        case .offersFull: return "Qual swap: 5 accepted (full) — choose one"
+        case .finalized:  return chosenAcceptance.map { "Qual swap: \($0.name) → desk \(giveDesk)" } ?? "Qual swap finalized"
+        case .invalid:    return "Invalid — qual swap not filled"
+        }
+    }
+}
+
+extension TradeRequest {
+    /// This worker's role in the embedded qual-swap leg (`.none` if no leg / not involved).
+    func qualSwapRole(for workerID: String) -> QualSwapRole {
+        guard let leg = qualSwap else { return .none }
+        if workerID == leg.takerID { return .taker }
+        if workerID == fromID { return .giver }
+        if leg.candidates.contains(where: { $0.workerID == workerID }) { return .bridge }
+        return .none
+    }
+}
+
 /// A reply to a `TradeRequest`, authored by whoever is responding.
 struct TradeResponse: Sendable, Codable, Identifiable, Hashable {
     let id: String
@@ -111,8 +280,23 @@ struct TradeResponse: Sendable, Codable, Identifiable, Hashable {
     let createdAt: Date
     var offerID: String? = nil      // copied from the ECB offer so the queue is public
     var acceptedDayIDs: [String]? = nil  // ECB: which shifts this person accepted
+    var editedAt: Date? = nil       // chat-message edit marker (B4). Optional ⇒ old records decode.
+    var deleted: Bool? = nil        // soft-delete tombstone for a chat message (B4).
+    var reactions: [Reaction]? = nil // emoji reactions on a 1:1 chat message (B6).
+
+    // EXPLICIT init — freezes the construction signature (stale-incremental-link fix).
+    init(id: String, requestID: String, responderID: String, responderName: String,
+         status: String, note: String, createdAt: Date, offerID: String? = nil,
+         acceptedDayIDs: [String]? = nil, editedAt: Date? = nil, deleted: Bool? = nil,
+         reactions: [Reaction]? = nil) {
+        self.id = id; self.requestID = requestID; self.responderID = responderID
+        self.responderName = responderName; self.status = status; self.note = note
+        self.createdAt = createdAt; self.offerID = offerID; self.acceptedDayIDs = acceptedDayIDs
+        self.editedAt = editedAt; self.deleted = deleted; self.reactions = reactions
+    }
 
     var statusValue: TradeRequestStatus { TradeRequestStatus(rawValue: status) ?? .pending }
+    var isDeleted: Bool { deleted == true }
 }
 
 // MARK: - Service abstraction
@@ -167,7 +351,10 @@ actor LocalMessagingService: MessagingService {
     }
     func fetchBroadcasts() async -> [BroadcastPost] { posts }
     func deleteBroadcast(id: String) async { posts.removeAll { $0.id == id }; Self.save(posts, K.posts) }
-    func postReply(_ reply: BroadcastReply) async { replies.append(reply); Self.save(replies, K.replies) }
+    func postReply(_ reply: BroadcastReply) async {
+        replies.removeAll { $0.id == reply.id }   // upsert (supports edit/soft-delete)
+        replies.append(reply); Self.save(replies, K.replies)
+    }
     func fetchReplies() async -> [BroadcastReply] { replies }
     func deleteReply(id: String) async { replies.removeAll { $0.id == id }; Self.save(replies, K.replies) }
     func hide(id targetID: String) async {
@@ -175,10 +362,16 @@ actor LocalMessagingService: MessagingService {
     }
     func fetchHidden() async -> Set<String> { Set(hiddenIDs) }
 
-    func sendRequest(_ request: TradeRequest) async { reqs.append(request); Self.save(reqs, K.reqs) }
+    func sendRequest(_ request: TradeRequest) async {
+        reqs.removeAll { $0.id == request.id }   // upsert (supports qual-swap leg updates)
+        reqs.append(request); Self.save(reqs, K.reqs)
+    }
     func fetchRequests(involving workerID: String) async -> [TradeRequest] { reqs }
     func deleteRequest(id: String) async { reqs.removeAll { $0.id == id }; Self.save(reqs, K.reqs) }
-    func sendResponse(_ response: TradeResponse) async { resps.append(response); Self.save(resps, K.resps) }
+    func sendResponse(_ response: TradeResponse) async {
+        resps.removeAll { $0.id == response.id }   // upsert (supports chat edit/soft-delete)
+        resps.append(response); Self.save(resps, K.resps)
+    }
     func fetchResponses() async -> [TradeResponse] { resps }
 
     private static func load<T: Decodable>(_ key: String) -> T? {
@@ -202,9 +395,49 @@ final class MessagingStore {
 
     private(set) var broadcasts: [BroadcastPost] = []
     private(set) var requests: [TradeRequest] = []
+    /// Active requests now INVALID vs the current master roster (a day is no longer worked).
+    /// Recomputed every `refresh()` — auto-clears when a schedule reverses. (S-VALID)
+    private(set) var invalidRequestIDs: Set<String> = []
     private(set) var responses: [TradeResponse] = []
     private(set) var replies: [BroadcastReply] = []
     private(set) var hidden: Set<String> = []
+
+    /// When the user last OPENED the broadcast channel. Drives the UNREAD badge so it
+    /// clears on read — the old badge showed total post count and never cleared (A2/S-SYNC-1).
+    private static let lastSeenKey = "batman.msg.broadcastsLastSeen"
+    var broadcastsLastSeen: Date = (UserDefaults.standard.object(forKey: lastSeenKey) as? Date) ?? .distantPast {
+        didSet { UserDefaults.standard.set(broadcastsLastSeen, forKey: Self.lastSeenKey) }
+    }
+
+    /// PURE, testable: count of broadcasts newer than `since` that aren't the user's own.
+    static func unreadCount(broadcasts: [BroadcastPost], since: Date, excluding myID: String) -> Int {
+        broadcasts.filter { $0.createdAt > since && $0.authorID != myID && !$0.isExpired }.count
+    }
+    /// Unread broadcasts for the dock badge.
+    var unreadBroadcastCount: Int {
+        Self.unreadCount(broadcasts: broadcasts, since: broadcastsLastSeen, excluding: myID)
+    }
+    /// Call when the channel opens — clears the unread badge.
+    func markBroadcastsSeen() { broadcastsLastSeen = Date() }
+
+    /// Requests the user ARCHIVED (hidden from the active inbox, kept in an Archived
+    /// section — distinct from delete which removes them forever). Local-only. B3.
+    private static let archivedKey = "batman.msg.archivedRequests"
+    private(set) var archivedRequestIDs: Set<String> = Set(UserDefaults.standard.stringArray(forKey: archivedKey) ?? [])
+    func archiveRequest(_ id: String) {
+        let firstArchive = !archivedRequestIDs.contains(id)
+        archivedRequestIDs.insert(id); persistArchived()
+        // #9: a trade is SUCCESSFUL once accepted AND archived — log the metric here (once).
+        if firstArchive, let req = requests.first(where: { $0.id == id }), status(of: req) == .accepted {
+            MetricsStore.shared.log(.trade)
+        }
+    }
+    func unarchiveRequest(_ id: String) { archivedRequestIDs.remove(id); persistArchived() }
+    private func persistArchived() { UserDefaults.standard.set(Array(archivedRequestIDs), forKey: Self.archivedKey) }
+    /// PURE, testable: requests NOT archived (the active inbox).
+    static func active(_ requests: [TradeRequest], archived: Set<String>) -> [TradeRequest] {
+        requests.filter { !archived.contains($0.id) }
+    }
 
     private init() {
         service = SettingsManager.shared.useCloudKit
@@ -234,13 +467,32 @@ final class MessagingStore {
         async let hid = service.fetchHidden()
         let (posts, reqs, resps, reps, hides) = await (b, r, p, rep, hid)
         hidden = hides
-        broadcasts = posts.filter { !$0.isExpired && !hidden.contains($0.id) }.sorted { $0.createdAt > $1.createdAt }
-        requests   = reqs.filter { !$0.isExpired }.sorted { $0.createdAt > $1.createdAt }
-        responses  = resps.sorted { $0.createdAt < $1.createdAt }
-        replies    = reps.sorted { $0.createdAt < $1.createdAt }
+        // P0: a transient CloudKit error returns []; don't let that wipe a non-empty cache.
+        broadcasts = FetchMerge.keepCacheOnEmpty(existing: broadcasts,
+            fetched: posts.filter { !$0.isExpired && !hidden.contains($0.id) }.sorted { $0.createdAt > $1.createdAt })
+        requests   = FetchMerge.keepCacheOnEmpty(existing: requests,
+            fetched: reqs.filter { !$0.isExpired }.sorted { $0.createdAt > $1.createdAt })
+        responses  = FetchMerge.keepCacheOnEmpty(existing: responses, fetched: resps.sorted { $0.createdAt < $1.createdAt })
+        replies    = FetchMerge.keepCacheOnEmpty(existing: replies, fetched: reps.sorted { $0.createdAt < $1.createdAt })
         // ECB maintenance (sender side): auto-complete ledger on receipt.
         reconcileECBLedger()
+        await refreshInvalidRequests()
     }
+
+    /// S-VALID: recompute which active (non-ECB) requests are stale against the live roster.
+    /// Auto-clears — a reversed schedule drops the request out on the next refresh.
+    func refreshInvalidRequests() async {
+        var invalid = Set<String>()
+        for req in requests where !req.isECB {
+            let stale = await TradeMatcher.staleDays(fromID: req.fromID, toID: req.toID,
+                                                     giveDayIDs: req.giveDayIDs, takeDayIDs: req.takeDayIDs)
+            if !stale.isEmpty { invalid.insert(req.id) }
+        }
+        invalidRequestIDs = invalid
+    }
+
+    /// Whether this request is currently invalid (a traded day is no longer worked).
+    func isInvalid(_ request: TradeRequest) -> Bool { invalidRequestIDs.contains(request.id) }
 
     /// Replies visible to YOU on a post: public ones, plus private ones you wrote
     /// or that are on your own post — minus anything an admin has hidden.
@@ -259,27 +511,27 @@ final class MessagingStore {
         replies.removeAll { $0.id == id }
     }
 
-    func addReply(to post: BroadcastPost, text: String, isPublic: Bool) async {
+    func addReply(to post: BroadcastPost, text: String, isPublic: Bool, imageBase64: String? = nil) async {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+        guard !trimmed.isEmpty || imageBase64 != nil else { return }
         let reply = BroadcastReply(
             id: UUID().uuidString, postID: post.id, authorID: myID, authorName: myName,
-            text: trimmed, isPublic: isPublic, createdAt: Date())
+            text: trimmed, isPublic: isPublic, createdAt: Date(), imageBase64: imageBase64)
         await service.postReply(reply)
         replies = (replies.filter { $0.id != reply.id } + [reply]).sorted { $0.createdAt < $1.createdAt }
     }
 
     // MARK: Broadcast channel
 
-    func post(text: String, channel: String = "trades", daysValid: Int = 21) async {
+    func post(text: String, channel: String = "trades", daysValid: Int = 21, imageBase64: String? = nil) async {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+        guard !trimmed.isEmpty || imageBase64 != nil else { return }   // allow image-only posts
         let now = Date()
         let post = BroadcastPost(
             id: UUID().uuidString, authorID: myID, authorName: myName,
             text: trimmed, createdAt: now,
             expiresAt: Calendar.current.date(byAdding: .day, value: daysValid, to: now) ?? now,
-            channel: channel)
+            channel: channel, imageBase64: imageBase64)
         await service.postBroadcast(post)
         // Optimistic: show locally now (don't wait on a server round-trip, which
         // may need queryable indexes before fetch returns).
@@ -303,34 +555,187 @@ final class MessagingStore {
         replies.removeAll { $0.id == id }
     }
 
-    /// Edit your own post's text (keeps id/createdAt/expiry).
+    /// Edit your own post's text (keeps id/createdAt/expiry/channel/pinned).
     func editPost(_ post: BroadcastPost, newText: String) async {
         let trimmed = newText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         let updated = BroadcastPost(
             id: post.id, authorID: post.authorID, authorName: post.authorName,
-            text: trimmed, createdAt: post.createdAt, expiresAt: post.expiresAt)
+            text: trimmed, createdAt: post.createdAt, expiresAt: post.expiresAt,
+            channel: post.channel, pinned: post.pinned, reactions: post.reactions, imageBase64: post.imageBase64)
         await service.postBroadcast(updated)   // upsert
         broadcasts = broadcasts.map { $0.id == post.id ? updated : $0 }
     }
 
+    /// Admin: pin/unpin a post to the top of its channel (B7). Caller gates to DevAccess.
+    func setPinned(_ post: BroadcastPost, _ pinned: Bool) async {
+        let updated = BroadcastPost(
+            id: post.id, authorID: post.authorID, authorName: post.authorName,
+            text: post.text, createdAt: post.createdAt, expiresAt: post.expiresAt,
+            channel: post.channel, pinned: pinned, reactions: post.reactions, imageBase64: post.imageBase64)
+        await service.postBroadcast(updated)   // upsert
+        broadcasts = broadcasts.map { $0.id == post.id ? updated : $0 }
+    }
+
+    /// Toggle the current user's emoji reaction on a post (B6).
+    func react(to post: BroadcastPost, emoji: String) async {
+        let updated = BroadcastPost(
+            id: post.id, authorID: post.authorID, authorName: post.authorName,
+            text: post.text, createdAt: post.createdAt, expiresAt: post.expiresAt,
+            channel: post.channel, pinned: post.pinned,
+            reactions: Reaction.setSingle(post.reactions ?? [], emoji: emoji, userID: myID, userName: myName),
+            imageBase64: post.imageBase64)
+        await service.postBroadcast(updated)   // upsert
+        broadcasts = broadcasts.map { $0.id == post.id ? updated : $0 }
+    }
+
+    /// Toggle my emoji reaction on a channel REPLY (B6).
+    func react(to reply: BroadcastReply, emoji: String) async {
+        let updated = BroadcastReply(
+            id: reply.id, postID: reply.postID, authorID: reply.authorID, authorName: reply.authorName,
+            text: reply.text, isPublic: reply.isPublic, createdAt: reply.createdAt,
+            editedAt: reply.editedAt, deleted: reply.deleted,
+            reactions: Reaction.setSingle(reply.reactions ?? [], emoji: emoji, userID: myID, userName: myName),
+            imageBase64: reply.imageBase64)
+        await service.postReply(updated)   // upsert
+        replies = replies.map { $0.id == reply.id ? updated : $0 }
+    }
+
+    /// Toggle my emoji reaction on a 1:1 chat MESSAGE response (B6).
+    func react(to response: TradeResponse, emoji: String) async {
+        let updated = TradeResponse(
+            id: response.id, requestID: response.requestID, responderID: response.responderID,
+            responderName: response.responderName, status: response.status, note: response.note,
+            createdAt: response.createdAt, offerID: response.offerID, acceptedDayIDs: response.acceptedDayIDs,
+            editedAt: response.editedAt, deleted: response.deleted,
+            reactions: Reaction.setSingle(response.reactions ?? [], emoji: emoji, userID: myID, userName: myName))
+        await service.sendResponse(updated)   // upsert
+        responses = responses.map { $0.id == response.id ? updated : $0 }
+    }
+
+    // MARK: Intent-match 🔥 (U6)
+
+    /// PURE: does an incoming request hit one of my marked intents? 🔥 when a day I'd PICK UP
+    /// matches my Want-to-Work (off day; ECB only), OR a day TAKEN FROM ME matches my
+    /// Trade-Away (working day). Stub until implemented (fail-test target, U6).
+    static func intentMatch(pickupDayIDs: [String], takenFromMeDayIDs: [String], isECB: Bool,
+                            myWantToWork: Set<String>, mySeeking: Set<String>) -> Bool {
+        if isECB, pickupDayIDs.contains(where: { myWantToWork.contains($0) }) { return true }
+        if takenFromMeDayIDs.contains(where: { mySeeking.contains($0) }) { return true }
+        return false
+    }
+
+    /// PURE: computed by the SENDER — does this request hit the RECIPIENT's published intents
+    /// (their Trade-Away / Want-to-Work)? Stamped on the record so a CloudKit subscription can
+    /// fire a "Perfect Match" push (the recipient's intents aren't on the record, but the sender
+    /// can see them in the recipient's published profile). U6.
+    static func requestPerfectMatch(give: [String], take: [String], isECB: Bool,
+                                    recipientSeeking: Set<String>, recipientWantToWork: Set<String>) -> Bool {
+        intentMatch(pickupDayIDs: give, takenFromMeDayIDs: take, isECB: isECB,
+                    myWantToWork: recipientWantToWork, mySeeking: recipientSeeking)
+    }
+
+    /// 🔥 for an incoming request addressed to me, using my live intents.
+    func matchesMyIntents(_ request: TradeRequest) -> Bool {
+        guard request.toID == myID else { return false }
+        return Self.intentMatch(pickupDayIDs: request.giveDayIDs, takenFromMeDayIDs: request.takeDayIDs,
+                                isECB: request.isECB,
+                                myWantToWork: DayIntentStore.shared.wantToWorkDayIDs,
+                                mySeeking: DayIntentStore.shared.seekingDayIDs)
+    }
+
+    /// PURE, testable: posts sorted pinned-first, then newest. (B7)
+    static func sortedForChannel(_ posts: [BroadcastPost]) -> [BroadcastPost] {
+        posts.sorted { a, b in
+            if a.isPinned != b.isPinned { return a.isPinned }   // pinned first
+            return a.createdAt > b.createdAt                     // then newest
+        }
+    }
+
     func isMine(_ post: BroadcastPost) -> Bool { post.authorID == myID }
+    func isMine(_ reply: BroadcastReply) -> Bool { reply.authorID == myID }
+
+    /// Edit your own reply (keeps id/createdAt); stamps `editedAt`. B4.
+    func editReply(_ reply: BroadcastReply, newText: String) async {
+        let trimmed = newText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let updated = BroadcastReply(id: reply.id, postID: reply.postID, authorID: reply.authorID,
+                                     authorName: reply.authorName, text: trimmed, isPublic: reply.isPublic,
+                                     createdAt: reply.createdAt, editedAt: Date(), deleted: reply.deleted,
+                                     reactions: reply.reactions, imageBase64: reply.imageBase64)
+        await service.postReply(updated)   // upsert
+        replies = replies.map { $0.id == reply.id ? updated : $0 }
+    }
+
+    /// Soft-delete your own reply: keep the row as a "[Deleted]" tombstone. B4.
+    func softDeleteReply(_ reply: BroadcastReply) async {
+        let updated = BroadcastReply(id: reply.id, postID: reply.postID, authorID: reply.authorID,
+                                     authorName: reply.authorName, text: "", isPublic: reply.isPublic,
+                                     createdAt: reply.createdAt, editedAt: reply.editedAt, deleted: true)
+        await service.postReply(updated)
+        replies = replies.map { $0.id == reply.id ? updated : $0 }
+    }
 
     // MARK: Trade requests
 
     func sendRequest(to toID: String, toName: String, note: String,
                      take: [String], give: [String], daysValid: Int = 21,
-                     ecb: Int? = nil, offerID: String? = nil, chain: [TradeLeg]? = nil) async {
+                     ecb: Int? = nil, ecbValue: Double? = nil, offerID: String? = nil,
+                     chain: [TradeLeg]? = nil, qualSwap: QualSwapLegData? = nil) async {
         let now = Date()
+        // Sender-side "Perfect Match": does this hit the recipient's published intents? (U6 push)
+        let recipient = TradeProfileStore.shared.profile(forWorker: toID)
+        let isECB = ecbValue != nil && take.isEmpty
+        let perfect = MessagingStore.requestPerfectMatch(
+            give: give, take: take, isECB: isECB,
+            recipientSeeking: recipient?.seekingDayIDs ?? [],
+            recipientWantToWork: recipient?.wantToWorkDayIDs ?? [])
         let req = TradeRequest(
             id: UUID().uuidString, fromID: myID, fromName: myName,
             toID: toID, toName: toName, note: note,
             takeDayIDs: take, giveDayIDs: give, createdAt: now,
             expiresAt: Calendar.current.date(byAdding: .day, value: daysValid, to: now) ?? now,
-            ecb: ecb, offerID: offerID, chain: chain)
+            ecb: ecb, ecbValue: ecbValue, offerID: offerID, chain: chain, qualSwap: qualSwap,
+            perfectMatch: perfect ? true : nil)
         await service.sendRequest(req)
+        MetricsStore.shared.log(.proposed)   // H1 #18 global tally
         requests = ([req] + requests.filter { $0.id != req.id })
             .filter { !$0.isExpired }.sorted { $0.createdAt > $1.createdAt }
+    }
+
+    // MARK: Qual-swap leg mutations (Q3/Q5/Q6)
+
+    /// Re-send a request with an updated qual-swap leg (upsert), refreshing the local cache.
+    private func updateQualSwapLeg(_ request: TradeRequest, _ leg: QualSwapLegData) async {
+        var updated = request
+        updated.qualSwap = leg
+        await service.sendRequest(updated)
+        requests = requests.map { $0.id == request.id ? updated : $0 }
+    }
+
+    /// A bridge (the current user) accepts the qual swap — adds their acceptance honoring
+    /// the first-5 cap. No-op if they aren't a blasted candidate or the leg is filled.
+    func acceptQualSwapBridge(_ request: TradeRequest) async {
+        guard let leg = request.qualSwap,
+              let cand = leg.candidates.first(where: { $0.workerID == myID }) else { return }
+        let acc = QualSwapAcceptance(workerID: myID, name: myName, desk: cand.desk,
+                                     qual: cand.qual, acceptedAt: Date())
+        await updateQualSwapLeg(request, leg.addingAcceptance(acc))
+    }
+
+    /// The taker finalizes on a chosen bridge's offered desk (Q5 desk-choice) → leg locks.
+    func finalizeQualSwap(_ request: TradeRequest, chosenWorkerID: String) async {
+        guard var leg = request.qualSwap,
+              leg.acceptances.contains(where: { $0.workerID == chosenWorkerID }) else { return }
+        leg.chosenWorkerID = chosenWorkerID
+        await updateQualSwapLeg(request, leg)
+    }
+
+    /// The taker declines → the whole package becomes invalid (reason: qual swap).
+    func declineQualSwap(_ request: TradeRequest) async {
+        guard var leg = request.qualSwap else { return }
+        leg.takerDeclined = true
+        await updateQualSwapLeg(request, leg)
     }
 
     func respond(to request: TradeRequest, status: TradeRequestStatus, note: String) async {
@@ -361,6 +766,30 @@ final class MessagingStore {
     }
 
     /// Post a free-form chat message on a request thread (either party, anytime).
+    func isMine(_ r: TradeResponse) -> Bool { r.responderID == myID }
+
+    /// Edit your own chat message (a `.message` response); stamps `editedAt`. B4.
+    func editMessage(_ r: TradeResponse, newText: String) async {
+        let trimmed = newText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let u = TradeResponse(id: r.id, requestID: r.requestID, responderID: r.responderID,
+                              responderName: r.responderName, status: r.status, note: trimmed,
+                              createdAt: r.createdAt, offerID: r.offerID, acceptedDayIDs: r.acceptedDayIDs,
+                              editedAt: Date(), deleted: r.deleted)
+        await service.sendResponse(u)
+        responses = (responses.filter { $0.id != u.id } + [u]).sorted { $0.createdAt < $1.createdAt }
+    }
+
+    /// Soft-delete your own chat message → "[Deleted]" tombstone. B4.
+    func softDeleteMessage(_ r: TradeResponse) async {
+        let u = TradeResponse(id: r.id, requestID: r.requestID, responderID: r.responderID,
+                              responderName: r.responderName, status: r.status, note: "",
+                              createdAt: r.createdAt, offerID: r.offerID, acceptedDayIDs: r.acceptedDayIDs,
+                              editedAt: r.editedAt, deleted: true)
+        await service.sendResponse(u)
+        responses = (responses.filter { $0.id != u.id } + [u]).sorted { $0.createdAt < $1.createdAt }
+    }
+
     func postMessage(to request: TradeRequest, text: String) async {
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !t.isEmpty else { return }

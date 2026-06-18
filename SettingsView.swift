@@ -247,6 +247,7 @@ struct SettingsView: View {
                         Label("Clear calendar events", systemImage: "calendar.badge.minus")
                     }
 
+                    #if DEBUG   // Z1: engine-test harness is DEBUG-only (stripped from Release).
                     Button {
                         let fails = TradeEngineTests.runAll()
                         debugMessage = fails.isEmpty
@@ -255,6 +256,7 @@ struct SettingsView: View {
                     } label: {
                         Label("Run engine tests", systemImage: "checkmark.shield.fill")
                     }
+                    #endif
                     Button {
                         Task { @MainActor in
                             let n = await TradeProfileStore.shared.seedFromRoster()

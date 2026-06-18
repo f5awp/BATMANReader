@@ -282,6 +282,12 @@ final class AvailabilityManager {
         return eligible
     }
 
+    /// #1: is ANY legal shift coverable on this off day (after 8h-rest vs adjacent worked shifts)?
+    /// When false the day gets an auto-X and can't be marked Want-to-Work (no shift exists to pick up).
+    nonisolated static func hasAnyLegalShift(forOffDay date: Date, workedShifts: [Shift]) -> Bool {
+        !eligibleTypes(forOffDay: date, workedShifts: workedShifts).isEmpty
+    }
+
     // MARK: - Persistence
 
     private func save() {

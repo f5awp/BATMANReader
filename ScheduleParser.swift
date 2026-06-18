@@ -119,8 +119,20 @@ final class ScheduleParser {
                     accs[who.id] = acc
                     order.append(who.id)
                 }
+                // Gather this worker's annotation sub-rows (empty name cell, not a strip
+                // header). They carry leave codes ("L" + code) aligned to the SAME day
+                // spine. See SPEC_STRUCTURAL.md S-PARSE-1.
+                var annRows: [[String]] = []
+                var j = i + 1
+                while j < rows.count {
+                    let r = rows[j]
+                    if field(r, 0).trimmed == Self.headerKey { break }
+                    if Self.workerIdentity(field(r, 1)) != nil { break }
+                    annRows.append(r); j += 1
+                }
                 appendShifts(into: &acc.shifts,
-                             shiftRow: row, monthRow: monthRow, dayRow: dayRow, weekdayRow: weekdayRow,
+                             shiftRow: row, annRows: annRows,
+                             monthRow: monthRow, dayRow: dayRow, weekdayRow: weekdayRow,
                              now: now, windowLower: windowLower, windowUpper: windowUpper,
                              lastYear: &acc.lastYear, yearCache: &yearCache)
             }
@@ -147,6 +159,7 @@ final class ScheduleParser {
 
     private func appendShifts(into shifts: inout [Shift],
                               shiftRow: [String],
+                              annRows: [[String]],
                               monthRow: [String],
                               dayRow: [String],
                               weekdayRow: [String],
@@ -181,10 +194,26 @@ final class ScheduleParser {
 
             let startToken = field(shiftRow, index).trimmed
 
+            // Leave code from the annotation sub-rows: an "L" in the day's start column
+            // with a code in the desk column. Only "V" (Vacation) is ACTED on — it
+            // overrides the printed shift and the day becomes OFF. Other codes (x/S/R…)
+            // are RECORDED into leaveCode but change nothing. (S-PARSE-1)
+            var leaveCode: String? = nil
+            for ann in annRows where field(ann, index).trimmed == "L" {
+                let code = field(ann, index + 1).trimmed
+                if !code.isEmpty { leaveCode = code; break }
+            }
+            if leaveCode == "V" {
+                // Vacation: shift removed → genuine day off (carries leaveCode for display).
+                shifts.append(Shift(id: id, date: date, startHour: 0, endHour: 0,
+                                    role: .off, desk: "", leaveCode: "V", isOff: true))
+                continue
+            }
+
             // OFF / blank / non-numeric → day off.
             guard let startHour = Int(startToken) else {
                 shifts.append(Shift(id: id, date: date, startHour: 0, endHour: 0,
-                                    role: .off, desk: "", leaveCode: nil, isOff: true))
+                                    role: .off, desk: "", leaveCode: leaveCode, isOff: true))
                 continue
             }
 
@@ -197,7 +226,7 @@ final class ScheduleParser {
             shifts.append(Shift(id: id, date: date,
                                 startHour: startHour, endHour: endHour,
                                 role: Self.role(forDesk: desk),
-                                desk: desk, leaveCode: nil, isOff: false))
+                                desk: desk, leaveCode: leaveCode, isOff: false))
         }
     }
 

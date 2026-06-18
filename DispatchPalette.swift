@@ -32,11 +32,12 @@ enum DS {
 /// Semantic type ramp — built on Dynamic Type styles so everything scales for
 /// accessibility, replacing scattered `.system(size:)` literals.
 extension Font {
+    // R2-#10d: scaled up so card content reads near the headline size (was a tier smaller).
     static let dsCardTitle = Font.subheadline.weight(.semibold) // card headlines, names
-    static let dsCardMeta  = Font.caption2                       // subtitles, statuses
-    static let dsChip      = Font.caption.weight(.semibold)      // day chips
-    static let dsBadge     = Font.caption2.weight(.heavy)        // pills / counts
-    static let dsLabel     = Font.caption2.weight(.bold)         // small section labels
+    static let dsCardMeta  = Font.caption                       // subtitles, statuses (was caption2)
+    static let dsChip      = Font.subheadline.weight(.semibold) // day chips (was caption)
+    static let dsBadge     = Font.caption.weight(.heavy)        // pills / counts (was caption2)
+    static let dsLabel     = Font.caption.weight(.bold)         // small section labels (was caption2)
 }
 
 enum BrickPalette {
@@ -53,6 +54,7 @@ enum BrickPalette {
     static let availableOff = Color(red: 0.93, green: 0.69, blue: 0.13)  // amber — ACTIVE "want to work"
     static let openOff      = Color(red: 0.42, green: 0.55, blue: 0.62)  // muted slate-blue — PASSIVE "open/available", faded
     static let lockedOff    = Color(red: 0.27, green: 0.30, blue: 0.55)  // slate
+    static let vacation     = Color(red: 0.13, green: 0.59, blue: 0.53)  // teal — a day OFF on vacation (distinct). S-UIUX-NEW
     // Trade-calendar signature colors. You read blue (your schedule); the
     // counterparty reads red (theirs). The mini-calendars tint worked days faintly
     // and trade cells more strongly in these hues, so a swapped shift looks like it

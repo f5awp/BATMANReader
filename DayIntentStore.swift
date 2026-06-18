@@ -53,6 +53,36 @@ final class DayIntentStore {
         Set(workingIntents.filter { $0.value == .dontWantToWork }.keys)
     }
 
+    /// Off days the user refuses to be asked to work (Must-Be-Off) and working days
+    /// they refuse to trade away (Keep). Published on the profile so the matcher can
+    /// hard-exclude them cross-user — without these the engine offers a Must-Be-Off
+    /// day (the June-23 bug). SPEC S-ENG-9/10.
+    var mustBeOffDayIDs: Set<String> { Set(offIntents.filter { $0.value == .mustBeOff }.keys) }
+    var keepDayIDs: Set<String> { Set(workingIntents.filter { $0.value == .mustWork }.keys) }
+    var wantToWorkDayIDs: Set<String> { Set(offIntents.filter { $0.value == .wantToWork }.keys) }
+
+    /// Count of days carrying an active (non-neutral) trade intent — drives the
+    /// Intents-tab badge so the user can see at a glance they've marked intents. (D2a)
+    var activeIntentCount: Int {
+        workingIntents.values.filter { $0 != .neutralOpen }.count
+            + offIntents.values.filter { $0 != .neutralOpen }.count
+    }
+
+    /// The intents that actually DRIVE matching (#3): Want-to-Trade (a working day I'd give away) +
+    /// Want-to-Work (an off day I'd pick up). Protective intents (Keep / Must-Be-Off) aren't factors.
+    var tradeIntentCount: Int {
+        (workingIntentCounts[.dontWantToWork] ?? 0) + (offIntentCounts[.wantToWork] ?? 0)
+    }
+
+    /// Per-intent counts for the color-coded tier bubbles (D2a). Keyed by the enum so
+    /// the UI maps to `.brickColor`/`.label`. PURE (no view).
+    var workingIntentCounts: [WorkingIntentState: Int] {
+        Dictionary(grouping: workingIntents.values, by: { $0 }).mapValues(\.count)
+    }
+    var offIntentCounts: [OffIntentState: Int] {
+        Dictionary(grouping: offIntents.values, by: { $0 }).mapValues(\.count)
+    }
+
     // MARK: Init + one-time migration
 
     private init() {
@@ -192,31 +222,60 @@ final class DayIntentStore {
     func note(forDay dayID: String) -> DayNote? { notes[dayID] }
     func availability(forDay dayID: String) -> Set<ShiftAvailabilityType> { offAvailability[dayID] ?? [] }
 
-    // MARK: Snapshot-cleanse
+    // MARK: Snapshot-cleanse (DIFF-BASED — see SPEC_STRUCTURAL.md S-PARSE-2)
 
-    /// When a new master snapshot flips a date between worked and off, the old
-    /// intent for that date no longer makes sense — clear it. Pass the user's
-    /// current shifts. Returns the day IDs whose intent was wiped (so the UI can
-    /// flag them for re-marking).
+    /// PURE core (no side effects, no singleton) so it is trivially testable.
+    /// Given the schedule diff between the previous and the new master, returns the
+    /// day IDs whose intents must be RESET (`reset` = added ∪ removed ∪ changed) and
+    /// the subset that are GONE (`gone` = removed — their notes drop too).
+    ///
+    /// INVARIANT (S-PARSE-2): an UNCHANGED day is never in `reset`. Days outside the
+    /// diff entirely (e.g. not in this import window) are never touched. This is the
+    /// fix for the "re-upload wiped all my intents" bug — the old code keyed off
+    /// "is this day off / missing" instead of "did this day actually change".
+    static func reconcileTargets(diff: ScheduleDiff) -> (reset: Set<String>, gone: Set<String>) {
+        let gone = Set(diff.removed.map(\.id))
+        let reset = Set(diff.added.map(\.id))
+            .union(gone)
+            .union(diff.changed.map(\.new.id))
+        return (reset, gone)
+    }
+
+    /// Applies `reconcileTargets` to the stored intents. Resets ONLY the machine
+    /// intents (working/off/availability/topology) for days that actually changed;
+    /// drops the note only for days that are GONE; leaves every unchanged day's
+    /// intents AND notes byte-for-byte. Returns the days whose intent was wiped (so
+    /// the UI can flag them for re-marking).
     @discardableResult
-    func reconcile(withShifts shifts: [Shift]) -> Set<String> {
-        var isOffByDay: [String: Bool] = [:]
-        for s in shifts { isOffByDay[s.id] = s.isOff }
+    func reconcile(diff: ScheduleDiff) -> Set<String> {
+        let (reset, gone) = Self.reconcileTargets(diff: diff)
+        // The new schedule facts for changed/added days — used to auto-mark vacation.
+        var newByDay: [String: Shift] = [:]
+        for s in diff.added { newByDay[s.id] = s }
+        for c in diff.changed { newByDay[c.new.id] = c.new }
 
         var wiped = Set<String>()
-        // A working intent on a day that's now OFF (or no longer in the schedule).
-        for day in workingIntents.keys where (isOffByDay[day] ?? true) {
-            workingIntents[day] = nil
-            wiped.insert(day)
-        }
-        // An off intent on a day that's now WORKED.
-        for day in offIntents.keys where isOffByDay[day] == false {
-            offIntents[day] = nil
-            wiped.insert(day)
-        }
-        for day in offAvailability.keys where isOffByDay[day] == false {
+        for day in reset {
+            let hadIntent = workingIntents[day] != nil || offIntents[day] != nil
+                || offAvailability[day] != nil || topologies[day] != nil
+            workingIntents[day]  = nil
+            offIntents[day]      = nil
             offAvailability[day] = nil
-            wiped.insert(day)
+            topologies[day]      = nil
+            manualOffDays.remove(day)                 // back under the openness shortcut
+            if gone.contains(day) { notes[day] = nil } // removed day → drop its note too
+
+            // Vacation auto-intent (S-PARSE-2): the parser already removed the working
+            // shift (day is now OFF + leaveCode "V"). Set a SOFT, user-changeable
+            // Must-Be-Off + "vacation" note — never overwriting a note the user wrote.
+            if newByDay[day]?.leaveCode == "V" {
+                offIntents[day] = .mustBeOff
+                manualOffDays.insert(day)             // shield from the openness bulk shortcut
+                if notes[day] == nil {
+                    notes[day] = DayNote(dayID: day, message: "vacation", reason: .vacation)
+                }
+            }
+            if hadIntent { wiped.insert(day) }
         }
         return wiped
     }

@@ -14,9 +14,18 @@ final class ShiftStore {
 
     static let shared = ShiftStore()
 
-    private(set) var shifts:        [Shift] = []
+    /// Raw parsed shifts (full master). Display reads go through `shifts` (relief-filtered).
+    private var rawShifts: [Shift] = []
     private(set) var lastFetchDate: Date?
     private(set) var lastDiff:      ScheduleDiff?
+
+    /// The shifts every consumer sees. For a Relief Dispatcher, days AFTER their relief
+    /// horizon are BLANK (removed) — they can't see, select, or trade them, and the placeholder
+    /// CSV AMs never surface. Non-relief users see the full list. (REL1)
+    var shifts: [Shift] {
+        guard let rt = SettingsManager.shared.effectiveReliefThrough else { return rawShifts }
+        return rawShifts.filter { !TradeProfile.isPastRelief(day: $0.date, reliefThrough: rt) }
+    }
 
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
@@ -35,9 +44,10 @@ final class ShiftStore {
     @discardableResult
     func save(_ incoming: [Shift]) -> ScheduleDiff {
         let sorted = incoming.sorted { $0.date < $1.date }
-        let diff   = ScheduleDiff.compute(old: self.shifts, new: sorted)
+        // Diff on the RAW list so EventKit sees true changes; calendar-add relief-filters itself.
+        let diff   = ScheduleDiff.compute(old: rawShifts, new: sorted)
 
-        self.shifts        = sorted
+        self.rawShifts     = sorted
         self.lastFetchDate = Date()
         self.lastDiff      = diff
 
@@ -57,7 +67,7 @@ final class ShiftStore {
     func clear() {
         EventKitManager.shared.removeAllEvents()
         AvailabilityManager.shared.clearAll()
-        self.shifts        = []
+        self.rawShifts     = []
         self.lastFetchDate = nil
         self.lastDiff      = nil
         UserDefaults.standard.removeObject(forKey: Keys.shifts)
@@ -108,7 +118,7 @@ final class ShiftStore {
     private func load() {
         if let data    = UserDefaults.standard.data(forKey: Keys.shifts),
            let decoded = try? decoder.decode([Shift].self, from: data) {
-            self.shifts = decoded
+            self.rawShifts = decoded
         }
         self.lastFetchDate = UserDefaults.standard.object(forKey: Keys.fetchDate) as? Date
     }

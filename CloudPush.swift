@@ -19,19 +19,39 @@ enum CloudPush {
         UIApplication.shared.registerForRemoteNotifications()
 
         let myID = SettingsManager.shared.username
+        // Ordinary incoming requests (perfectMatch == 0). A perfect match gets the stronger
+        // alert below instead, so exactly one push fires per request.
         await ensure(id: "incoming-requests-\(myID)",
                      recordType: "TradeRequest",
-                     predicate: NSPredicate(format: "toID == %@", myID),
+                     predicate: NSPredicate(format: "toID == %@ AND perfectMatch == 0", myID),
                      alert: "New trade request")
+        // A request that matches the recipient's own intents → a stronger "Perfect Match" alert (U6).
+        await ensure(id: "perfect-match-\(myID)",
+                     recordType: "TradeRequest",
+                     predicate: NSPredicate(format: "toID == %@ AND perfectMatch == 1", myID),
+                     alert: "🔥 Perfect Match — someone wants to trade a shift you're after")
         await ensure(id: "new-broadcasts",
                      recordType: "BroadcastPost",
                      predicate: NSPredicate(value: true),
                      alert: "New post in the trade channel")
+        // Blasted qual-swap bridges (in `candidateIDs`) are neither toID nor fromID, so
+        // they need their own subscription to be pinged when a blast lands (Q3).
+        await ensure(id: "qualswap-bridge-\(myID)",
+                     recordType: "TradeRequest",
+                     predicate: NSPredicate(format: "candidateIDs CONTAINS %@", myID),
+                     alert: "You can help fill a qual swap")
+        // Taker side: my qual-swap request was UPDATED (a bridge accepted / it finalized). (Q3/Q6)
+        await ensure(id: "qualswap-update-\(myID)",
+                     recordType: "TradeRequest",
+                     predicate: NSPredicate(format: "toID == %@ AND hasQualSwap == 1", myID),
+                     alert: "A qual-swap response came in",
+                     options: [.firesOnRecordUpdate])
     }
 
-    private static func ensure(id: String, recordType: String, predicate: NSPredicate, alert: String) async {
+    private static func ensure(id: String, recordType: String, predicate: NSPredicate, alert: String,
+                               options: CKQuerySubscription.Options = [.firesOnRecordCreation]) async {
         let sub = CKQuerySubscription(recordType: recordType, predicate: predicate,
-                                      subscriptionID: id, options: [.firesOnRecordCreation])
+                                      subscriptionID: id, options: options)
         let info = CKSubscription.NotificationInfo()
         info.alertBody = alert
         info.soundName = "default"

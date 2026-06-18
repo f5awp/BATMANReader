@@ -112,6 +112,31 @@ final class SettingsManager {
         didSet { defaults.set(Array(blacklistedRegions), forKey: Keys.blRegions) }
     }
 
+    // ── Qual-swap preference values (Q4) ─────────────────────────────────
+    /// Qual code → preference value. HIGHER = more preferred. 0 = blacklisted.
+    /// A qual absent from the map = no preference = fully open (highest value).
+    var qualValues: [String: Int] {
+        didSet { defaults.set(qualValues, forKey: Keys.qualValues) }
+    }
+    /// Specific desk numbers you'll never qual-swap into (uppercased tokens, e.g. ["64","65"]).
+    var qualSwapBlacklistDesks: Set<String> {
+        didSet { defaults.set(Array(qualSwapBlacklistDesks), forKey: Keys.qsBlDesks) }
+    }
+
+    // ── Relief dispatcher (schedule known only ~45 days out) ─────────────
+    /// Relief dispatchers only receive their schedule a limited window out; the master CSV
+    /// pads the rest of the year with bogus 0500 AMs. When ON *and* a date is set, all of THIS
+    /// user's shifts AFTER `reliefScheduleThrough` are hidden from calendar + trading (filtered
+    /// at read-time, so CSV re-uploads can't resurrect them).
+    var isReliefDispatcher: Bool {
+        didSet { defaults.set(isReliefDispatcher, forKey: Keys.isRelief) }
+    }
+    var reliefScheduleThrough: Date? {
+        didSet { defaults.set(reliefScheduleThrough, forKey: Keys.reliefThrough) }
+    }
+    /// The effective relief horizon — nil unless toggled ON *and* a date is set.
+    var effectiveReliefThrough: Date? { (isReliefDispatcher ? reliefScheduleThrough : nil) }
+
     /// Overall openness to trades (TradeOpenness rawValue). Default: bookends.
     var tradeOpenness: String {
         didSet { defaults.set(tradeOpenness, forKey: Keys.tradeOpenness) }
@@ -132,15 +157,49 @@ final class SettingsManager {
     }
     /// When on, the user takes any qualifying pickup regardless of soft prefs.
     var isMercenaryMode: Bool {
-        didSet { defaults.set(isMercenaryMode, forKey: Keys.isMercenaryMode) }
+        didSet {
+            defaults.set(isMercenaryMode, forKey: Keys.isMercenaryMode)
+            // Mercenary = "take anything I'm legally available for". The impossible
+            // "Not accepting + mercenary" state can't exist — force openness to All. S-ENG-6.
+            if isMercenaryMode, tradeOpenness != TradeOpenness.all.rawValue {
+                tradeOpenness = TradeOpenness.all.rawValue
+            }
+        }
     }
     /// Public 140-char status line shown under the user's name in trade views.
     var statusBroadcast: String {
-        didSet { defaults.set(String(statusBroadcast.prefix(140)), forKey: Keys.statusBroadcast) }
+        didSet {
+            defaults.set(String(statusBroadcast.prefix(140)), forKey: Keys.statusBroadcast)
+            statusUpdatedAt = Date()   // didSet never fires during init, so loads don't bump this (A3 LWW)
+        }
     }
-    /// Private 2000-char scratch notes — never published.
+    /// When the status last changed locally — the LWW clock for cross-device status sync (A3).
+    var statusUpdatedAt: Date? {
+        didSet { defaults.set(statusUpdatedAt, forKey: Keys.statusUpdatedAt) }
+    }
+    /// Dispatch trades distribution list — the To: for the Outlook trade email (G1).
+    var tradeEmailDL: String {
+        didSet { defaults.set(tradeEmailDL, forKey: Keys.tradeEmailDL) }
+    }
+    /// The app build whose "What's New" sheet the user has already seen (Z2).
+    var lastSeenChangelogBuild: String {
+        didSet { defaults.set(lastSeenChangelogBuild, forKey: Keys.lastSeenChangelog) }
+    }
+    /// Private 2000-char scratch notes — synced privately across YOUR devices (A3).
     var privateNotes: String {
         didSet { defaults.set(String(privateNotes.prefix(2000)), forKey: Keys.privateNotes) }
+    }
+    /// Last local edit time of `privateNotes` — drives last-write-wins sync (A3).
+    var privateNotesUpdatedAt: Date {
+        didSet { defaults.set(privateNotesUpdatedAt, forKey: Keys.privateNotesAt) }
+    }
+    /// User edited the notes locally → clamp + stamp now (caller then publishes).
+    func editPrivateNotes(_ text: String) {
+        privateNotes = String(text.prefix(2000)); privateNotesUpdatedAt = Date()
+    }
+    /// A newer remote value arrived → adopt it without re-stamping as a local edit.
+    func applyRemotePrivateNotes(_ text: String, at: Date) {
+        privateNotes = text; privateNotesUpdatedAt = at
     }
 
     /// When on, trade willingness syncs via the CloudKit public DB (real
@@ -176,6 +235,10 @@ final class SettingsManager {
         blacklistedDesks         = Set((defaults.array(forKey: Keys.blDesks) as? [String]) ?? [])
         blacklistedShiftTypes    = Set((defaults.array(forKey: Keys.blShiftTypes) as? [String]) ?? [])
         blacklistedRegions       = Set((defaults.array(forKey: Keys.blRegions) as? [String]) ?? [])
+        qualValues               = (defaults.dictionary(forKey: Keys.qualValues) as? [String: Int]) ?? [:]
+        qualSwapBlacklistDesks   = Set((defaults.array(forKey: Keys.qsBlDesks) as? [String]) ?? [])
+        isReliefDispatcher       = defaults.bool(forKey: Keys.isRelief)
+        reliefScheduleThrough    = defaults.object(forKey: Keys.reliefThrough) as? Date
         tradeOpenness            = defaults.string(forKey: Keys.tradeOpenness) ?? "bookends"
         opennessOverrides        = (defaults.data(forKey: Keys.opennessOverrides))
             .flatMap { try? JSONDecoder().decode([OpennessOverride].self, from: $0) } ?? []
@@ -184,7 +247,11 @@ final class SettingsManager {
         minWeeklyHours           = defaults.object(forKey: Keys.minWeeklyHours) as? Int
         isMercenaryMode          = defaults.bool(forKey: Keys.isMercenaryMode)
         statusBroadcast          = defaults.string(forKey: Keys.statusBroadcast) ?? ""
+        statusUpdatedAt          = defaults.object(forKey: Keys.statusUpdatedAt) as? Date
+        tradeEmailDL             = defaults.string(forKey: Keys.tradeEmailDL) ?? "DL_dispatch_trades@aa.com"
+        lastSeenChangelogBuild   = defaults.string(forKey: Keys.lastSeenChangelog) ?? ""
         privateNotes             = defaults.string(forKey: Keys.privateNotes) ?? ""
+        privateNotesUpdatedAt    = (defaults.object(forKey: Keys.privateNotesAt) as? Date) ?? .distantPast
     }
 
     // MARK: - Keys
@@ -201,6 +268,10 @@ final class SettingsManager {
         static let blDesks      = "batman.blacklistedDesks"
         static let blShiftTypes = "batman.blacklistedShiftTypes"
         static let blRegions    = "batman.blacklistedRegions"
+        static let qualValues   = "batman.qualValues"
+        static let qsBlDesks    = "batman.qualSwapBlacklistDesks"
+        static let isRelief     = "batman.isReliefDispatcher"
+        static let reliefThrough = "batman.reliefScheduleThrough"
         static let tradeOpenness = "batman.tradeOpenness"
         static let opennessOverrides = "batman.opennessOverrides"
         static let useCloudKit   = "batman.useCloudKit"
@@ -208,7 +279,11 @@ final class SettingsManager {
         static let minWeeklyHours = "batman.minWeeklyHours"
         static let isMercenaryMode = "batman.isMercenaryMode"
         static let statusBroadcast = "batman.statusBroadcast"
+        static let statusUpdatedAt = "batman.statusUpdatedAt"
+        static let tradeEmailDL    = "batman.tradeEmailDL"
+        static let lastSeenChangelog = "batman.lastSeenChangelogBuild"
         static let privateNotes  = "batman.privateNotes"
+        static let privateNotesAt = "batman.privateNotesAt"
         static let appleUserID   = "batman.appleUserID"
         static let appearance    = "batman.appearance"
         static let firstName     = "batman.firstName"

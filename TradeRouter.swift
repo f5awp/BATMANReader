@@ -58,13 +58,39 @@ struct TradePackage: Sendable, Hashable, Identifiable {
     let route: NWayRoute?               // present for circular (drives Execute)
     var urgency: Int = 0                // max reason-urgency over the days covered
     var isOptimal: Bool = false         // true = provably fewest people; false = fast heuristic
-    // Total counterparties: the whole loop for circular (assignments only capture
-    // people who trade directly with you), else the unique assignees.
+    // U4 sort signals. fireCount = mutual-intent (🔥) matches in the package; bookendTotal =
+    // total bookends delivered across ALL sides (more = more optimal, even when open-to-all).
+    var fireCount: Int = 0
+    var bookendTotal: Int = 0
+    // Q1: a qual-swap leg this package depends on (a give-day blocked only by qualification, with
+    // a bridge available). nil = no qual swap needed. Drives the card indicator + send-time blast.
+    var qualSwap: QualSwapLegData? = nil
+
+    // EXPLICIT init — freezes the construction signature so adding the fields above doesn't
+    // churn the memberwise-init symbol (stale-incremental-link fix). New fields are defaulted.
+    init(id: String, methodology: TradeMethodology, assignments: [PackageAssignment],
+         route: NWayRoute?, urgency: Int = 0, isOptimal: Bool = false,
+         fireCount: Int = 0, bookendTotal: Int = 0, qualSwap: QualSwapLegData? = nil) {
+        self.id = id; self.methodology = methodology; self.assignments = assignments
+        self.route = route; self.urgency = urgency; self.isOptimal = isOptimal
+        self.fireCount = fireCount; self.bookendTotal = bookendTotal; self.qualSwap = qualSwap
+    }
+    // TOTAL distinct people INCLUDING you (SPEC S-ENG-5): You↔Cary ⇒ 2. The route
+    // lists each participant once (incl. self); assignments list only the others, so + you.
     var peopleCount: Int {
-        if let route { return max(0, route.participants.count - 1) }
-        return Set(assignments.map(\.workerID)).count
+        if let route { return Set(route.participants).count }
+        return Set(assignments.map(\.workerID)).count + 1
     }
     var allDayIDs: [String] { assignments.flatMap(\.dayIDs) }
+    /// A package is CIRCULAR only with **≥3 participants** (#4) — a 2-cycle is just a 2-way swap.
+    var isCircular: Bool { methodology == .circular && peopleCount >= 3 }
+    /// Earliest ISO day anything moves in this package (give/take + route legs) — the global sort
+    /// tiebreak (#4b: closer trades first). ISO "yyyy-MM-dd" strings sort chronologically.
+    var earliestDayID: String? {
+        var days = assignments.flatMap { $0.giveDayIDs + $0.takeDayIDs }
+        if let legs = route?.legs { days += legs.map(\.dayID) }
+        return days.min()
+    }
 }
 
 // MARK: - Router
@@ -135,32 +161,48 @@ enum TradeRouter {
                                     shiftType: type, region: region, isBookend: leg.bookend)
         }
 
-        // Per-peer reciprocal capacity via two-way exploration, then gated by BOTH
-        // parties' real rules: they only take my days they'd accept; I only take
-        // theirs I'd accept.
+        // R-A: the candidate UNIVERSE is the whole roster, not just opted-in profiles. Load every
+        // worker's schedule in the window ONCE, derive the universe (unknown-profile peers included),
+        // and reuse the loaded schedules in twoWayExplore (no per-peer re-fetch).
+        let allEntries = await RosterStore.shared.entries(from: start, to: end)
+        var maps: [String: [String: RosterEntry]] = [:]
+        var rosterMeta: [String: (name: String, quals: [String])] = [:]
+        for e in allEntries {
+            maps[e.workerID, default: [:]][e.day] = e
+            if rosterMeta[e.workerID] == nil { rosterMeta[e.workerID] = (e.workerName, e.quals) }
+        }
+        let profilesByID = TradeProfileStore.shared.others
+        let universe = MatchUniverse.candidates(
+            roster: rosterMeta.map { (id: $0.key, name: $0.value.name, quals: $0.value.quals) },
+            profiles: profilesByID, selfID: selfID)
+        func profileFor(_ id: String, _ name: String) -> TradeProfile {
+            profilesByID[id] ?? TradeProfile(workerID: id, displayName: name, openness: TradeOpenness.all.rawValue,
+                blacklistedWeekdays: [], blacklistedDesks: [], blacklistedShiftTypes: [], blacklistedRegions: [],
+                seekingDayIDs: [], updatedAt: Date())
+        }
+        let mineEntries = Array((maps[selfID] ?? [:]).values)
+
+        // Per-peer reciprocal capacity via two-way exploration, gated by BOTH parties' real rules.
         struct PeerSwap { let id: String; let name: String; let canTake: [String]; let givesBack: [String] }
         var peerSwaps: [PeerSwap] = []
-        // Deterministic order (by employee ID) so results don't flicker between refreshes.
-        for (peerID, profile) in TradeProfileStore.shared.others.sorted(by: { $0.key < $1.key }) {
+        var plansByPeer: [String: TwoWayPlan] = [:]   // retained for U4 fire/bookend scoring
+        for cand in universe.sorted(by: { $0.workerID < $1.workerID }) {
+            let profile = profileFor(cand.workerID, cand.name)
             let plan = await TradeMatcher.twoWayExplore(
-                withWorker: peerID, name: profile.displayName,
+                withWorker: cand.workerID, name: cand.name,
                 windowStart: start, windowEnd: end,
                 mySeeking: mySeeking, theirSeeking: profile.seekingDayIDs,
-                myProfile: myProfile, theirProfile: profile, myID: selfID)
+                myProfile: myProfile, theirProfile: profile, myID: selfID,
+                preloadedMine: mineEntries, preloadedPeer: Array((maps[cand.workerID] ?? [:]).values))
+            plansByPeer[cand.workerID] = plan
             let canTake   = plan.iGive.filter { giveDayIDs.contains($0.dayID) && wouldTake(profile, $0) }.map(\.dayID)
             let givesBack = plan.iTake.filter { wouldTake(myProfile, $0) }.map(\.dayID)
             if !canTake.isEmpty, !givesBack.isEmpty {
-                peerSwaps.append(PeerSwap(id: peerID, name: profile.displayName, canTake: canTake, givesBack: givesBack))
+                peerSwaps.append(PeerSwap(id: cand.workerID, name: cand.name, canTake: canTake, givesBack: givesBack))
             }
         }
 
         var result: [TradePackage] = []
-
-        // Schedules for per-person SET contiguity (the bookend no-split rule across
-        // ALL of someone's assigned days, not per leg).
-        let allEntries = await RosterStore.shared.entries(from: start, to: end)
-        var maps: [String: [String: RosterEntry]] = [:]
-        for e in allEntries { maps[e.workerID, default: [:]][e.day] = e }
         func anchoredSet(_ ids: [String], in map: [String: RosterEntry]) -> Bool {
             let plan = Set(ids)
             return ids.allSatisfy { d in
@@ -246,8 +288,9 @@ enum TradeRouter {
             }
         }
 
-        // 3) Circular loops — add variety until we reach the target (or run out).
-        if result.count < targetCount {
+        // 3) Circular loops — ALWAYS surfaced (not only when solos are scarce) so the N+1 group
+        //    appears alongside the N=2 solos (U3 "N=2 then N+1"). `rankPackages` orders N=2 first.
+        do {
             let loops = await nWayRoutes(seedShifts: giveShifts, excluding: selfID)
             for loop in loops.prefix(targetCount * 2) {
                 var gv: [String: [String]] = [:]   // peer → my days they cover
@@ -267,85 +310,118 @@ enum TradeRouter {
             }
         }
 
-        // Dedupe + rank: fewest people, then urgency, greedy ahead of circular.
-        var seen = Set<String>()
-        return result
-            .filter { seen.insert($0.id).inserted }
-            .sorted {
-                if $0.peopleCount != $1.peopleCount { return $0.peopleCount < $1.peopleCount }
-                if $0.urgency != $1.urgency { return $0.urgency > $1.urgency }
-                return $0.methodology == .greedy && $1.methodology == .circular
+        // Q1: give-days blocked PURELY by qualification (no off peer that day is qualified for the
+        // desk) → assemble 3-party qual-swap packages (bridge C takes my desk; off-taker B takes C's
+        // freed desk). The bridge is NOT counted in N. Reuses the loaded `maps` (no extra fetches).
+        func openProfile(_ id: String, _ name: String) -> TradeProfile {
+            TradeProfileStore.shared.profile(forWorker: id)
+                ?? TradeProfile(workerID: id, displayName: name, openness: TradeOpenness.all.rawValue,
+                                blacklistedWeekdays: [], blacklistedDesks: [], blacklistedShiftTypes: [],
+                                blacklistedRegions: [], seekingDayIDs: [], updatedAt: Date())
+        }
+        for giveDay in giveDayIDs.sorted() {
+            guard let myEntry = (maps[selfID] ?? [:])[giveDay],
+                  let dayDate = TradeMatcher.dayDate(fromISO: giveDay) else { continue }
+            var workingPairs: [(QualSwapShift, TradeProfile)] = []
+            var offEntries: [RosterEntry] = []
+            for (wid, m) in maps {
+                guard wid != selfID, let e = m[giveDay] else { continue }
+                if e.isOff { offEntries.append(e) }
+                else {
+                    workingPairs.append((QualSwapShift(workerID: wid, name: e.workerName, desk: e.desk,
+                                                       startHour: e.startHour, quals: e.quals),
+                                         openProfile(wid, e.workerName)))
+                }
             }
+            guard DeskRules.isQualBlocked(forDesk: myEntry.desk, candidateTakerQuals: offEntries.map(\.quals)) else { continue }
+            let offTakers = offEntries.map { (id: $0.workerID, name: $0.workerName, quals: $0.quals) }
+            let sols = QualSwap.solutions(giveDesk: myEntry.desk, giveStartHour: myEntry.startHour,
+                                          giverID: selfID, workers: workingPairs, offTakers: offTakers)
+            guard !sols.isEmpty else { continue }
+            let giveQual = DeskRules.requiredQual(forDesk: myEntry.desk) ?? "D"
+            // One package per off-taker B; blast candidates = bridges whose freed desk B will take.
+            for (takerID, group) in Dictionary(grouping: sols, by: { $0.takerID }).sorted(by: { $0.key < $1.key }) {
+                guard let bMap = maps[takerID], let bEntry = bMap[giveDay] else { continue }
+                let bProfile = openProfile(takerID, bEntry.workerName)
+                let willing = group.filter { sol in
+                    TradeEligibility.canCover(coverDayID: giveDay, coverDay: dayDate, desk: sol.bridgeDesk,
+                                              startHour: myEntry.startHour, coverMap: bMap, coverQuals: bEntry.quals,
+                                              coverProfile: bProfile, options: .full).eligible
+                }
+                guard !willing.isEmpty else { continue }
+                let candidates = willing.map {
+                    QualSwapCandidate(workerID: $0.bridgeID, name: $0.bridgeName, desk: $0.bridgeDesk, qual: $0.bridgeQual)
+                }
+                let leg = QualSwapLegData(giveShiftDayID: giveDay, giveDesk: myEntry.desk, giveQual: giveQual,
+                                          takerID: takerID, takerName: bEntry.workerName, candidates: candidates)
+                let assignment = PackageAssignment(workerID: takerID, name: bEntry.workerName,
+                                                   giveDayIDs: [giveDay], takeDayIDs: [])
+                result.append(TradePackage(id: "qualswap-\(giveDay)-\(takerID)", methodology: .greedy,
+                                           assignments: [assignment], route: nil,
+                                           urgency: urgency(of: [giveDay]), qualSwap: leg))
+            }
+        }
+
+        // U4 scoring: total bookends + 🔥 (mutual-intent) across BOTH sides of each package.
+        // Greedy packages read the retained per-peer plans; circular approximate from route
+        // metadata (exact per-leg flag is threaded in a later UI step).
+        let scored = result.map { pkg -> TradePackage in
+            var p = pkg
+            if let route = pkg.route {
+                p.fireCount    = route.tier == .matchingIntents ? route.legs.count : 0
+                p.bookendTotal = route.usesBookends ? route.legs.count : 0
+            } else {
+                var fire = 0, book = 0
+                for a in pkg.assignments {
+                    let plan = plansByPeer[a.workerID]
+                    let giveByDay = Dictionary((plan?.iGive ?? []).map { ($0.dayID, $0) }, uniquingKeysWith: { x, _ in x })
+                    let takeByDay = Dictionary((plan?.iTake ?? []).map { ($0.dayID, $0) }, uniquingKeysWith: { x, _ in x })
+                    for d in a.giveDayIDs { if let l = giveByDay[d] { if l.bookend { book += 1 }; if l.wanted { fire += 1 } } }
+                    for d in a.takeDayIDs { if let l = takeByDay[d] { if l.bookend { book += 1 }; if l.wanted { fire += 1 } } }
+                }
+                p.fireCount = fire; p.bookendTotal = book
+            }
+            return p
+        }
+        return Self.rankPackages(scored)
     }
 
-    // MARK: Tiered two-way solutions (the "Trade by Intents" feed)
+    /// U4 priority tier (lower = higher priority): 0 = 🔥+bookends, 1 = 🔥-only, 2 = bookends-only.
+    static func packageTier(_ p: TradePackage) -> Int {
+        if p.fireCount > 0 { return p.bookendTotal > 0 ? 0 : 1 }
+        return 2
+    }
 
-    /// Segments feasible two-way swaps with each peer into the four SolutionTiers.
-    /// Peers come from published profiles (`TradeProfileStore.others`). Each swap is
-    /// returned as a 2-participant `NWayRoute` so the feed renders uniformly; the
-    /// UI can reopen the rich `TwoWaySheet` from `participants[1]`.
-    static func tieredSolutions(isWhatIfModeActive: Bool = false)
-        async -> [(tier: SolutionTier, routes: [NWayRoute])] {
-
-        let constraints = MatchConstraints.make(isWhatIfModeActive: isWhatIfModeActive)
-        let myID = SettingsManager.shared.username
-        guard !myID.isEmpty else { return SolutionTier.allCases.map { ($0, []) } }
-
-        let myProfile = TradeProfileStore.shared.myProfile()
-        let mySeeking = DayIntentStore.shared.seekingDayIDs
-        let (start, end) = horizon
-
-        var byTier: [SolutionTier: [NWayRoute]] = [:]
-        for t in SolutionTier.allCases { byTier[t] = [] }
-
-        for (peerID, profile) in TradeProfileStore.shared.others.sorted(by: { $0.key < $1.key }) {
-            let plan = await TradeMatcher.twoWayExplore(
-                withWorker: peerID, name: profile.displayName,
-                windowStart: start, windowEnd: end,
-                mySeeking: mySeeking, theirSeeking: profile.seekingDayIDs,
-                myProfile: myProfile, theirProfile: profile, myID: myID)
-            guard plan.isViable else { continue }
-
-            // Protect high-value dates: if the only days I'd give are high-demand /
-            // milestone, don't surface the swap unless What If? is on.
-            if constraints.enforceTopology, !plan.iGive.isEmpty,
-               plan.iGive.allSatisfy({ DayIntentStore.shared.topology(forDay: $0.dayID) != .standard }) {
-                continue
-            }
-
-            let iWant = plan.iGive.contains { $0.wanted }      // I actively seek a give-day
-            let theyWant = plan.iTake.contains { $0.wanted }   // they actively seek a give-day
-            let bookended = plan.iGive.allSatisfy(\.bookend) && plan.iTake.allSatisfy(\.bookend)
-
-            let tier: SolutionTier
-            if iWant && theyWant {
-                tier = (constraints.enforceChaining && bookended) ? .intentsAndBookends : .matchingIntents
-            } else if iWant || theyWant {
-                tier = .neutralOptimization
-            } else if profile.opennessLevel != .none {
-                tier = constraints.enforceChaining ? .neutralOptimization : .globalPool
-            } else {
-                continue
-            }
-
-            byTier[tier, default: []].append(route(from: plan, myID: myID))
+    /// PURE, testable (A5 + U4): dedupe by id; drop bookends-only packages below the **top two
+    /// bands** (keep `max` and `max−1`, hide the clutter); then sort **fewest people first**
+    /// (the N groups), then by tier (🔥+bookends → 🔥 → bookends-only), then 🔥 count, then total
+    /// bookends (more is more optimal even when open-to-all), then urgency, then greedy ahead of circular.
+    static func rankPackages(_ packages: [TradePackage]) -> [TradePackage] {
+        var seen = Set<String>()
+        let deduped = packages.filter { seen.insert($0.id).inserted }
+        // Bookends-only tier (no 🔥) is capped to the top two bands. 🔥 packages AND qual-swap
+        // packages are EXEMPT — a qual-swap solution must never be hidden by a low bookend count.
+        let capped = deduped.filter { $0.fireCount == 0 && $0.qualSwap == nil }
+        let exempt = deduped.filter { $0.fireCount > 0 || $0.qualSwap != nil }
+        let keptCapped: [TradePackage]
+        if let maxBO = capped.map(\.bookendTotal).max() {
+            keptCapped = capped.filter { $0.bookendTotal >= maxBO - 1 }
+        } else {
+            keptCapped = capped
         }
-
-        // Fold in circular routes seeded from my seeking days.
-        let myShifts = await selfSeekingShifts(myID: myID, start: start, end: end)
-        let loops = await nWayRoutes(seedShifts: myShifts, excluding: myID, constraints: constraints)
-        for loop in loops {
-            let everyGiverSeeks = loop.legs.allSatisfy { leg in
-                if leg.fromID == myID { return mySeeking.contains(leg.dayID) }
-                return TradeProfileStore.shared.profile(forWorker: leg.fromID)?
-                    .seekingDayIDs.contains(leg.dayID) ?? false
-            }
-            byTier[everyGiverSeeks ? .matchingIntents : .neutralOptimization, default: []].append(loop)
+        return (exempt + keptCapped).sorted {
+            if $0.peopleCount != $1.peopleCount { return $0.peopleCount < $1.peopleCount }   // N groups
+            let t0 = packageTier($0), t1 = packageTier($1)
+            if t0 != t1 { return t0 < t1 }
+            if $0.fireCount != $1.fireCount { return $0.fireCount > $1.fireCount }
+            if $0.bookendTotal != $1.bookendTotal { return $0.bookendTotal > $1.bookendTotal }
+            // #4b: all else equal, the CLOSER (earlier) trade date sorts first.
+            let e0 = $0.earliestDayID ?? "9999-12-31", e1 = $1.earliestDayID ?? "9999-12-31"
+            if e0 != e1 { return e0 < e1 }
+            if $0.urgency != $1.urgency { return $0.urgency > $1.urgency }
+            if ($0.methodology == .greedy) != ($1.methodology == .greedy) { return $0.methodology == .greedy }
+            return $0.id < $1.id
         }
-
-        return SolutionTier.allCases
-            .sorted { $0.order < $1.order }
-            .map { ($0, byTier[$0] ?? []) }
     }
 
     // MARK: N-way circular routing
@@ -373,29 +449,34 @@ enum TradeRouter {
         var routes: [NWayRoute] = []
         var seen = Set<String>()
 
-        // Whether `coverer` can legally cover `giver`'s shift on `dayID` (hard gates).
+        // Whether `coverer` can legally cover `giver`'s shift on `dayID`. Delegates to the
+        // unified predicate (U1): hard physical gates + weekly cap + the coverer's own rules
+        // (`.full`). Bookend (no-split) stays a per-person preference owned by `wouldPickUp`.
         func canCover(covererID: String, covererMap: DayMap, giver entry: RosterEntry) -> Bool {
-            guard let cover = covererMap[entry.day], cover.isOff else { return false }
-            guard let day = TradeMatcher.dayDate(fromISO: entry.day) else { return false }
-            guard DeskRules.qualified(quals: cover.quals, forDesk: entry.desk) else { return false }
-            guard TradeMatcher.isRested(map: covererMap, day: day, startHour: entry.startHour) else { return false }
-            // Hard: weekly-hour cap (always enforced, even in What If?).
-            if let cap = weeklyCap(forWorker: covererID),
-               weeklyWorkedHours(map: covererMap, around: day) + 9 > cap { return false }
-            // Bookend (no-split) is NOT forced globally here — it's a per-person
-            // preference owned entirely by `wouldPickUp` below: a `.bookends` peer
-            // rejects non-anchored pickups, an `.all` peer accepts them. (This is
-            // why "open to everything" truly ignores chaining.)
-            // Pill-based availability gate (published per-day pills, else openness),
-            // via published profile (others) / my profile (self).
-            let weekday = Calendar.current.component(.weekday, from: day)
-            let region  = DeskRules.region(forDesk: entry.desk).rawValue
-            let type    = ShiftAvailabilityType.infer(fromStartHour: entry.startHour).rawValue
-            let bookend = TradeMatcher.isAnchored(day: day, map: covererMap, plan: [entry.day])
+            guard let cover = covererMap[entry.day],
+                  let day = TradeMatcher.dayDate(fromISO: entry.day) else { return false }
             let profile = covererID == selfID ? myProfile : TradeProfileStore.shared.profile(forWorker: covererID)
             guard let profile else { return false }
-            return profile.wouldPickUp(onDay: entry.day, weekday: weekday, desk: entry.desk,
-                                       shiftType: type, region: region, isBookend: bookend)
+            return TradeEligibility.canCover(
+                coverDayID: entry.day, coverDay: day, desk: entry.desk, startHour: entry.startHour,
+                coverMap: covererMap, coverQuals: cover.quals, coverProfile: profile, options: .full).eligible
+        }
+
+        // A giver never gives away a day they marked KEEP (mustWork) — hard
+        // disqualifier on the give side (SPEC S-ENG-9/10).
+        func keepDays(_ workerID: String) -> Set<String> {
+            workerID == selfID ? DayIntentStore.shared.keepDayIDs
+                               : (TradeProfileStore.shared.profile(forWorker: workerID)?.keepDayIDs ?? [])
+        }
+
+        // A relief dispatcher's shift past their horizon isn't real → never give it.
+        func reliefThrough(_ workerID: String) -> Date? {
+            workerID == selfID ? SettingsManager.shared.effectiveReliefThrough
+                               : TradeProfileStore.shared.profile(forWorker: workerID)?.reliefThrough
+        }
+        func giveBlocked(_ workerID: String, _ entry: RosterEntry) -> Bool {
+            guard let day = TradeMatcher.dayDate(fromISO: entry.day) else { return true }
+            return TradeProfile.isPastRelief(day: day, reliefThrough: reliefThrough(workerID))
         }
 
         // DFS: path of leg tuples. Each step, the current node gives one of THEIR
@@ -405,10 +486,14 @@ enum TradeRouter {
             if routes.count > 60 { return }                 // global safety cap
             let depth = visited.count
 
-            // Try to close the loop back to self (needs ≥3 participants total).
-            if depth >= 2 {
+            // Try to close the loop back to self — needs ≥3 participants total (#4). `depth` is
+            // visited.count (self + others), so `>= 3` = self + ≥2 others; a 2-cycle is a 2-way swap,
+            // handled by twoWayExplore/packages, never emitted here as a fake "circular."
+            if depth >= 3 {
                 for entry in currentMap.values where !entry.isOff {
                     guard entry.day >= TradeMatcher.isoDay(start) else { continue }
+                    guard !keepDays(current).contains(entry.day) else { continue }   // never give a Keep day
+                    guard !giveBlocked(current, entry) else { continue }             // relief: not a real shift
                     // current gives `entry`; self must cover it.
                     if canCover(covererID: selfID, covererMap: selfMap, giver: entry) {
                         let closing = NWayLeg(fromID: current, toID: selfID, dayID: entry.day,
@@ -429,6 +514,8 @@ enum TradeRouter {
 
             // Otherwise, current gives one of their working days to a fresh node.
             for entry in currentMap.values where !entry.isOff {
+                if keepDays(current).contains(entry.day) { continue }   // never give a Keep day
+                if giveBlocked(current, entry) { continue }             // relief: not a real shift
                 // Prefer days the current giver actually wants to give (intent).
                 let wantsGive: Bool = current == selfID
                     ? DayIntentStore.shared.seekingDayIDs.contains(entry.day)
@@ -451,6 +538,7 @@ enum TradeRouter {
         for s in giveDays {
             if constraints.enforceTopology, DayIntentStore.shared.topology(forDay: s.id) != .standard { continue }
             guard let myEntry = selfMap[s.id] else { continue }
+            if giveBlocked(selfID, myEntry) { continue }   // relief: my own post-horizon shift isn't real
             for (nextID, nextMap) in maps.sorted(by: { $0.key < $1.key }) where nextID != selfID {
                 guard canCover(covererID: nextID, covererMap: nextMap, giver: myEntry) else { continue }
                 let leg = NWayLeg(fromID: selfID, toID: nextID, dayID: myEntry.day,
@@ -501,22 +589,4 @@ enum TradeRouter {
         }
     }
 
-    /// Represent a viable two-way plan as a 2-participant route for the feed.
-    private static func route(from plan: TwoWayPlan, myID: String) -> NWayRoute {
-        let give = plan.iGive.first { $0.wanted } ?? plan.iGive.first
-        let take = plan.iTake.first { $0.wanted } ?? plan.iTake.first
-        var legs: [NWayLeg] = []
-        if let g = give {
-            legs.append(NWayLeg(fromID: myID, toID: plan.workerID, dayID: g.dayID,
-                                desk: g.desk, startHour: g.startHour))
-        }
-        if let t = take {
-            legs.append(NWayLeg(fromID: plan.workerID, toID: myID, dayID: t.dayID,
-                                desk: t.desk, startHour: t.startHour))
-        }
-        let mutual = plan.mutualWanted
-        return NWayRoute(participants: [myID, plan.workerID], legs: legs,
-                         tier: mutual > 0 ? .matchingIntents : .neutralOptimization,
-                         score: Double(mutual) + 1, usesBookends: true)
-    }
 }

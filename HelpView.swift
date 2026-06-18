@@ -4,6 +4,57 @@
 
 import SwiftUI
 
+/// Startup "What's New" sheet (Z2): one page of Added / Fixed / Changed / Improved + a short
+/// tester checklist. Shown once per new build; dismiss records the build as seen.
+struct ChangeLogView: View {
+    @Environment(\.dismiss) private var dismiss
+    let entry: ChangeLogEntry
+    var onDismiss: () -> Void = {}
+
+    var body: some View {
+        NavigationStack {
+            List {
+                section("✨ Added", entry.added, .green)
+                section("🐞 Fixed", entry.fixed, .orange)
+                section("🔧 Changed", entry.changed, .blue)
+                section("🚀 Improved", entry.improved, .purple)
+                if !entry.toTest.isEmpty {
+                    Section {
+                        ForEach(entry.toTest, id: \.self) { item in
+                            Label(item, systemImage: "checkmark.circle")
+                                .font(.subheadline)
+                        }
+                    } header: {
+                        Text("Please test")
+                    } footer: {
+                        Text("A few things to try so we catch anything before it ships wide.")
+                    }
+                }
+            }
+            .navigationTitle(entry.title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Got it") { onDismiss(); dismiss() }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private func section(_ title: String, _ items: [String], _ tint: Color) -> some View {
+        if !items.isEmpty {
+            Section(title) {
+                ForEach(items, id: \.self) { item in
+                    HStack(alignment: .top, spacing: 8) {
+                        Circle().fill(tint).frame(width: 6, height: 6).padding(.top, 6)
+                        Text(item).font(.subheadline)
+                    }
+                }
+            }
+        }
+    }
+}
+
 struct HelpView: View {
     @Environment(\.dismiss) private var dismiss
 
@@ -109,7 +160,7 @@ struct TesterGuideView: View {
                     "**Break it:** overlapping overrides; blacklist everything (expect no matches)." ])
 
                 section("Trades", "arrow.left.arrow.right", [
-                    "**Search:** pick days to trade away → Find; review Packages + Individual takers.",
+                    "**Search:** pick days to trade away → Find; review Packages + Individual Swaps.",
                     "**Intents tabs:** every tier is a real two-way swap; one-way trades are in ECB.",
                     "Open a swap — **tap each step** to jump to that leg's two people; check who gives/gets what.",
                     "**Break it:** does the loop come back to you? do the dates match the calendars?" ])

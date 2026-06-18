@@ -6,6 +6,43 @@
 
 import SwiftUI
 
+// MARK: - Character counter (F3)
+
+/// A compact "used/limit" counter that turns amber near the limit and red over it.
+/// Logic lives in the pure `CharLimit` (testable); this is presentation only.
+struct CharCounter: View {
+    let text: String
+    let limit: Int
+    var body: some View {
+        let s = CharLimit.state(text, limit: limit)
+        Text("\(s.used)/\(limit)")
+            .font(.caption2)
+            .foregroundStyle(s.over ? Color.red : (s.nearLimit ? Color.orange : Color.secondary))
+            .monospacedDigit()
+            .accessibilityLabel("\(max(0, s.remaining)) characters remaining")
+    }
+}
+
+// MARK: - Name + status (A7/B8)
+
+/// A person's name with their current status broadcast in italics underneath, shown
+/// wherever a name appears in trade views. Status looked up via `participantStatus`.
+/// Renders just the name when there's no status. SPEC U-GLOBAL-3.
+struct NameWithStatus: View {
+    let id: String
+    var name: String? = nil
+    var nameFont: Font = .subheadline.weight(.semibold)
+    var body: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(name ?? participantName(id)).font(nameFont)
+            if let status = participantStatus(id) {
+                Text(status).font(.caption2).italic()
+                    .foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
+            }
+        }
+    }
+}
+
 // MARK: - Style helpers
 
 enum SlackStyle {

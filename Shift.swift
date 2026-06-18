@@ -44,6 +44,9 @@ struct Shift: Codable, Identifiable, Hashable {
 
     // MARK: - Computed helpers
 
+    /// Vacation: the worker is off on a day that *printed* a shift (parser removed it). (S-DATA-1)
+    var isVacation: Bool { leaveCode == "V" }
+
     /// Full start datetime for this shift (0500 or 1300 local time).
     var startDate: Date {
         Calendar.current.date(bySettingHour: startHour, minute: 0, second: 0, of: date) ?? date
