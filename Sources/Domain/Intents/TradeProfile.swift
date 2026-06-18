@@ -1,0 +1,514 @@
+// TradeProfile.swift
+// The cross-user "willingness" layer — the only data that must be shared between
+// dispatchers (the airline roster gives schedules + quals locally; this gives
+// INTENT). Built from each person's openness + blacklist + the working days they
+// want to trade away.
+//
+// The backend is swappable behind `TradeProfileService`:
+//   • `LocalTradeProfileService`   — on-device, free, works today (no account)
+//   • `CloudKitTradeProfileService`— public-DB broadcast, added once enrolled
+// Nothing in the app depends on which backend is active.
+
+import Foundation
+import Observation
+
+/// Shared CloudKit configuration. The container id must EXACTLY match the one
+/// checked in Signing & Capabilities → iCloud → CloudKit Containers.
+enum CloudKitConfig {
+    static let containerID = "iCloud.com.ervinlee.batmanreader"
+}
+
+/// Thread-safe "do this once" gate (used to resume a continuation exactly once).
+final class OnceFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var done = false
+    func set() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        if done { return false }
+        done = true
+        return true
+    }
+}
+
+// MARK: - Willingness category
+
+/// How willing a candidate is to COVER your shift (one-way), derived from their
+/// published profile. The gold 🔥 highlight is separate (mutual-intent count).
+enum TradeWillingness: Sendable, Hashable {
+    case willing    // opted in and accepts at least one of the shifts
+    case unknown    // no published profile yet (hasn't adopted/opted in) → "?"
+    case declined   // opted in but won't take any of these — excluded from display
+
+    /// Sort priority (lower = shown first).
+    var rank: Int {
+        switch self {
+        case .willing: return 0
+        case .unknown: return 1
+        case .declined: return 2
+        }
+    }
+}
+
+// MARK: - Model
+
+/// One dispatcher's published trade intent. Sendable + Codable so it can cross
+/// actors and serialize to UserDefaults today / CloudKit later.
+struct TradeProfile: Sendable, Hashable, Codable, Identifiable {
+    let workerID: String                    // employee ID — the match key
+    let displayName: String
+    let openness: String                    // TradeOpenness rawValue
+    let blacklistedWeekdays: Set<Int>       // 1 = Sun … 7 = Sat
+    let blacklistedDesks: Set<String>
+    let blacklistedShiftTypes: Set<String>  // "AM" / "PM" / "MID"
+    let blacklistedRegions: Set<String>     // DeskRegion rawValues
+    let seekingDayIDs: Set<String>          // working days they actively want to give away
+    let updatedAt: Date
+    // Contact (optional; group shares these). Optional so older records still decode.
+    var personalEmail: String? = nil
+    var aaEmail: String? = nil
+    var phone: String? = nil
+    // v2 trade rules (all optional so older records still decode).
+    var statusBroadcast: String? = nil
+    var maxWeeklyHours: Int? = nil
+    var minWeeklyHours: Int? = nil
+    var isMercenaryMode: Bool? = nil
+    // Per-day availability pills, published so matching is pill-based cross-user.
+    // Each entry is "ISO|TYPE", e.g. "2026-07-04|AM". Optional so old records decode.
+    var availabilitySlots: [String]? = nil
+    // ISO days whose effective openness is "bookends" (base or a date-range override),
+    // so peers can apply the no-split gate per-day. nil = fall back to opennessLevel.
+    var bookendDays: [String]? = nil
+    // NEGATIVE intents, published so the matcher can hard-exclude them cross-user
+    // (SPEC S-ENG-9/10). Without these the matcher never sees a Must-Be-Off day and
+    // wrongly offers it (the June-23 bug). All optional ⇒ old records still decode.
+    var mustBeOffDayIDs: Set<String>? = nil   // off days they refuse to be asked to work
+    var keepDayIDs: Set<String>? = nil        // working days they refuse to trade away
+    var wantToWorkDayIDs: Set<String>? = nil  // off days they actively want to work (overrides bookend gate, S-ENG-10)
+    // Qual-swap preference VALUES (Q4). Set POST-init (not in the explicit init) to avoid
+    // churning the init symbol. qual code → preference value: HIGHER = more preferred.
+    // 0 = blacklisted (never accept that qual). A qual ABSENT from the map = no preference
+    // = fully open (treated as the highest value). nil map = open to everything.
+    var qualValues: [String: Int]? = nil
+    // Specific DESK NUMBERS the user will never qual-swap into, regardless of qual value.
+    var qualSwapBlacklistDesks: Set<String>? = nil
+    // Relief dispatcher: last date this person's schedule is REAL. nil = not a relief dispatcher.
+    // Published so EVERY peer's matcher ignores their bogus post-relief shifts. Set post-init.
+    var reliefThrough: Date? = nil
+
+    // EXPLICIT init — this REPLACES Swift's synthesized memberwise init and FREEZES the
+    // construction signature. Adding a NEW optional published field above does NOT change
+    // this init, so callers' compiled object files stay valid — preventing the stale
+    // "Undefined symbol: TradeProfile.init(…old signature…)" linker error. New optional
+    // fields are set via assignment after construction, NOT added here.
+    init(workerID: String, displayName: String, openness: String,
+         blacklistedWeekdays: Set<Int>, blacklistedDesks: Set<String>,
+         blacklistedShiftTypes: Set<String>, blacklistedRegions: Set<String>,
+         seekingDayIDs: Set<String>, updatedAt: Date,
+         personalEmail: String? = nil, aaEmail: String? = nil, phone: String? = nil,
+         statusBroadcast: String? = nil, maxWeeklyHours: Int? = nil, minWeeklyHours: Int? = nil,
+         isMercenaryMode: Bool? = nil, availabilitySlots: [String]? = nil, bookendDays: [String]? = nil,
+         mustBeOffDayIDs: Set<String>? = nil, keepDayIDs: Set<String>? = nil, wantToWorkDayIDs: Set<String>? = nil) {
+        self.workerID = workerID; self.displayName = displayName; self.openness = openness
+        self.blacklistedWeekdays = blacklistedWeekdays; self.blacklistedDesks = blacklistedDesks
+        self.blacklistedShiftTypes = blacklistedShiftTypes; self.blacklistedRegions = blacklistedRegions
+        self.seekingDayIDs = seekingDayIDs; self.updatedAt = updatedAt
+        self.personalEmail = personalEmail; self.aaEmail = aaEmail; self.phone = phone
+        self.statusBroadcast = statusBroadcast; self.maxWeeklyHours = maxWeeklyHours; self.minWeeklyHours = minWeeklyHours
+        self.isMercenaryMode = isMercenaryMode; self.availabilitySlots = availabilitySlots; self.bookendDays = bookendDays
+        self.mustBeOffDayIDs = mustBeOffDayIDs; self.keepDayIDs = keepDayIDs; self.wantToWorkDayIDs = wantToWorkDayIDs
+    }
+
+    var id: String { workerID }
+    var bookendDaySet: Set<String> { Set(bookendDays ?? []) }
+    var bestEmail: String? {
+        let p = personalEmail?.trimmingCharacters(in: .whitespaces) ?? ""
+        let a = aaEmail?.trimmingCharacters(in: .whitespaces) ?? ""
+        return !p.isEmpty ? p : (a.isEmpty ? nil : a)
+    }
+    var opennessLevel: TradeOpenness { TradeOpenness(rawValue: openness) ?? .bookends }
+
+    /// Whether this person would CONSIDER picking up a shift with these traits —
+    /// i.e. they're accepting trades and it isn't on their blacklist. (Physical
+    /// ability — off + qualified + rested — is checked separately by the matcher;
+    /// the per-day bookends-only nuance of `.bookends` is applied there too.)
+    func acceptsPickup(weekday: Int, desk: String, shiftType: String, region: String) -> Bool {
+        guard opennessLevel != .none else { return false }
+        return passesBlacklist(weekday: weekday, desk: desk, shiftType: shiftType, region: region)
+    }
+
+    /// Blacklist gate only (no openness).
+    func passesBlacklist(weekday: Int, desk: String, shiftType: String, region: String) -> Bool {
+        if blacklistedWeekdays.contains(weekday) { return false }
+        if blacklistedDesks.contains(desk) { return false }
+        if blacklistedShiftTypes.contains(shiftType) { return false }
+        if blacklistedRegions.contains(region) { return false }
+        return true
+    }
+
+    /// ISO day → published availability types (parsed from `availabilitySlots`).
+    var availabilityMap: [String: Set<ShiftAvailabilityType>] {
+        guard let slots = availabilitySlots else { return [:] }
+        var m: [String: Set<ShiftAvailabilityType>] = [:]
+        for s in slots {
+            let parts = s.split(separator: "|")
+            if parts.count == 2, let t = ShiftAvailabilityType(rawValue: String(parts[1])) {
+                m[String(parts[0]), default: []].insert(t)
+            }
+        }
+        return m
+    }
+
+    /// True only when the user has actually published per-day pills (≥ 1 slot).
+    var hasPublishedAvailability: Bool { !(availabilitySlots?.isEmpty ?? true) }
+
+    /// PURE: is `day` past this person's relief horizon (their schedule isn't real there)?
+    /// False when they aren't a relief dispatcher (nil horizon). The horizon date is inclusive.
+    static func isPastRelief(day: Date, reliefThrough: Date?, cal: Calendar = .current) -> Bool {
+        guard let rt = reliefThrough else { return false }
+        return cal.startOfDay(for: day) > cal.startOfDay(for: rt)
+    }
+    /// Instance form: is `day` past THIS profile's relief horizon?
+    func scheduleUnknown(on day: Date, cal: Calendar = .current) -> Bool {
+        Self.isPastRelief(day: day, reliefThrough: reliefThrough, cal: cal)
+    }
+
+    /// Q4: would this person accept moving INTO `newDesk` (off their `currentDesk`)
+    /// for a qual swap, given their preference values?
+    func acceptsQualSwap(into newDesk: String, fromCurrentDesk currentDesk: String) -> Bool {
+        DeskRules.acceptsQualSwap(into: newDesk, fromCurrentDesk: currentDesk,
+                                  values: qualValues, blacklistDesks: qualSwapBlacklistDesks)
+    }
+
+    /// Whether this person would take a pickup on a SPECIFIC day. Uses published
+    /// per-day availability pills when present; falls back to openness otherwise.
+    func wouldPickUp(onDay dayID: String, weekday: Int, desk: String,
+                     shiftType: String, region: String, isBookend: Bool) -> Bool {
+        // Hard disqualifier (SPEC S-ENG-9/10): a day marked Must-Be-Off is NEVER
+        // offered — even under mercenary. This is the June-23 "offered as You Take" fix.
+        if mustBeOffDayIDs?.contains(dayID) == true { return false }
+        guard passesBlacklist(weekday: weekday, desk: desk, shiftType: shiftType, region: region) else { return false }
+        // Mercenary mode: take ANY qualifying shift — ignore availability pills,
+        // openness, and bookend protection (the hard legal gates still apply
+        // outside this method: off + qualified + 8h rest + weekly cap).
+        if isMercenaryMode == true { return true }
+        // Want-to-Work OVERRIDES the bookend requirement for THIS person (S-ENG-10):
+        // they explicitly want this day regardless of contiguity. Does NOT override
+        // blacklist (above) or per-day availability (the pill gate below).
+        let isWantToWork = wantToWorkDayIDs?.contains(dayID) == true
+        if hasPublishedAvailability {
+            guard let t = ShiftAvailabilityType(rawValue: shiftType),
+                  availabilityMap[dayID]?.contains(t) == true else { return false }
+            let bookendGated = bookendDays != nil ? bookendDaySet.contains(dayID)
+                                                  : (opennessLevel == .bookends)
+            if bookendGated, !isBookend, !isWantToWork { return false }
+            return true
+        }
+        guard opennessLevel != .none else { return false }
+        return opennessLevel == .all || isBookend || isWantToWork
+    }
+
+    /// Classify a candidate's willingness to COVER the shifts they can physically
+    /// take. `.bookends` openness only accepts their bookend days; `.all` accepts
+    /// any. No profile → `.unknown`; accepts none → `.declined`; else `.willing`.
+    static func classify(coveredShifts: [Shift], bookendIDs: Set<String>,
+                         profile: TradeProfile?) -> TradeWillingness {
+        guard let profile else { return .unknown }
+        let cal = Calendar.current
+        let accepts = coveredShifts.contains { s in
+            let weekday = cal.component(.weekday, from: s.date)
+            let region  = DeskRules.region(forDesk: s.desk).rawValue
+            let type    = ShiftAvailabilityType.infer(fromStartHour: s.startHour).rawValue
+            let opennessOK = profile.opennessLevel == .all || bookendIDs.contains(s.id)
+            return opennessOK && profile.acceptsPickup(weekday: weekday, desk: s.desk,
+                                                        shiftType: type, region: region)
+        }
+        return accepts ? .willing : .declined
+    }
+}
+
+// MARK: - Service abstraction
+
+/// The swappable backend. Local today, CloudKit public DB once enrolled.
+protocol TradeProfileService: Sendable {
+    func publish(_ profile: TradeProfile) async
+    func fetchAll() async -> [TradeProfile]
+    func profile(forWorker workerID: String) async -> TradeProfile?
+}
+
+/// On-device stand-in: persists profiles to UserDefaults. Lets the entire
+/// matching pipeline + UI be built and tested with no account or sync. `seed`
+/// injects synthetic peer profiles for local testing of one-way / two-way flows.
+actor LocalTradeProfileService: TradeProfileService {
+    private static let key = "batman.localTradeProfiles"
+    private var cache: [String: TradeProfile]
+
+    init() {
+        if let data = UserDefaults.standard.data(forKey: Self.key),
+           let decoded = try? JSONDecoder().decode([String: TradeProfile].self, from: data) {
+            cache = decoded
+        } else {
+            cache = [:]
+        }
+    }
+
+    func publish(_ profile: TradeProfile) async {
+        cache[profile.workerID] = profile
+        save()
+    }
+
+    func fetchAll() async -> [TradeProfile] { Array(cache.values) }
+
+    func profile(forWorker workerID: String) async -> TradeProfile? { cache[workerID] }
+
+    /// Add peer profiles without overwriting real ones (test scaffolding).
+    func seed(_ profiles: [TradeProfile]) async {
+        for p in profiles where cache[p.workerID] == nil { cache[p.workerID] = p }
+        save()
+    }
+
+    /// Wipe all stored profiles (test scaffolding).
+    func reset() async {
+        cache = [:]
+        save()
+    }
+
+    private func save() {
+        if let data = try? JSONEncoder().encode(cache) {
+            UserDefaults.standard.set(data, forKey: Self.key)
+        }
+    }
+}
+
+// MARK: - Main-actor facade
+
+/// Owns the active backend, builds + publishes YOUR profile from local prefs,
+/// and caches everyone else's for the matcher/UI.
+@MainActor
+@Observable
+final class TradeProfileStore {
+
+    static let shared = TradeProfileStore()
+
+    /// Active backend — CloudKit public DB when iCloud sync is on, else local.
+    private var service: TradeProfileService
+
+    /// Other dispatchers' profiles, keyed by employee ID. Empty until refreshed.
+    private(set) var others: [String: TradeProfile] = [:]
+
+    private init() {
+        service = SettingsManager.shared.useCloudKit
+            ? CloudKitTradeProfileService()
+            : LocalTradeProfileService()
+    }
+
+    /// Switch the backend when the iCloud-sync toggle changes, then re-publish
+    /// your profile and refresh everyone else's from the new source.
+    func setCloudKit(_ on: Bool) async {
+        service = on ? CloudKitTradeProfileService() : LocalTradeProfileService()
+        await publishMine()
+        await refreshOthers()
+    }
+
+    /// Your current profile, assembled from settings + seeking marks.
+    func myProfile() -> TradeProfile {
+        let s = SettingsManager.shared
+        var p = TradeProfile(
+            workerID:              s.username,
+            displayName:           s.displayName.isEmpty ? s.username : s.displayName,
+            openness:              s.tradeOpenness,
+            blacklistedWeekdays:   s.blacklistedWeekdays,
+            blacklistedDesks:      s.blacklistedDesks,
+            blacklistedShiftTypes: s.blacklistedShiftTypes,
+            blacklistedRegions:    s.blacklistedRegions,
+            seekingDayIDs:         DayIntentStore.shared.seekingDayIDs,
+            updatedAt:             Date(),
+            personalEmail:         s.personalEmail.isEmpty ? nil : s.personalEmail,
+            aaEmail:               s.aaEmail.isEmpty ? nil : s.aaEmail,
+            phone:                 s.phone.isEmpty ? nil : s.phone,
+            statusBroadcast:       s.statusBroadcast.isEmpty ? nil : s.statusBroadcast,
+            maxWeeklyHours:        s.maxWeeklyHours,
+            minWeeklyHours:        s.minWeeklyHours,
+            isMercenaryMode:       s.isMercenaryMode,
+            availabilitySlots:     DayIntentStore.shared.offAvailability.flatMap { day, types in
+                types.map { "\(day)|\($0.rawValue)" }
+            },
+            bookendDays:           DayIntentStore.shared.bookendGatedDays(
+                base: TradeOpenness(rawValue: s.tradeOpenness) ?? .bookends,
+                shifts: ShiftStore.shared.shifts),
+            mustBeOffDayIDs:       DayIntentStore.shared.mustBeOffDayIDs,
+            keepDayIDs:            DayIntentStore.shared.keepDayIDs,
+            wantToWorkDayIDs:      DayIntentStore.shared.wantToWorkDayIDs
+        )
+        // Qual-swap preference values (Q4) — set post-init to keep the init symbol stable.
+        p.qualValues = s.qualValues.isEmpty ? nil : s.qualValues
+        p.qualSwapBlacklistDesks = s.qualSwapBlacklistDesks.isEmpty ? nil : s.qualSwapBlacklistDesks
+        p.reliefThrough = s.effectiveReliefThrough   // nil unless relief toggled ON + dated
+        return p
+    }
+
+    /// Push your latest profile to the backend.
+    func publishMine() async {
+        await service.publish(myProfile())
+    }
+
+    /// Refresh the local cache of everyone else's profiles.
+    func refreshOthers() async {
+        let all  = await service.fetchAll()
+        let myID = SettingsManager.shared.username
+        let fetched = all.filter { $0.workerID != myID }
+        // P0/R-A: a transient empty fetch must not wipe the visible roster of peers.
+        let merged = FetchMerge.keepCacheOnEmpty(existing: Array(others.values), fetched: fetched)
+        others = Dictionary(uniqueKeysWithValues: merged.map { ($0.workerID, $0) })
+    }
+
+    /// A3: restore the user's public STATUS from their own published profile on a fresh device,
+    /// last-write-wins against the local edit clock. Call at launch.
+    func syncMyStatus() async {
+        let myID = SettingsManager.shared.username
+        guard !myID.isEmpty,
+              let mine = await service.fetchAll().first(where: { $0.workerID == myID }) else { return }
+        let s = SettingsManager.shared
+        let resolved = LWW.pick(local: s.statusBroadcast, localAt: s.statusUpdatedAt ?? .distantPast,
+                                remote: mine.statusBroadcast ?? "", remoteAt: mine.updatedAt)
+        if resolved != s.statusBroadcast {
+            s.statusBroadcast = resolved          // didSet bumps statusUpdatedAt → corrected below
+            s.statusUpdatedAt = mine.updatedAt
+        }
+    }
+
+    func profile(forWorker workerID: String) -> TradeProfile? { others[workerID] }
+
+    private static let isoDayF: DateFormatter = {
+        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; return f
+    }()
+
+    /// Dispatchers whose PUBLISHED v2 profile says they'd take a pickup on `date`
+    /// (optionally of `type`) — the same availability pills / openness the in-app
+    /// matcher uses, so Siri/Shortcuts results match what the app would surface.
+    /// Returns (profile, shift-type) pairs, deterministically ordered.
+    func availableDispatchers(on date: Date, type: ShiftAvailabilityType?) -> [(profile: TradeProfile, type: ShiftAvailabilityType)] {
+        let iso = Self.isoDayF.string(from: date)
+        var out: [(TradeProfile, ShiftAvailabilityType)] = []
+        for (_, p) in others.sorted(by: { $0.key < $1.key }) {
+            guard p.opennessLevel != .none else { continue }
+            // Published pills are authoritative; with no pills, openness ".all" means
+            // any legal type. (".bookends" without pills is ambiguous off-app, so we
+            // surface it as a candidate and let the in-app two-way sheet confirm.)
+            let types: [ShiftAvailabilityType] = p.hasPublishedAvailability
+                ? (p.availabilityMap[iso].map { Array($0) } ?? [])
+                : ShiftAvailabilityType.allCases
+            for t in types.sorted(by: { $0.rawValue < $1.rawValue }) where type == nil || t == type {
+                if p.blacklistedShiftTypes.contains(t.rawValue) { continue }
+                out.append((p, t))
+            }
+        }
+        return out
+    }
+
+    /// Cached profile if present, else fetch the single record from the backend
+    /// (used by the inbox/two-way to show a person's contact info).
+    func fetchProfile(forWorker workerID: String) async -> TradeProfile? {
+        if let p = others[workerID] { return p }
+        if let p = await service.profile(forWorker: workerID) {
+            others[p.workerID] = p
+            return p
+        }
+        return nil
+    }
+
+    #if DEBUG
+    /// Seed synthetic peer profiles so one-way/two-way flows can be exercised
+    /// before CloudKit exists.
+    func seedPeers(_ profiles: [TradeProfile]) async {
+        if let local = service as? LocalTradeProfileService {
+            await local.seed(profiles)
+            await refreshOthers()
+        }
+    }
+
+    /// Build synthetic peer profiles from the loaded roster (varied openness +
+    /// some actively-seeking days) so willingness filtering is demonstrable now.
+    /// Returns the number of peer profiles seeded.
+    @discardableResult
+    func seedFromRoster() async -> Int {
+        let cal = Calendar.current
+        let today = cal.startOfDay(for: Date())
+        guard let upper = cal.date(byAdding: .day, value: 120, to: today) else { return 0 }
+        let entries = await RosterStore.shared.entries(from: today, to: upper)
+        guard !entries.isEmpty else { return 0 }
+
+        var byWorker: [String: [RosterEntry]] = [:]
+        for e in entries { byWorker[e.workerID, default: []].append(e) }
+
+        let myID = SettingsManager.shared.username
+        var profiles: [TradeProfile] = []
+        var i = 0
+        for (wid, es) in byWorker where wid != myID {
+            i += 1
+            // Vary openness: every 5th declines, else alternate all/bookends.
+            let openness: TradeOpenness = (i % 5 == 0) ? .none : (i % 2 == 0 ? .all : .bookends)
+            // Every 3rd actively seeks to give away a few of their working days.
+            var seeking = Set<String>()
+            if i % 3 == 0 {
+                seeking = Set(es.filter { !$0.isOff }.prefix(3).map { $0.day })
+            }
+            profiles.append(TradeProfile(
+                workerID: wid, displayName: es.first?.workerName ?? wid,
+                openness: openness.rawValue,
+                blacklistedWeekdays: [], blacklistedDesks: [],
+                blacklistedShiftTypes: [], blacklistedRegions: [],
+                seekingDayIDs: seeking, updatedAt: Date()))
+        }
+        await seedPeers(profiles)
+        return profiles.count
+    }
+
+    /// Build a guaranteed mutual-bookend match: marks one of YOUR work days and
+    /// seeds a peer who wants a day you can cover — so 🔥×1 shows up. Returns the
+    /// peer's name, or nil if the roster has no qualifying pair.
+    func seedGuaranteedMutual() async -> (name: String, giveDay: String)? {
+        let myID = SettingsManager.shared.username
+        guard let seed = await TradeMatcher.findMutualBookendPair(excluding: myID) else { return nil }
+        TradeIntentStore.shared.seekingDayIDs.insert(seed.myGiveDayID)
+        let peer = TradeProfile(
+            workerID: seed.peerID, displayName: seed.peerName, openness: TradeOpenness.all.rawValue,
+            blacklistedWeekdays: [], blacklistedDesks: [], blacklistedShiftTypes: [], blacklistedRegions: [],
+            seekingDayIDs: [seed.theirTakeDayID], updatedAt: Date())
+        await service.publish(peer)
+        await publishMine()
+        await refreshOthers()
+        return (seed.peerName, seed.myGiveDayID)
+    }
+
+    /// Run a CloudKit health check (account + write/read round-trip). Uses a
+    /// continuation race so a hung CloudKit call is ABANDONED at the timeout
+    /// instead of blocking forever (a TaskGroup would await the hung child).
+    func checkCloudKit() async -> String {
+        guard let ck = service as? CloudKitTradeProfileService else {
+            return "iCloud Trade Sync is OFF — turn it on in Settings first, then re-check."
+        }
+        return await withCheckedContinuation { (cont: CheckedContinuation<String, Never>) in
+            let once = OnceFlag()
+            Task {
+                let result = await ck.diagnose()
+                if once.set() { cont.resume(returning: result) }
+            }
+            Task {
+                try? await Task.sleep(nanoseconds: 12_000_000_000)
+                if once.set() {
+                    cont.resume(returning: "CloudKit timed out (12s) — the call never returned. Almost always: the container isn't in THIS build's provisioning profile. Fix: delete the app from the device, then rebuild/reinstall from Xcode so the profile regenerates with the container. Also confirm you're signed into iCloud.")
+                }
+            }
+        }
+    }
+
+    /// Clear all peer profiles (test scaffolding).
+    func resetPeers() async {
+        if let local = service as? LocalTradeProfileService {
+            await local.reset()
+            await publishMine()        // keep your own profile present
+            await refreshOthers()
+        }
+    }
+    #endif
+}
