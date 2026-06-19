@@ -10,12 +10,19 @@ struct TradeByIntentsFeed: View {
 
     @Binding var whatIf: Bool
 
-    @State private var packages: [TradePackage] = []
+    @State private var packages: [TradePackage] = []   // unfiltered search results
     @State private var loading = true
     @State private var execRoute: NWayRoute?
     @State private var sentMessage: String?
     @State private var detailPackage: TradePackage?
     @State private var pkgSwap: PackageSwapContext?   // Q1: qual-swap package → blast picker
+    // A1/A2: Master Filter — shapes the on-demand "I'm Feeling Lucky" search; chips stay visible.
+    @State private var searchFilter = SearchFilter()
+    @State private var showFilter = false
+    @State private var rosterPeople: [(id: String, name: String)] = []
+
+    /// A1/A2: filtered + capped (best-first via rankPackages order) view of the results.
+    private var displayed: [TradePackage] { Array(searchFilter.filter(packages).prefix(100)) }
 
     var body: some View {
         ScrollView {
@@ -27,17 +34,21 @@ struct TradeByIntentsFeed: View {
                         .padding(.horizontal).padding(.top, 8)
                 }
 
+                if !loading { luckyBar }
+
                 if loading {
                     ProgressView("Finding intent matches…")
                         .frame(maxWidth: .infinity).padding(.top, 30)
-                } else if packages.isEmpty {
+                } else if displayed.isEmpty {
                     ContentUnavailableView("No Intent Matches",
                         systemImage: "sparkles",
-                        description: Text("Mark days to trade away on Home, or try What If? mode to widen the search."))
+                        description: Text(packages.isEmpty
+                            ? "Mark days to trade away on Home, or try What If? mode to widen the search."
+                            : "No matches fit your current filter — tap the filter to widen it."))
                         .padding(.top, 20)
                 } else {
                     sectionHeader("Trade Solutions", "From your marked days — fewest people first, then 🔥 and bookends")
-                    ForEach(packages) { pkg in
+                    ForEach(displayed) { pkg in
                         PackageCard(package: pkg,
                                     onPropose: { Task { await propose(pkg) } },
                                     onExecute: { if let r = pkg.route { execRoute = r } },
@@ -71,6 +82,7 @@ struct TradeByIntentsFeed: View {
                 }
             }
         }
+        .sheet(isPresented: $showFilter) { MasterFilterSheet(filter: $searchFilter, people: rosterPeople) }
         .task { await reload() }
         .onChange(of: whatIf) { _, _ in Task { await reload() } }
         // Recompute whenever any matching input changes (openness / mercenary / intents /
@@ -80,6 +92,36 @@ struct TradeByIntentsFeed: View {
             get: { sentMessage != nil }, set: { if !$0 { sentMessage = nil } })) {
             Button("OK", role: .cancel) {}
         } message: { Text(sentMessage ?? "") }
+    }
+
+    /// A1/A2: the "I'm Feeling Lucky" filter bar — a button to shape the search + visible chips
+    /// of the active choices.
+    private var luckyBar: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Button { showFilter = true } label: {
+                Label("I'm Feeling Lucky — filter the search", systemImage: "wand.and.stars")
+                    .font(.subheadline.weight(.semibold))
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent).controlSize(.small)
+            HStack(spacing: 6) {
+                chip(searchFilter.engine == .both ? "Both engines"
+                     : (searchFilter.engine == .minCost ? "Min-Cost" : "N-Way"))
+                chip("≤ \(searchFilter.maxPeople) people")
+                if let rid = searchFilter.requiredWorkerID {
+                    chip("must include " + (rosterPeople.first { $0.id == rid }?.name ?? rid))
+                }
+                Spacer()
+            }
+            .font(.caption2)
+        }
+        .padding(.horizontal).padding(.top, 4)
+    }
+
+    private func chip(_ text: String) -> some View {
+        Text(text).font(.caption2.weight(.semibold))
+            .padding(.horizontal, 8).padding(.vertical, 3)
+            .background(Color(.tertiarySystemFill), in: Capsule())
     }
 
     private func sectionHeader(_ title: String, _ subtitle: String) -> some View {
@@ -96,6 +138,15 @@ struct TradeByIntentsFeed: View {
         await TradeProfileStore.shared.refreshOthers()
         let myID = SettingsManager.shared.username
         packages = await TradeRouter.packages(excluding: myID)
+        // A2: full distinct roster (minus you), names resolved (G2a) — for the required-person dropdown.
+        let now = Date()
+        let end = Calendar.current.date(byAdding: .month, value: 12, to: now) ?? now
+        let entries = await RosterStore.shared.entries(from: now, to: end)
+        var seen = Set<String>(); var people: [(id: String, name: String)] = []
+        for e in entries where e.workerID != myID && seen.insert(e.workerID).inserted {
+            people.append((e.workerID, TradeNames.resolved(displayName: nil, rosterName: e.workerName, workerID: e.workerID)))
+        }
+        rosterPeople = people.sorted { $0.name < $1.name }
         loading = false
     }
 
@@ -115,6 +166,47 @@ struct TradeByIntentsFeed: View {
 }
 
 // MARK: - Feed key (explains the chips, flame, and quality pills)
+
+/// A2: the "I'm Feeling Lucky" Master Filter sheet — engine, max-people, force-include person.
+/// Choices are shown as chips on the feed; the results are filtered by `SearchFilter.filter`.
+struct MasterFilterSheet: View {
+    @Binding var filter: SearchFilter
+    let people: [(id: String, name: String)]
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Search engine") {
+                    Picker("Engine", selection: $filter.engine) {
+                        Text("Min-Cost").tag(SearchFilter.Engine.minCost)
+                        Text("N-Way").tag(SearchFilter.Engine.nWay)
+                        Text("Both").tag(SearchFilter.Engine.both)
+                    }.pickerStyle(.segmented)
+                    Text("Min-Cost = fewest-people swaps · N-Way = circular loops · Both = everything (capped for speed).")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+                Section("Max people in a trade") {
+                    Picker("Max people", selection: $filter.maxPeople) {
+                        ForEach(1...4, id: \.self) { Text("\($0)").tag($0) }
+                    }.pickerStyle(.segmented)
+                }
+                Section("Force-include a person") {
+                    Picker("Must include", selection: Binding(
+                        get: { filter.requiredWorkerID ?? "" },
+                        set: { filter.requiredWorkerID = $0.isEmpty ? nil : $0 })) {
+                        Text("Anyone").tag("")
+                        ForEach(people, id: \.id) { Text($0.name).tag($0.id) }
+                    }
+                    Text("Only show trades that include this dispatcher.").font(.caption2).foregroundStyle(.secondary)
+                }
+            }
+            .navigationTitle("I'm Feeling Lucky")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+        }
+    }
+}
 
 /// A compact legend at the bottom of the Intents feed, mirroring the trade-calendar key.
 struct TradeFeedKey: View {

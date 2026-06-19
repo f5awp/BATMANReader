@@ -82,6 +82,8 @@
 | R3-A8 | **No-profile peers default to "open/all"** (root of split-trade offers) | ✅ `TradeProfile.defaultForUnpublished(workerID:name:)` — ONE factory, openness `.bookends`, epoch `updatedAt` (real profile wins LWW) — replaces 4 scattered `openness:"all"` missing-peer fallbacks (`TradeRouter.profileFor`/`openProfile`, `TradeMatcher` qual-bridge, `TwoWaySheet.load`). A profileless receiver now fails `canCover` for a non-bookend pickup → split-the-weekend trades never generated. Red proven (`no member 'defaultForUnpublished'`) → 4 fail-tests green. | ✅ proven by test |
 | R3-D1/G2c | **Two-way calendar shows only peer's trade-away intents** (img 42c) | ✅ `PeerIntentColor.forDay(...)` (pure SSOT, `DispatchPalette`) maps a peer's published intent sets → calendar tint with precedence **must-be-off → keep → trade-away → want-to-work** (reuses the same `brickColor` hues as self). `TwoWaySheet.theirIntent` rewired to it; `load()` now reads `theirWantToWork`/`theirMustBeOff`/`theirKeep` from the peer's `TradeProfile` (was only `seekingDayIDs`). Edge: unmarked day → nil (no tint); a day in multiple sets shows the strongest. Red proven → 6 fail-tests green, build green. | ✅ proven by test (device-check colors on peer calendar) |
 | R3-G3 | **n-way offers split-the-weekend loops** (img 43/44) | ✅ `NWayRoute.bookendCount` (legs anchored for their receiver) → circular package `bookendTotal` = real count (was all-or-nothing); `rankPackages` already sorts by bookendTotal, so split-heavy loops drop below clean ones. `TradeScore.routeDesirability` (pure) penalizes splits / rewards 🔥 for later best-first+threshold. Red proven → 3 tests green. Pairs with A8 (which *prevents* no-profile splits at `canCover`). | ✅ proven by test (device-check ordering) |
+| R3-A1/A2 | **No on-demand "Lucky" search shaping** | ⚠️ Lucky button + `MasterFilterSheet` (engine / max-people / force-include person) + chips; `SearchFilter.filter().prefix(100)` applied to results. Pure filter harness-proven (6 tests); the UI is **build-verified**. Post-search filter (not in-DFS) — see assumptions. | ⚠️ build-verified (device-check) |
+| R3-H1/G3 | **Split trades + no scoring model** | ✅ `TradeScore` (log-joint-acceptance, 8 tests) + `routeDesirability` + `NWayRoute.bookendCount` → split loops demoted. | ✅ proven by test |
 | R3-G4 | **No check that an import parsed correctly** (root of "660615") | ✅ `ImportAudit.validate(workers:selfID:)` (pure, `ScheduleParser`) → `ImportReport{ok,workerCount,namelessWorkers,duplicateIDs,selfFound,warnings}`. Flags name-less (reuses `TradeNames.isAllDigits`), missing-self, dupes, empty. Advisory only — never blocks the import; `HomeView.handleImport` appends the result to the import banner. Red proven → 5 fail-tests green. | ✅ proven by test (device-check banner) |
 | R3-D5 | **Qual-swap packages can outrank clean ones** | ✅ `TradePackage.needsQualSwap` + `rankPackages` key after peopleCount: same N → clean before qual (even if qual has more 🔥/bookends); 🔥/bookend/date order applies within each group; N dominates (qual 2-way still beats clean 3-way). Red proven (assertion) → 3 fail-tests green. | ✅ proven by test |
 | R3-D4 | **Just-2 says "Propose to All" for a single person** | ✅ `proposeButtonTitle(count:name:)` (pure SSOT in `TradeEngineModels`): 1 → "Propose to {Name}", 2+ → "Propose to All", 0/nameless → "Propose". Wired into `PackageCard`. Red proven → 5 fail-tests green. | ✅ proven by test |
@@ -89,6 +91,23 @@
 | R3-D1/F1 | **Trades show blue/red instead of per-user themes** (img 42) | ✅ `TradeColors.forWorker(workerID:myID:)` — ONE stable per-worker color (deterministic UTF8 hash → `traderThemes`; you = blue) used by `TwoWaySheet` (was hardcoded red), `PackageCard`, `PackageDetailView`, `HandoffChain`. 6 fail-tests + empty-palette guard; **teeth proven** by breaking `forWorker` (peer-≠-blue went red) then reverting. First sub-step of D1 (unified calendar). | ✅ proven by test (device-check colors) |
 | R2-#5 | **Non-bookend day labeled "bookend"; no intent key** (img 29) | ✅ (1) `TwoWaySheet.legCard` printed **"bookend" unconditionally** — now gated on `leg.bookend`. Engine was correct (`TwoWayLeg.bookend = check.isBookend`); proved via a new test that exposed `TradeMatcher.anchored` and asserts an **isolated give-day → bookend == false**, an adjacent-to-work day → true. (2) New reusable **`IntentColorKey`** (same calendar hues: Trade away / Want to work / Keep / Must be off + 🔥 mutual / 📖 bookend) added to the **two-way sheet** and **ECB** views. | ✅ proven by test (legend device-check) |
 | R2-#6 | **ECB: 1-col, unsorted bookends, single broadcast** (img 30) | ✅ Names now **2 columns on regular width** (1 on compact, via `horizontalSizeClass`); candidate list **sorted bookend-first**; the single "Request all" replaced with **two buttons — "Bookends (N)"** and **"All N"** (`requestAll(bookendsOnly:)`). Build-verified (async/roster UI). | ✅ done (device-check) |
+
+## Round-3 assumptions (explicit — flag if any are wrong)
+- **A3 is a no-op.** There was an "intent-only vs all-eligible" toggle planned for the Lucky popup;
+  the search already uses **all-eligible** (intent only ranks, never gates — R-A/A8), so there is no
+  toggle to remove. A3 ships as "nothing to do."
+- **A1 filter is post-search.** "I'm Feeling Lucky" currently **filters the already-computed**
+  Trade-Solutions results (engine/max-people/required-person) and caps to **100** via `prefix`. The
+  deeper design — gating the heavy search behind the button, **best-first seeding inside the DFS**, a
+  **cancellable Task + spinner**, and **N-Way capped to 60 when "Both"** — is **not yet wired** (follow-on).
+- **A2 "Both" caption** says results are "capped for speed" — the *60-best-when-Both* cap is not yet
+  enforced in the engine; today the post-filter `prefix(100)` is the only cap.
+- **`TradeScore` weights are hand-tuned**, not fitted from data. H2 person-prior ships at **θ=0**
+  (disabled). When acceptance data exists, fit the weights + enable θ with the H2 failsafes.
+- **A8 "unpublished" = no published `TradeProfile`.** Such peers default to **Bookends Only**; an
+  explicitly-published `.all` profile is untouched.
+- **Required-person dropdown = distinct roster** over the next 12 months (`RosterStore.entries`),
+  names resolved via `TradeNames` (G2a).
 
 ## How I'll stop doing this (process change)
 

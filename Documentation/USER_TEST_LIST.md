@@ -345,6 +345,15 @@
   **"⚠️ Import check: …"** line naming the problem (e.g. dispatchers with no name, duplicate IDs, your ID
   not found). The import still loads either way — it's a heads-up, not a blocker.
 
+### TR3-A1 — "I'm Feeling Lucky" filter  [A1/A2 · UI build-verified; device-check]
+1. Trades → Trade Solutions. Tap **"I'm Feeling Lucky — filter the search."**
+2. Set **Engine** (Min-Cost / N-Way / Both), **Max people** (1–4), and optionally **Force-include a
+   person** (pick anyone from the roster). Tap **Done**.
+- **Expect:** the result list re-filters to match — no package exceeds your max-people; Min-Cost hides
+  circular loops, N-Way shows only loops; a forced person appears in every shown trade. Your choices
+  show as **chips** under the button. (Known: this filters the existing results and caps at 100; deeper
+  best-first/cancellable search is a follow-on.)
+
 ---
 
 ### Notes for the tester
