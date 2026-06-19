@@ -250,7 +250,7 @@ struct MasterFilterSheet: View {
                     }
                     .disabled(!filter.isActive && !draft.isActive)
                 } footer: {
-                    Text("Generate runs the heavy 3+ person and circular (N-Way) search once. The normal feed stays fast with 2-person trades only.")
+                    Text("Generate runs the heavy 3+ person and circular (N-Way) search once. The normal feed stays fast with two-person trades only.")
                 }
             }
             .navigationTitle("I'm Feeling Lucky")
