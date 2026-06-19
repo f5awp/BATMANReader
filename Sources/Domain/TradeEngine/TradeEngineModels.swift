@@ -390,6 +390,33 @@ enum TradeScore {
     }
 }
 
+/// A2: the "I'm Feeling Lucky" Master Filter — shapes the on-demand search. Pure value type so
+/// the UI state and the result-filtering agree (single source of truth) and are harness-tested.
+struct SearchFilter: Equatable, Sendable {
+    enum Engine: String, CaseIterable, Sendable { case minCost, nWay, both }
+    var engine: Engine = .both
+    var maxPeople: Int = 4          // 1…4 distinct participants (incl. you)
+    var requiredWorkerID: String?   // when set, only solutions that INCLUDE this person
+
+    /// True if `id` is a participant of `p` (peer assignment or a route participant).
+    private func contains(_ id: String, _ p: TradePackage) -> Bool {
+        p.assignments.contains { $0.workerID == id } || (p.route?.participants.contains(id) ?? false)
+    }
+    /// Apply the filter to a result set (post-search). Engine selects methodology, maxPeople caps
+    /// participants, requiredWorkerID forces a person into every kept solution.
+    func filter(_ packages: [TradePackage]) -> [TradePackage] {
+        packages.filter { p in
+            if p.peopleCount > maxPeople { return false }
+            if let req = requiredWorkerID, !contains(req, p) { return false }
+            switch engine {
+            case .minCost: return p.methodology != .circular
+            case .nWay:    return p.methodology == .circular
+            case .both:    return true
+            }
+        }
+    }
+}
+
 /// D4: the propose-button label. "Propose to {Name}" for a single counterparty,
 /// "Propose to All" only when 2+, plain "Propose" when there's nobody/no name (Just-2
 /// wrongly said "Propose to All" for a single person).

@@ -1012,6 +1012,28 @@ enum TradeEngineTests {
               "G3: mutual-🔥 legs raise the route's desirability")
         check(TradeScore.routeDesirability(legBookends: [], legFires: []) == 0, "G3: empty route → logprob 0")
 
+        // MARK: A2 — Master Filter (pure): engine selector, max-people cap, force-include person.
+        do {
+            func pkg(_ id: String, peers: [String], circular: Bool) -> TradePackage {
+                let a = peers.map { PackageAssignment(workerID: $0, name: $0, giveDayIDs: ["d"], takeDayIDs: ["e"]) }
+                return TradePackage(id: id, methodology: circular ? .circular : .greedy, assignments: a, route: nil)
+            }
+            let pkgs = [pkg("solo", peers: ["A"], circular: false),       // 2 people
+                        pkg("tri", peers: ["A", "B"], circular: true),     // 3 people
+                        pkg("quad", peers: ["A", "B", "C"], circular: true)] // 4 people
+            check(SearchFilter(engine: .both, maxPeople: 2, requiredWorkerID: nil).filter(pkgs).allSatisfy { $0.peopleCount <= 2 },
+                  "A2: maxPeople caps participant count")
+            check(SearchFilter(engine: .both, maxPeople: 4, requiredWorkerID: nil).filter(pkgs).count == 3, "A2: maxPeople 4 keeps all")
+            check(SearchFilter(engine: .minCost, maxPeople: 4, requiredWorkerID: nil).filter(pkgs).allSatisfy { $0.methodology != .circular },
+                  "A2: minCost engine drops circular")
+            check(SearchFilter(engine: .nWay, maxPeople: 4, requiredWorkerID: nil).filter(pkgs).allSatisfy { $0.methodology == .circular },
+                  "A2: nWay engine keeps only circular")
+            let req = SearchFilter(engine: .both, maxPeople: 4, requiredWorkerID: "C").filter(pkgs)
+            check(!req.isEmpty && req.allSatisfy { $0.assignments.contains { a in a.workerID == "C" } },
+                  "A2: required person → only solutions containing them")
+            check(Set(SearchFilter.Engine.allCases.map(\.rawValue)) == ["minCost", "nWay", "both"], "A2: engine CaseIterable universe guard")
+        }
+
         // MARK: Relief dispatcher — schedule unknown past the horizon (pure).
         let reliefDate = DateComponents(calendar: .current, year: 2026, month: 8, day: 7).date!
         let beforeRelief = DateComponents(calendar: .current, year: 2026, month: 8, day: 7).date!  // inclusive
