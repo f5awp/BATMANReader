@@ -331,6 +331,15 @@ struct MatchInputsSignature: Hashable {
 
 /// The ONLY function allowed to produce a trade-type badge. Its entire output
 /// universe is exactly three shapes: "1-Way Swap", "Qual Swap", "{n}-Person Swap".
+/// D4: the propose-button label. "Propose to {Name}" for a single counterparty,
+/// "Propose to All" only when 2+, plain "Propose" when there's nobody/no name (Just-2
+/// wrongly said "Propose to All" for a single person).
+func proposeButtonTitle(count: Int, name: String) -> String {
+    if count >= 2 { return "Propose to All" }
+    let n = name.trimmingCharacters(in: .whitespaces)
+    return (count == 1 && !n.isEmpty) ? "Propose to \(n)" : "Propose"
+}
+
 /// `distinctPeople` counts every participant INCLUDING you (You↔Cary ⇒ 2 ⇒
 /// "2-Person Swap"). Precedence: ECB one-way → qual swap → person count.
 /// Do NOT write trade-type label strings anywhere else (guarded by check_arch_map.sh).

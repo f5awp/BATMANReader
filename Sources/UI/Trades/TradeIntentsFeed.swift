@@ -446,7 +446,9 @@ struct PackageCard: View {
                 Button {
                     isCircular ? onExecute() : onPropose()
                 } label: {
-                    Label(isCircular ? "Propose Trade" : "Propose to all",
+                    // D4: "Propose to {Name}" for a single counterparty, "Propose to All" for 2+.
+                    Label(isCircular ? "Propose Trade"
+                                     : proposeButtonTitle(count: package.assignments.count, name: package.assignments.first?.name ?? ""),
                           systemImage: isCircular ? "arrow.triangle.2.circlepath" : "paperplane.fill")
                 }
                 .buttonStyle(.borderedProminent).controlSize(.small)

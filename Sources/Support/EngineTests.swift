@@ -914,6 +914,14 @@ enum TradeEngineTests {
                   "G2a: blank/numeric everywhere → employee # (nothing real to show)")
         }
 
+        // MARK: D4 — Just-2 propose-button label: "Propose to {Name}" for a single
+        // counterparty, "Propose to All" only when 2+ (it wrongly said "All" for 1).
+        check(proposeButtonTitle(count: 1, name: "Cary") == "Propose to Cary", "D4: 1 person → 'Propose to {Name}'")
+        check(proposeButtonTitle(count: 2, name: "Cary") == "Propose to All", "D4: 2 people → 'Propose to All'")
+        check(proposeButtonTitle(count: 5, name: "Cary") == "Propose to All", "D4: many → 'Propose to All'")
+        check(proposeButtonTitle(count: 0, name: "Cary") == "Propose", "D4: zero → plain 'Propose' (no name, no All)")
+        check(proposeButtonTitle(count: 1, name: "") == "Propose", "D4: 1 but nameless → plain 'Propose'")
+
         // MARK: Relief dispatcher — schedule unknown past the horizon (pure).
         let reliefDate = DateComponents(calendar: .current, year: 2026, month: 8, day: 7).date!
         let beforeRelief = DateComponents(calendar: .current, year: 2026, month: 8, day: 7).date!  // inclusive
