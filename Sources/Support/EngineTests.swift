@@ -1091,6 +1091,31 @@ enum TradeEngineTests {
             check(store.intentsRevision == before + 2, "C1: each SAVE advances the revision")
         }
 
+        // MARK: C1 phase-2 — dirty tracking + Discard buffer (Save-or-Discard guard).
+        do {
+            let store = DayIntentStore.shared
+            let day = "2099-01-02"   // a far-future test day that no real schedule touches
+            store.setWorkingIntent(nil, forDay: day)   // clean slate for this day
+            store.markIntentsSaved()                    // baseline: day has no intent, flag clear
+            check(!store.hasUnsavedChanges, "C1.2: a fresh SAVE clears the unsaved-changes flag")
+
+            store.setWorkingIntent(.dontWantToWork, forDay: day)
+            check(store.hasUnsavedChanges, "C1.2: editing an intent sets the unsaved-changes flag")
+            check(store.workingIntent(forDay: day) == .dontWantToWork, "C1.2: the edit is visible before saving")
+
+            store.discardChanges()
+            check(!store.hasUnsavedChanges, "C1.2: Discard clears the unsaved-changes flag")
+            check(store.workingIntent(forDay: day) == nil, "C1.2: Discard reverts the edit to the saved baseline")
+
+            // Save then edit then discard reverts only to the SAVED value, not all the way to empty.
+            store.setWorkingIntent(.mustWork, forDay: day)
+            store.markIntentsSaved()
+            store.setWorkingIntent(.dontWantToWork, forDay: day)
+            store.discardChanges()
+            check(store.workingIntent(forDay: day) == .mustWork, "C1.2: Discard reverts to the last SAVED value")
+            store.setWorkingIntent(nil, forDay: day); store.markIntentsSaved()   // cleanup
+        }
+
         // MARK: Relief dispatcher — schedule unknown past the horizon (pure).
         let reliefDate = DateComponents(calendar: .current, year: 2026, month: 8, day: 7).date!
         let beforeRelief = DateComponents(calendar: .current, year: 2026, month: 8, day: 7).date!  // inclusive

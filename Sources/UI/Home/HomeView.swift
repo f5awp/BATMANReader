@@ -49,7 +49,7 @@ struct HomeView: View {
     @State private var noteBrush = ""   // F2: when set, each tapped day also gets this note
     @State private var pendingConflict: PendingConflict?
     @State private var overwriteConfirmed = false   // #10: ask-overwrite ONCE per mass-action session
-    @State private var savedConfirm = false          // C1: SAVE confirmation
+    @State private var showLeaveGuard = false        // C1 phase-2: Save-or-Discard when leaving with unsaved edits
     @State private var showKey = false
     @State private var showAppSettings = false
 
@@ -64,21 +64,13 @@ struct HomeView: View {
                 HStack(alignment: .center, spacing: 10) {
                     if mode == .off { markIntentsPill }
                     Spacer()
-                    // C1: SAVE your marks → the trade search re-runs (it no longer re-runs on every edit).
-                    Button {
-                        DayIntentStore.shared.markIntentsSaved()
-                        Task { await TradeProfileStore.shared.publishMine() }
-                        savedConfirm = true
-                    } label: {
-                        Label("Save", systemImage: "checkmark.circle.fill").font(.subheadline.weight(.bold))
-                    }
-                    .buttonStyle(.borderedProminent).controlSize(.small).tint(.green)
                     VisibilityToolbar(layers: $layers)
                 }
                 .padding(.horizontal).padding(.top, 2)
                 homeNotesBar
                 MarkIntentsToolbar(mode: $mode, offBrush: $offBrush, workBrush: $workBrush,
-                                   offIntentBrush: $offIntentBrush, noteBrush: $noteBrush)
+                                   offIntentBrush: $offIntentBrush, noteBrush: $noteBrush,
+                                   onSave: saveIntents, onDone: attemptLeaveEditing)
                 Divider()
 
                 if store.shifts.isEmpty {
@@ -93,7 +85,10 @@ struct HomeView: View {
                         layers: layers,
                         flashDays: flashChanged ? changedDays : [],
                         onTap: handleTap,
-                        onLongPress: { day, isOff in editTarget = DayEditTarget(dayID: day, isOff: isOff) })
+                        // Detailed per-day editor only inside Mark Intents — general view is read-only.
+                        onLongPress: { day, isOff in
+                            if mode != .off { editTarget = DayEditTarget(dayID: day, isOff: isOff) }
+                        })
                 }
 
                 // Last-synced line pinned to the very bottom of the page.
@@ -146,9 +141,17 @@ struct HomeView: View {
             } message: {
                 Text("This day is already marked \"\(pendingConflict?.existing ?? "")\". Overwrite it? You won't be asked again while painting with this brush.")
             }
-            .alert("Saved", isPresented: $savedConfirm) {
-                Button("OK", role: .cancel) {}
-            } message: { Text("Your marks are saved — Trade Solutions & Intents will use them on the next search.") }
+            .confirmationDialog("Unsaved intent changes", isPresented: $showLeaveGuard, titleVisibility: .visible) {
+                Button("Save") {
+                    saveIntents()
+                    withAnimation(.snappy) { mode = .off }
+                }
+                Button("Discard", role: .destructive) {
+                    intents.discardChanges()
+                    withAnimation(.snappy) { mode = .off }
+                }
+                Button("Keep Editing", role: .cancel) {}
+            } message: { Text("You have unsaved marks. Save them so your trades update, or discard to revert.") }
             .onAppear(perform: reconcileSnapshot)
             // R-B: load peers when Home appears so matching/status reflect what everyone
             // published (peer status/intents were blank cross-device).
@@ -268,12 +271,26 @@ struct HomeView: View {
 
     // MARK: Actions
 
+    /// SAVE: persist baseline + bump the revision so the trade feeds recompute once,
+    /// and re-publish availability. Clears the dirty flag (the glowing Save button dims).
+    private func saveIntents() {
+        intents.markIntentsSaved()
+        Task { await TradeProfileStore.shared.publishMine() }
+    }
+
+    /// Leaving the Mark Intents section: if there are unsaved edits, force Save-or-Discard;
+    /// otherwise exit cleanly.
+    private func attemptLeaveEditing() {
+        if intents.hasUnsavedChanges { showLeaveGuard = true }
+        else { withAnimation(.snappy) { mode = .off } }
+    }
+
     /// Single tap: apply the mode's default intent, toggling it off if already set.
     /// If the day already carries a *different* explicit intent, confirm first.
     private func handleTap(day: String, isOff: Bool) {
         switch mode {
         case .off:
-            editTarget = DayEditTarget(dayID: day, isOff: isOff)
+            break   // read-only outside Mark Intents — marking only happens in the section
         case .workingShifts:
             guard !isOff else { return }
             stampNote(day)
@@ -356,6 +373,17 @@ struct MarkIntentsToolbar: View {
     @Binding var workBrush: WorkingIntentState
     @Binding var offIntentBrush: OffIntentState
     @Binding var noteBrush: String
+    var onSave: () -> Void          // SAVE this session's marks (clears the dirty glow)
+    var onDone: () -> Void          // leave the section (guarded if there are unsaved edits)
+    private var intents = DayIntentStore.shared
+
+    init(mode: Binding<IntentMode>, offBrush: Binding<ShiftAvailabilityType?>,
+         workBrush: Binding<WorkingIntentState>, offIntentBrush: Binding<OffIntentState>,
+         noteBrush: Binding<String>, onSave: @escaping () -> Void, onDone: @escaping () -> Void) {
+        _mode = mode; _offBrush = offBrush; _workBrush = workBrush
+        _offIntentBrush = offIntentBrush; _noteBrush = noteBrush
+        self.onSave = onSave; self.onDone = onDone
+    }
 
     var body: some View {
         Group {
@@ -374,7 +402,7 @@ struct MarkIntentsToolbar: View {
                     Text("Days Off").tag(IntentMode.daysOff)
                 }
                 .pickerStyle(.segmented)
-                Button { withAnimation(.snappy) { mode = .off } } label: {
+                Button { onDone() } label: {
                     Text("Done").font(.subheadline.weight(.bold))
                 }
             }
@@ -397,11 +425,31 @@ struct MarkIntentsToolbar: View {
                 }
             }
             .padding(.horizontal)
+
+            saveButton.padding(.horizontal)   // glowing primary action — transparent until you edit
         }
         .padding(.vertical, 10)
         .background(Color(.secondarySystemBackground))
         .overlay(alignment: .top) { Divider() }
         .overlay(alignment: .bottom) { Divider() }
+    }
+
+    /// The session's Save action. Transparent/faded while clean, glowing green the moment
+    /// there are unsaved edits — so it's obvious there's something to save. (C1 phase-2)
+    private var saveButton: some View {
+        let dirty = intents.hasUnsavedChanges
+        return Button(action: onSave) {
+            Label(dirty ? "Save Changes" : "Saved", systemImage: "checkmark.circle.fill")
+                .font(.subheadline.weight(.bold))
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 10)
+                .foregroundStyle(dirty ? .white : Color.green.opacity(0.55))
+                .background(dirty ? Color.green : Color.green.opacity(0.14), in: Capsule())
+                .shadow(color: dirty ? Color.green.opacity(0.7) : .clear, radius: dirty ? 10 : 0)
+        }
+        .buttonStyle(.plain)
+        .disabled(!dirty)
+        .animation(.easeInOut(duration: 0.25), value: dirty)
     }
 
     /// Working-shift intent brushes — EVERY meaningful working intent (F1), driven by
@@ -474,15 +522,19 @@ struct HomeMetricsHeader: View {
     private var company: Int { Metrics.count(metrics.globalEvents, kind: .trade, period: period, now: Date()) }
 
     var body: some View {
-        HStack(spacing: DS.l) {
-            total("You", mine)
-            Divider().frame(height: 30)
-            total("Company", company)
-            Spacer()
+        // Metrics on the LEFT; the period control sits BELOW them so it no longer
+        // collides with the floating Inbox/Channel dock pinned to the top-right.
+        VStack(alignment: .leading, spacing: DS.s) {
+            HStack(spacing: DS.l) {
+                total("Your Successful Trades", mine)
+                Divider().frame(height: 30)
+                total("PAFCA Successful Trades", company)
+                Spacer()
+            }
             Picker("", selection: $period) {
                 ForEach(MetricPeriod.allCases) { Text($0.label).tag($0) }
             }
-            .pickerStyle(.segmented).frame(width: 160)
+            .pickerStyle(.segmented).frame(maxWidth: 260)
         }
         .padding(.horizontal, DS.cardPadding).padding(.vertical, DS.s)
         .background(.bar)
@@ -493,9 +545,9 @@ struct HomeMetricsHeader: View {
     }
 
     private func total(_ label: String, _ n: Int) -> some View {
-        VStack(spacing: 1) {
+        VStack(alignment: .leading, spacing: 1) {
             Text("\(n)").font(.title3.monospacedDigit().bold())
-            Text("\(label) · trades cleared").font(.caption2).foregroundStyle(.secondary)
+            Text(label).font(.caption2).foregroundStyle(.secondary).lineLimit(2)
         }
     }
 }

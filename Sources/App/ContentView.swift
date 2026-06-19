@@ -24,11 +24,29 @@ struct ContentView: View {
     @State private var showInbox = false
     @State private var showChannel = false
     @State private var showChangelog = false   // Z2: startup "What's New"
+    @State private var pendingTab: Int? = nil   // C1 phase-2: tab the user wants to leave Home for
+    @State private var showLeaveGuard = false   // C1 phase-2: Save-or-Discard guard
     private var dev = DevAccess.shared
     private var settings = SettingsManager.shared
+    private var intents = DayIntentStore.shared
+
+    /// Leaving Home (tab 0) with unsaved intent edits is intercepted so the user must
+    /// Save or Discard first — marks never silently leak between sessions.
+    private var tabSelection: Binding<Int> {
+        Binding(
+            get: { selectedTab },
+            set: { newValue in
+                if selectedTab == 0, newValue != 0, intents.hasUnsavedChanges {
+                    pendingTab = newValue
+                    showLeaveGuard = true
+                } else {
+                    selectedTab = newValue
+                }
+            })
+    }
 
     var body: some View {
-        TabView(selection: $selectedTab) {
+        TabView(selection: tabSelection) {
             HomeView()
                 .tabItem { Label("Home", systemImage: "calendar") }
                 .tag(0)
@@ -59,6 +77,18 @@ struct ContentView: View {
                 .allowsHitTesting(false)
             }
         }
+        .confirmationDialog("Unsaved intent changes", isPresented: $showLeaveGuard, titleVisibility: .visible) {
+            Button("Save") {
+                intents.markIntentsSaved()
+                Task { await TradeProfileStore.shared.publishMine() }
+                if let t = pendingTab { selectedTab = t }; pendingTab = nil
+            }
+            Button("Discard", role: .destructive) {
+                intents.discardChanges()
+                if let t = pendingTab { selectedTab = t }; pendingTab = nil
+            }
+            Button("Keep Editing", role: .cancel) { pendingTab = nil }
+        } message: { Text("You have unsaved marks. Save them so your trades update, or discard to revert.") }
         .fullScreenCover(isPresented: $showInbox) { InboxView() }
         .fullScreenCover(isPresented: $showChannel) { ChannelView() }
         .sheet(isPresented: $showChangelog) {

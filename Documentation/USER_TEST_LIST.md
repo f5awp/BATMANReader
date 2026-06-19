@@ -358,9 +358,44 @@
 1. **Channel (E1):** open the broadcast channel. Posts now read **oldest at top → newest at bottom**
    (pinned still on top). Tap a post to expand its replies (indented under a **threadline**); tap the
    threadline or **"Hide N replies"** to collapse. Replies read oldest→newest.
-2. **Statuses (E2):** a poster who set a status shows it (with emoji) **under their name** in the channel.
+2. **Statuses (E2):** a poster who set a status shows it (with emoji) **to the right of their name** in the channel.
 3. **Settings (E3):** Trade Settings → the **Qual-swap** sections have an indigo tint and the **Relief
    Dispatcher** box a teal tint, visually separated from the blacklist sections.
+
+---
+
+## Session (2026-06-19)
+
+### TR3-C1.2 — Save-or-Discard intent editing (glowing Save + leave guard)  [C1 phase-2 · Auto ✅ logic; device-check UI]
+1. **Read-only general view:** on Home (not in Mark Intents), **tap** a day and **long-press** a day.
+   - **Expect:** nothing happens — no intent editor opens. The calendar is read-only until you enter the section.
+2. **Enter + glow:** tap **Mark Intents**. The section opens with a **Save** button at the bottom that is
+   **faded/transparent green** and says **"Saved"** (nothing to save yet).
+3. **Make a change:** paint any intent (or long-press a day → edit it).
+   - **Expect:** the Save button **lights up glowing green** and reads **"Save Changes"**.
+4. **Save:** tap it.
+   - **Expect:** it **dims back** to faded "Saved"; your Trade Solutions / Intents will use the new marks
+     on their next run (it does **not** re-run on every paint).
+5. **Leave-guard via Done:** make another change, then tap **Done**.
+   - **Expect:** a **Save / Discard / Keep Editing** prompt. **Discard** reverts to your last save;
+     **Save** keeps it; **Keep Editing** stays.
+6. **Leave-guard via tab:** make a change, then tap the **Trades** tab.
+   - **Expect:** the same prompt — you can't leave Home with unsaved marks without choosing.
+- **Break it:** make a change, **Discard**, re-open Mark Intents — the change must be **gone** (reverted to
+  the last save), and the Save button faded. Save, change, Discard again — it should revert only to that
+  **last saved** state, not all the way to empty.
+
+### TR3-status-pos — Channel status sits right of the name  [device-check]
+1. Open the broadcast channel where someone has a status set.
+- **Expect:** their status (italic, with emoji) appears **immediately to the right of their name**, not
+  under the message and not to the left.
+
+### TR3-metrics — Home metrics labels + no dock collision  [device-check]
+1. Open Home. Look at the two totals at the very top.
+- **Expect:** they read **"Your Successful Trades"** and **"PAFCA Successful Trades"** (numbers above the
+  labels, on the **left**). The period control (Week/Month/…) sits **below** them — **not** on the right.
+2. Look at the top-right **Inbox** and **Channel** dock buttons.
+- **Expect:** they **no longer overlap** the metrics/period control — clear separation.
 
 ---
 

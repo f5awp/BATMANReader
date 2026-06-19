@@ -97,7 +97,7 @@ struct SlackMessageRow<Actions: View>: View {
     let timestamp: Date
     let message: String
     var meta: (text: String, color: Color)? = nil
-    var status: String? = nil          // E2: the author's status, shown to the LEFT of their name
+    var status: String? = nil          // E2: the author's status, shown to the RIGHT of their name
     var avatarSize: CGFloat = 36
     @ViewBuilder var actions: () -> Actions
 
@@ -114,10 +114,10 @@ struct SlackMessageRow<Actions: View>: View {
             Avatar(name: name, id: authorID, size: avatarSize)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
+                    Text(name).font(.subheadline.weight(.semibold))
                     if let status, !status.isEmpty {
                         Text(status).font(.caption2).italic().foregroundStyle(.secondary).lineLimit(1)
                     }
-                    Text(name).font(.subheadline.weight(.semibold))
                     if let meta {
                         Text(meta.text).font(.caption2.weight(.medium)).foregroundStyle(meta.color)
                     }

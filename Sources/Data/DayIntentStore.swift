@@ -22,7 +22,52 @@ final class DayIntentStore {
     /// changes — so editing intents no longer re-runs the heavy search on every keystroke; you SAVE,
     /// then the search re-runs once.
     private(set) var intentsRevision: Int = 0
-    func markIntentsSaved() { intentsRevision += 1 }
+
+    /// C1 phase-2: `true` once the user paints/edits an intent, `false` after Save or Discard.
+    /// NOT persisted — a fresh launch's on-disk state IS the saved baseline. Drives the glowing
+    /// Save button + the leave-Home guard (Save-or-Discard).
+    private(set) var hasUnsavedChanges = false
+
+    /// Baseline captured at launch and at each Save. `discardChanges()` restores it so Discard
+    /// truly reverts the session's edits — not just the dirty flag.
+    private var savedBaseline = Baseline.empty
+
+    private struct Baseline {
+        var working: [String: WorkingIntentState]
+        var off: [String: OffIntentState]
+        var topologies: [String: DayTopology]
+        var notes: [String: DayNote]
+        var availability: [String: Set<ShiftAvailabilityType>]
+        var manualOff: Set<String>
+        static let empty = Baseline(working: [:], off: [:], topologies: [:],
+                                    notes: [:], availability: [:], manualOff: [])
+    }
+
+    private func captureBaseline() -> Baseline {
+        Baseline(working: workingIntents, off: offIntents, topologies: topologies,
+                 notes: notes, availability: offAvailability, manualOff: manualOffDays)
+    }
+
+    private func markDirty() { hasUnsavedChanges = true }
+
+    /// SAVE: snapshots the current state as the new baseline, clears the dirty flag, and
+    /// bumps the revision so the trade feeds recompute once.
+    func markIntentsSaved() {
+        intentsRevision += 1
+        savedBaseline = captureBaseline()
+        hasUnsavedChanges = false
+    }
+
+    /// DISCARD: reverts every intent map to the last saved baseline and clears the dirty flag.
+    func discardChanges() {
+        workingIntents  = savedBaseline.working
+        offIntents      = savedBaseline.off
+        topologies      = savedBaseline.topologies
+        notes           = savedBaseline.notes
+        offAvailability = savedBaseline.availability
+        manualOffDays   = savedBaseline.manualOff
+        hasUnsavedChanges = false
+    }
 
     // MARK: Stored state (the single source of truth)
 
@@ -99,6 +144,7 @@ final class DayIntentStore {
         offAvailability = Self.load(Keys.availability) ?? [:]
         manualOffDays   = Set(UserDefaults.standard.stringArray(forKey: Keys.manualOff) ?? [])
         migrateFromTradeIntentStoreIfNeeded()
+        savedBaseline = captureBaseline()   // on-disk state is the saved baseline at launch
     }
 
     /// Seed `workingIntents` from the legacy `TradeIntentStore.seekingDayIDs` once,
@@ -116,20 +162,24 @@ final class DayIntentStore {
 
     func setWorkingIntent(_ state: WorkingIntentState?, forDay dayID: String) {
         if let state { workingIntents[dayID] = state } else { workingIntents[dayID] = nil }
+        markDirty()
     }
 
     func setOffIntent(_ state: OffIntentState?, forDay dayID: String) {
         manualOffDays.insert(dayID)   // hand-edited → preserve from the openness shortcut
         if let state { offIntents[dayID] = state } else { offIntents[dayID] = nil }
+        markDirty()
     }
 
     func setTopology(_ topology: DayTopology?, forDay dayID: String) {
         if let topology, topology != .standard { topologies[dayID] = topology }
         else { topologies[dayID] = nil }
+        markDirty()
     }
 
     func setNote(_ note: DayNote?, forDay dayID: String) {
         if let note, !note.message.isEmpty { notes[dayID] = note } else { notes[dayID] = nil }
+        markDirty()
     }
 
     /// Toggle one shift type in an off-day's availability. Sets/clears the day's
@@ -146,6 +196,7 @@ final class DayIntentStore {
             offAvailability[dayID] = set
             offIntents[dayID] = .wantToWork
         }
+        markDirty()
     }
 
     /// Openness is a SHORTCUT that bulk-sets the per-day availability pills (the
@@ -215,6 +266,7 @@ final class DayIntentStore {
         offIntents[dayID] = nil
         offAvailability[dayID] = nil
         manualOffDays.remove(dayID)   // back under the openness shortcut's control
+        markDirty()
     }
 
     // MARK: Reads
