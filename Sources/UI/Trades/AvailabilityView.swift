@@ -179,6 +179,8 @@ struct FindCandidatesSection: View {
                         .transition(.move(edge: .top).combined(with: .opacity))
                 }
 
+                if hasSearched { luckyBar }   // #4: always visible after a search (was buried in the results list)
+
                 Toggle(isOn: $whatIf.animation()) {
                     Label("What If? Mode — show every legal option", systemImage: "wand.and.stars")
                         .font(.caption.weight(.semibold))
@@ -218,7 +220,6 @@ struct FindCandidatesSection: View {
                 Text("Swap away all selected days — fewest people first, then most 🔥 and bookends.")
                     .font(.caption).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal)
-                luckyBar
                 let shown = filteredPackages
                 if shown.isEmpty {
                     ContentUnavailableView("No matches for your filter", systemImage: "line.3.horizontal.decrease.circle",

@@ -919,12 +919,9 @@ struct ChannelView: View {
                     .font(.caption2.weight(.semibold)).foregroundStyle(.orange).padding(.leading, 46)
             }
             SlackMessageRow(name: post.authorName, authorID: post.authorID,
-                            timestamp: post.createdAt, message: post.text) {
+                            timestamp: post.createdAt, message: post.text,
+                            status: authorStatus(post.authorID)) {   // E2: status to the LEFT of the name
                 postMenu(post)
-            }
-            // E2: the author's published status (with emoji) under their name.
-            if let s = authorStatus(post.authorID) {
-                Text(s).font(.caption2).italic().foregroundStyle(.secondary).lineLimit(2).padding(.leading, 46)
             }
             if let b64 = post.imageBase64, let ui = PostImage.decode(b64) {
                 Image(uiImage: ui).resizable().scaledToFit()
