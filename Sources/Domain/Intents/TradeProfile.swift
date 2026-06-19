@@ -118,6 +118,18 @@ struct TradeProfile: Sendable, Hashable, Codable, Identifiable {
         self.mustBeOffDayIDs = mustBeOffDayIDs; self.keepDayIDs = keepDayIDs; self.wantToWorkDayIDs = wantToWorkDayIDs
     }
 
+    /// A8: THE single fabricated profile for a peer who hasn't published one. Defaults to
+    /// **Bookends Only** (conservative) so a profileless dispatcher is never offered a
+    /// non-bookend (split-the-weekend) pickup until they opt into broader trading. `updatedAt`
+    /// is the epoch so any real published profile always wins last-write-wins.
+    static func defaultForUnpublished(workerID: String, name: String) -> TradeProfile {
+        TradeProfile(workerID: workerID, displayName: name,
+                     openness: TradeOpenness.bookends.rawValue,
+                     blacklistedWeekdays: [], blacklistedDesks: [],
+                     blacklistedShiftTypes: [], blacklistedRegions: [],
+                     seekingDayIDs: [], updatedAt: Date(timeIntervalSince1970: 0))
+    }
+
     var id: String { workerID }
     var bookendDaySet: Set<String> { Set(bookendDays ?? []) }
     var bestEmail: String? {

@@ -862,6 +862,27 @@ enum TradeEngineTests {
                                         coverMap: covMap, coverQuals: ["D"], coverProfile: noneProfile, options: .physicalOnly).eligible,
               "U1-soft: .physicalOnly ignores openness")
 
+        // MARK: A8 — a peer with NO published profile defaults to Bookends Only (conservative):
+        // never offered a non-bookend (split-the-weekend) pickup until they opt into broader trading.
+        do {
+            let unpub = TradeProfile.defaultForUnpublished(workerID: "999", name: "Nobody")
+            check(unpub.openness == TradeOpenness.bookends.rawValue, "A8: unpublished profile defaults to Bookends Only")
+            let openPub = TradeProfile(workerID: "888", displayName: "Open", openness: TradeOpenness.all.rawValue,
+                                       blacklistedWeekdays: [], blacklistedDesks: [], blacklistedShiftTypes: [],
+                                       blacklistedRegions: [], seekingDayIDs: [], updatedAt: Date.distantPast)
+            check(openPub.openness == TradeOpenness.all.rawValue, "A8: an explicitly-published Open profile stays Open (only MISSING profiles default)")
+            let isoSplit = ["2026-07-15": rEntry("2026-07-15", off: true)]   // isolated off day → non-bookend (split)
+            check(!TradeEligibility.canCover(coverDayID: "2026-07-15", coverDay: d15, desk: "10", startHour: 5,
+                                             coverMap: isoSplit, coverQuals: ["D"], coverProfile: unpub, options: .full).eligible,
+                  "A8: profileless (bookends) receiver REJECTS a non-bookend split pickup")
+            check(TradeEligibility.canCover(coverDayID: "2026-07-15", coverDay: d15, desk: "10", startHour: 5,
+                                            coverMap: covMap, coverQuals: ["D"], coverProfile: unpub, options: .full).eligible,
+                  "A8: profileless (bookends) receiver ACCEPTS a bookend pickup")
+            check(TradeEligibility.canCover(coverDayID: "2026-07-15", coverDay: d15, desk: "10", startHour: 5,
+                                            coverMap: isoSplit, coverQuals: ["D"], coverProfile: openPub, options: .full).eligible,
+                  "A8: an Open profile still accepts the split (proves the default is what changes behavior)")
+        }
+
         // MARK: Relief dispatcher — schedule unknown past the horizon (pure).
         let reliefDate = DateComponents(calendar: .current, year: 2026, month: 8, day: 7).date!
         let beforeRelief = DateComponents(calendar: .current, year: 2026, month: 8, day: 7).date!  // inclusive

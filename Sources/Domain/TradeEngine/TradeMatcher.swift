@@ -687,10 +687,7 @@ enum TradeMatcher {
             let shift = QualSwapShift(workerID: e.workerID, name: e.workerName, desk: e.desk,
                                       startHour: e.startHour, quals: e.quals)
             let prof = TradeProfileStore.shared.profile(forWorker: e.workerID)
-                ?? TradeProfile(workerID: e.workerID, displayName: e.workerName,
-                                openness: TradeOpenness.all.rawValue, blacklistedWeekdays: [],
-                                blacklistedDesks: [], blacklistedShiftTypes: [], blacklistedRegions: [],
-                                seekingDayIDs: [], updatedAt: Date())
+                ?? TradeProfile.defaultForUnpublished(workerID: e.workerID, name: e.workerName)   // A8: missing → Bookends Only
             return (shift, prof)
         }
         var exclude = excludeIDs; exclude.insert(takerID)

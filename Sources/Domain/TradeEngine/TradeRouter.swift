@@ -176,9 +176,7 @@ enum TradeRouter {
             roster: rosterMeta.map { (id: $0.key, name: $0.value.name, quals: $0.value.quals) },
             profiles: profilesByID, selfID: selfID)
         func profileFor(_ id: String, _ name: String) -> TradeProfile {
-            profilesByID[id] ?? TradeProfile(workerID: id, displayName: name, openness: TradeOpenness.all.rawValue,
-                blacklistedWeekdays: [], blacklistedDesks: [], blacklistedShiftTypes: [], blacklistedRegions: [],
-                seekingDayIDs: [], updatedAt: Date())
+            profilesByID[id] ?? TradeProfile.defaultForUnpublished(workerID: id, name: name)   // A8: missing → Bookends Only
         }
         let mineEntries = Array((maps[selfID] ?? [:]).values)
 
@@ -315,9 +313,7 @@ enum TradeRouter {
         // freed desk). The bridge is NOT counted in N. Reuses the loaded `maps` (no extra fetches).
         func openProfile(_ id: String, _ name: String) -> TradeProfile {
             TradeProfileStore.shared.profile(forWorker: id)
-                ?? TradeProfile(workerID: id, displayName: name, openness: TradeOpenness.all.rawValue,
-                                blacklistedWeekdays: [], blacklistedDesks: [], blacklistedShiftTypes: [],
-                                blacklistedRegions: [], seekingDayIDs: [], updatedAt: Date())
+                ?? TradeProfile.defaultForUnpublished(workerID: id, name: name)   // A8: missing → Bookends Only
         }
         for giveDay in giveDayIDs.sorted() {
             guard let myEntry = (maps[selfID] ?? [:])[giveDay],

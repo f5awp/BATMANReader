@@ -1230,10 +1230,7 @@ struct TwoWaySheet: View {
         loading = true
         let myProfile    = TradeProfileStore.shared.myProfile()
         let theirProf    = await TradeProfileStore.shared.fetchProfile(forWorker: candidate.workerID)
-            ?? TradeProfile(workerID: candidate.workerID, displayName: candidate.name,
-                            openness: TradeOpenness.all.rawValue, blacklistedWeekdays: [],
-                            blacklistedDesks: [], blacklistedShiftTypes: [], blacklistedRegions: [],
-                            seekingDayIDs: [], updatedAt: Date())
+            ?? TradeProfile.defaultForUnpublished(workerID: candidate.workerID, name: candidate.name)   // A8: missing → Bookends Only
         let theirSeek    = theirProf.seekingDayIDs
         theirSeeking = theirSeek
         let trimmedStatus = theirProf.statusBroadcast?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
