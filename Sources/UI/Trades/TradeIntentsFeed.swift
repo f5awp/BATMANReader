@@ -138,14 +138,19 @@ struct TradeByIntentsFeed: View {
         await TradeProfileStore.shared.refreshOthers()
         let myID = SettingsManager.shared.username
         packages = await TradeRouter.packages(excluding: myID)
-        // A2: full distinct roster (minus you), names resolved (G2a) — for the required-person dropdown.
+        // A2: people for the Connection dropdown — union of the roster, published peers, and anyone
+        // already in a result — names resolved (G2a) — so it's never blank with a thin roster.
         let now = Date()
         let end = Calendar.current.date(byAdding: .month, value: 12, to: now) ?? now
         let entries = await RosterStore.shared.entries(from: now, to: end)
         var seen = Set<String>(); var people: [(id: String, name: String)] = []
-        for e in entries where e.workerID != myID && seen.insert(e.workerID).inserted {
-            people.append((e.workerID, TradeNames.resolved(displayName: nil, rosterName: e.workerName, workerID: e.workerID)))
+        func add(_ id: String, _ name: String) {
+            guard id != myID, seen.insert(id).inserted else { return }
+            people.append((id, TradeNames.resolved(displayName: nil, rosterName: name, workerID: id)))
         }
+        for e in entries { add(e.workerID, e.workerName) }
+        for (id, p) in TradeProfileStore.shared.others { add(id, p.displayName) }
+        for pkg in packages { for a in pkg.assignments { add(a.workerID, a.name) } }
         rosterPeople = people.sorted { $0.name < $1.name }
         loading = false
     }
