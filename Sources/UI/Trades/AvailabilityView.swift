@@ -94,7 +94,10 @@ struct FindCandidatesSection: View {
         .fullScreenCover(item: $twoWayCandidate) { c in
             TwoWaySheet(candidate: c)
         }
-        .sheet(isPresented: $showFilter) { MasterFilterSheet(filter: $searchFilter, people: rosterPeople) }
+        .sheet(isPresented: $showFilter) {
+            MasterFilterSheet(filter: $searchFilter, people: rosterPeople,
+                              onApply: { if !selectedIDs.isEmpty { Task { await search() } } })
+        }
         .sheet(isPresented: $showQualSwaps) {
             QualSwapDaysSheet(packages: qualSwapResults, loading: loadingQual) { selectedPkgs in
                 showQualSwaps = false
@@ -259,21 +262,25 @@ struct FindCandidatesSection: View {
     }
 
     /// A1/A2: the "I'm Feeling Lucky" filter bar for Trade Solutions + active-choice chips.
+    private var luckyTitle: String {
+        searchFilter.summary(nameFor: { id in rosterPeople.first { $0.id == id }?.name ?? id })
+            .map { "Lucky: \($0)" } ?? "I'm Feeling Lucky"
+    }
+
     private var luckyBar: some View {
         VStack(alignment: .leading, spacing: 6) {
             Button { showFilter = true } label: {
-                Label("I'm Feeling Lucky", systemImage: "wand.and.stars").font(.subheadline.weight(.semibold)).frame(maxWidth: .infinity)
+                Label(luckyTitle, systemImage: "wand.and.stars").font(.subheadline.weight(.semibold)).frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent).controlSize(.small)
-            HStack(spacing: 6) {
-                luckyChip(searchFilter.engine == .both ? "Both engines" : (searchFilter.engine == .minCost ? "Min-Cost" : "N-Way"))
-                luckyChip("≤ \(searchFilter.maxPeople) people")
-                if let rid = searchFilter.requiredWorkerID {
-                    luckyChip("with " + (rosterPeople.first { $0.id == rid }?.name ?? rid))
+            .tint(searchFilter.isActive ? .orange : nil)
+            if searchFilter.isActive {
+                HStack(spacing: 6) {
+                    luckyChip("One-time generation — tap to change or reset")
+                    Spacer()
                 }
-                Spacer()
+                .font(.caption2)
             }
-            .font(.caption2)
         }
         .padding(.horizontal).padding(.top, 4)
     }

@@ -1037,6 +1037,16 @@ enum TradeEngineTests {
             check(!req.isEmpty && req.allSatisfy { $0.assignments.contains { a in a.workerID == "C" } },
                   "A2: required person → only solutions containing them")
             check(Set(SearchFilter.Engine.allCases.map(\.rawValue)) == ["minCost", "nWay", "both"], "A2: engine CaseIterable universe guard")
+
+            // A2b: Lucky button state — default is NOT active; any narrowing IS; summary shows only non-defaults.
+            check(!SearchFilter.normal.isActive, "A2b: default filter is not active (shows everything)")
+            check(SearchFilter(engine: .nWay, maxPeople: 4, requiredWorkerID: nil).isActive, "A2b: a narrowed engine is active")
+            check(SearchFilter(engine: .both, maxPeople: 3, requiredWorkerID: nil).isActive, "A2b: a lowered max-people is active")
+            check(SearchFilter.normal.summary(nameFor: { $0 }) == nil, "A2b: default filter has no summary")
+            let sum = SearchFilter(engine: .nWay, maxPeople: 3, requiredWorkerID: "C").summary(nameFor: { _ in "Cary" })
+            check(sum == "N-Way · ≤3 · with Cary", "A2b: summary lists only the non-default selections")
+            check(SearchFilter(engine: .both, maxPeople: 4, requiredWorkerID: "C").summary(nameFor: { _ in "Cary" }) == "with Cary",
+                  "A2b: summary omits defaulted engine/people, keeps the required person")
         }
 
         // MARK: E1 — channel reads top-to-bottom (oldest → newest); pinned still first.

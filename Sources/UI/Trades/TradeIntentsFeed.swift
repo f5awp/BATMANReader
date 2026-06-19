@@ -24,6 +24,12 @@ struct TradeByIntentsFeed: View {
     /// A1/A2: filtered + capped (best-first via rankPackages order) view of the results.
     private var displayed: [TradePackage] { Array(searchFilter.filter(packages).prefix(100)) }
 
+    /// The Lucky button label reflects the active one-time criteria (or the default name).
+    private var luckyTitle: String {
+        searchFilter.summary(nameFor: { id in rosterPeople.first { $0.id == id }?.name ?? id })
+            .map { "Lucky: \($0)" } ?? "I'm Feeling Lucky"
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
@@ -82,7 +88,9 @@ struct TradeByIntentsFeed: View {
                 }
             }
         }
-        .sheet(isPresented: $showFilter) { MasterFilterSheet(filter: $searchFilter, people: rosterPeople) }
+        .sheet(isPresented: $showFilter) {
+            MasterFilterSheet(filter: $searchFilter, people: rosterPeople, onApply: { Task { await reload() } })
+        }
         .task { await reload() }
         .onChange(of: whatIf) { _, _ in Task { await reload() } }
         // C1: recompute on an explicit SAVE (intents revision) — NOT on every edit (was
@@ -99,21 +107,19 @@ struct TradeByIntentsFeed: View {
     private var luckyBar: some View {
         VStack(alignment: .leading, spacing: 6) {
             Button { showFilter = true } label: {
-                Label("I'm Feeling Lucky", systemImage: "wand.and.stars")
+                Label(luckyTitle, systemImage: "wand.and.stars")
                     .font(.subheadline.weight(.semibold))
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent).controlSize(.small)
-            HStack(spacing: 6) {
-                chip(searchFilter.engine == .both ? "Both engines"
-                     : (searchFilter.engine == .minCost ? "Min-Cost" : "N-Way"))
-                chip("≤ \(searchFilter.maxPeople) people")
-                if let rid = searchFilter.requiredWorkerID {
-                    chip("must include " + (rosterPeople.first { $0.id == rid }?.name ?? rid))
+            .tint(searchFilter.isActive ? .orange : nil)
+            if searchFilter.isActive {
+                HStack(spacing: 6) {
+                    chip("One-time generation — tap to change or reset")
+                    Spacer()
                 }
-                Spacer()
+                .font(.caption2)
             }
-            .font(.caption2)
         }
         .padding(.horizontal).padding(.top, 4)
     }
@@ -177,13 +183,21 @@ struct TradeByIntentsFeed: View {
 struct MasterFilterSheet: View {
     @Binding var filter: SearchFilter
     let people: [(id: String, name: String)]
+    /// Re-runs the generation once, with whatever filter is now committed (Generate or Reset).
+    var onApply: () -> Void = {}
     @Environment(\.dismiss) private var dismiss
+    @State private var draft: SearchFilter
+
+    init(filter: Binding<SearchFilter>, people: [(id: String, name: String)], onApply: @escaping () -> Void = {}) {
+        _filter = filter; self.people = people; self.onApply = onApply
+        _draft = State(initialValue: filter.wrappedValue)
+    }
 
     var body: some View {
         NavigationStack {
             Form {
                 Section("Search engine") {
-                    Picker("Engine", selection: $filter.engine) {
+                    Picker("Engine", selection: $draft.engine) {
                         Text("Min-Cost").tag(SearchFilter.Engine.minCost)
                         Text("N-Way").tag(SearchFilter.Engine.nWay)
                         Text("Both").tag(SearchFilter.Engine.both)
@@ -192,23 +206,39 @@ struct MasterFilterSheet: View {
                         .font(.caption2).foregroundStyle(.secondary)
                 }
                 Section("Max people in a trade") {
-                    Picker("Max people", selection: $filter.maxPeople) {
+                    Picker("Max people", selection: $draft.maxPeople) {
                         ForEach(1...4, id: \.self) { Text("\($0)").tag($0) }
                     }.pickerStyle(.segmented)
                 }
                 Section("Connection") {
                     Picker("Connection", selection: Binding(
-                        get: { filter.requiredWorkerID ?? "" },
-                        set: { filter.requiredWorkerID = $0.isEmpty ? nil : $0 })) {
+                        get: { draft.requiredWorkerID ?? "" },
+                        set: { draft.requiredWorkerID = $0.isEmpty ? nil : $0 })) {
                         Text("Anyone").tag("")
                         ForEach(people, id: \.id) { Text($0.name).tag($0.id) }
                     }
                     Text("Only show trades that include this dispatcher.").font(.caption2).foregroundStyle(.secondary)
                 }
+                Section {
+                    // One-time generation for the chosen criteria.
+                    Button {
+                        filter = draft; onApply(); dismiss()
+                    } label: {
+                        Label("Generate matches", systemImage: "wand.and.stars").frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    // Reset back to the section's NORMAL criteria.
+                    Button(role: .destructive) {
+                        draft = .normal; filter = .normal; onApply(); dismiss()
+                    } label: {
+                        Label("Reset to normal", systemImage: "arrow.uturn.backward").frame(maxWidth: .infinity)
+                    }
+                    .disabled(!filter.isActive && !draft.isActive)
+                }
             }
             .navigationTitle("I'm Feeling Lucky")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
         }
     }
 }

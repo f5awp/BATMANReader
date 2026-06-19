@@ -398,6 +398,23 @@ struct SearchFilter: Equatable, Sendable {
     var maxPeople: Int = 4          // 1…4 distinct participants (incl. you)
     var requiredWorkerID: String?   // when set, only solutions that INCLUDE this person
 
+    /// The default "normal" criteria — every engine, up to 4 people, anyone.
+    static let normal = SearchFilter()
+    /// True when the user has narrowed away from the normal criteria (drives the Reset button +
+    /// the "Lucky" button label). A default filter shows everything, so it's NOT active.
+    var isActive: Bool { self != SearchFilter.normal }
+
+    /// A compact human summary of only the NON-default selections, e.g. "N-Way · ≤3 · with Cary".
+    /// `nameFor` resolves a worker ID to a display name. Returns nil when nothing is narrowed.
+    func summary(nameFor: (String) -> String) -> String? {
+        guard isActive else { return nil }
+        var parts: [String] = []
+        if engine != .both { parts.append(engine == .minCost ? "Min-Cost" : "N-Way") }
+        if maxPeople != 4 { parts.append("≤\(maxPeople)") }
+        if let r = requiredWorkerID { parts.append("with \(nameFor(r))") }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
     /// True if `id` is a participant of `p` (peer assignment or a route participant).
     private func contains(_ id: String, _ p: TradePackage) -> Bool {
         p.assignments.contains { $0.workerID == id } || (p.route?.participants.contains(id) ?? false)
