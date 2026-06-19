@@ -154,8 +154,13 @@ struct SettingsView: View {
                                 return
                             }
                             let removed = EventKitManager.shared.removeAllEvents()                                // clear ALL app events across every calendar
+                            let readOnly = EventKitManager.shared.lastResetReadOnly
                             let added = EventKitManager.shared.resyncPersonalEvents(for: ShiftStore.shared.shifts) // re-add clean (deduped)
-                            calendarResetMessage = "Removed \(removed) event\(removed == 1 ? "" : "s") (including duplicates) and re-added \(added) shift\(added == 1 ? "" : "s") cleanly."
+                            var msg = "Removed \(removed) event\(removed == 1 ? "" : "s") (including duplicates) and re-added \(added) shift\(added == 1 ? "" : "s") cleanly."
+                            if readOnly > 0 {
+                                msg += " \(readOnly) duplicate\(readOnly == 1 ? "" : "s") sit in a read-only calendar the app can't edit — delete those manually in the Calendar app."
+                            }
+                            calendarResetMessage = msg
                         }
                     } label: {
                         Label("Reset app calendar events", systemImage: "calendar.badge.exclamationmark")

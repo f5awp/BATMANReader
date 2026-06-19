@@ -166,37 +166,46 @@ final class EventKitManager {
         }
     }
 
-    /// Removes every calendar event the app ever wrote — scanning ALL writable calendars, not just
-    /// the one we currently track. This catches duplicates that landed in another/default calendar or
-    /// a stale "AA Schedule" copy (the reason an earlier reset "did nothing"). Returns the count removed.
+    /// Removes every calendar event the app ever wrote — scanning ALL calendars and matching by the
+    /// app's NOTES marker, our calendar name, my availability title, AND the shift's title+time
+    /// (every duplicate copy shares those). This catches copies the notes/calendar checks alone miss.
+    /// Returns the count removed (negative-coded read-only leftovers reported via `lastResetReadOnly`).
+    private(set) var lastResetReadOnly = 0
     @discardableResult
     func removeAllEvents() -> Int {
         authorizationStatus = EKEventStore.authorizationStatus(for: .event)   // refresh — don't fail on a stale status
         guard isAuthorized else { return 0 }
-        let mods = ekStore.calendars(for: .event).filter { $0.allowsContentModifications }
-        guard !mods.isEmpty else { return 0 }
+        let allCals = ekStore.calendars(for: .event)
+        guard !allCals.isEmpty else { return 0 }
         let (start, end) = scanWindow
-        let pred = ekStore.predicateForEvents(withStart: start, end: end, calendars: mods)
+        let pred = ekStore.predicateForEvents(withStart: start, end: end, calendars: allCals)
         let myName = SettingsManager.shared.displayName.isEmpty
             ? SettingsManager.shared.username : SettingsManager.shared.displayName
         let myAvail = "\(myName) — Available"
-        var removed = 0
+        // Titles the app uses for shift events, e.g. "AM 82" — every duplicate copy carries the title.
+        let shiftTitles = Set(ShiftStore.shared.shifts.compactMap {
+            $0.isOff ? nil : ($0.shiftShortLabel.isEmpty ? $0.title : $0.shiftShortLabel)
+        })
+        var removed = 0, readOnly = 0
         for ev in ekStore.events(matching: pred) {
-            // Mine = anything in an app-owned "AA Schedule" calendar (any copy), OR my own shared
-            // availability event. Never touch other dispatchers' events on the shared calendar.
-            let mine = ev.calendar.title == personalCalendarName
-                || (ev.calendar.title == "AA Schedule")
-                || (ev.title == myAvail && (ev.notes ?? "").contains("BATMANReader"))
-                || (ev.notes ?? "").contains("Added by BATMANReader")
-            if mine {
+            let title = ev.title ?? ""
+            let mine = (ev.notes ?? "").contains("BATMANReader")        // app marker (personal + shared)
+                || ev.calendar.title == "AA Schedule"                   // app-owned personal calendar (any copy)
+                || title == myAvail                                     // my shared availability event
+                || (!title.isEmpty && shiftTitles.contains(title))      // a shift event by its label (catches copies)
+            guard mine else { continue }
+            if ev.calendar.allowsContentModifications {
                 try? ekStore.remove(ev, span: .thisEvent, commit: false)
                 removed += 1
+            } else {
+                readOnly += 1   // can't delete from a read-only/subscribed calendar
             }
         }
         try? ekStore.commit()
         personalEventIDMap = [:]
         sharedEventIDMap = [:]
-        print("✅ EventKit: removed \(removed) app events across all calendars.")
+        lastResetReadOnly = readOnly
+        print("✅ EventKit: removed \(removed) app events (\(readOnly) in read-only calendars left).")
         return removed
     }
 
