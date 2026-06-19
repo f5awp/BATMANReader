@@ -49,11 +49,11 @@ struct TradeByIntentsFeed: View {
                     ContentUnavailableView("No Intent Matches",
                         systemImage: "sparkles",
                         description: Text(packages.isEmpty
-                            ? "Mark days to trade away on Home, or try What If? mode to widen the search."
+                            ? "Mark days to trade away on Home — and as others mark theirs, mutual-intent matches appear here. Try I'm Feeling Lucky for 3+ person and circular options."
                             : "No matches fit your current filter — tap the filter to widen it."))
                         .padding(.top, 20)
                 } else {
-                    sectionHeader("Trade Solutions", "From your marked days — fewest people first, then 🔥 and bookends")
+                    sectionHeader("Intent Matches", "Most mutual intent first — your marked days matched with theirs (🔥 = both sides marked)")
                     ForEach(displayed) { pkg in
                         PackageCard(package: pkg,
                                     onPropose: { Task { await propose(pkg) } },
@@ -155,7 +155,9 @@ struct TradeByIntentsFeed: View {
         loading = true
         await TradeProfileStore.shared.refreshOthers()
         let myID = SettingsManager.shared.username
-        packages = await TradeRouter.packages(excluding: myID, generation: generation)
+        // Intents uses its OWN engine — a marketplace of intent-for-intent deals involving you,
+        // ranked intent-first — NOT the Trade Solutions packages() function.
+        packages = await TradeRouter.intentSolutions(excluding: myID, generation: generation)
         // A2: people for the Connection dropdown — union of the roster, published peers, and anyone
         // already in a result — names resolved (G2a) — so it's never blank with a thin roster.
         let now = Date()

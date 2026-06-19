@@ -1056,6 +1056,45 @@ enum TradeEngineTests {
                   "U-PERF: fast scope fails BOTH heavy-step gates (3+ and N-Way) — background stays cheap")
         }
 
+        // MARK: INTENTS MARKETPLACE — pure deal assembler + intent-first ranking (distinct from packages).
+        do {
+            // Both sides marked → mutual deal, every leg counts toward intent score.
+            let both = TradeRouter.assembleIntentDeal(.init(
+                myGiveMarked: ["A1", "A2"], myGivePref: [],
+                theirGiveMarked: ["B1", "B2"], theirGivePref: []))
+            check(both?.gives == ["A1", "A2"] && both?.takes == ["B1", "B2"] && both?.mutualMarked == 4,
+                  "Intents: both-sides-marked deal counts all 4 legs as mutual intent")
+
+            // PEER-seeded: I marked NO give, but the peer marked a day I'd take → still a deal,
+            // balanced with my pref give. This is the marketplace difference vs packages().
+            let peerSeeded = TradeRouter.assembleIntentDeal(.init(
+                myGiveMarked: [], myGivePref: ["P1"],
+                theirGiveMarked: ["B1"], theirGivePref: []))
+            check(peerSeeded?.gives == ["P1"] && peerSeeded?.takes == ["B1"] && peerSeeded?.mutualMarked == 1,
+                  "Intents: a peer's marked day seeds a deal even when I marked no give (mutual=1, their side only)")
+
+            // Neither side marked → NOT in the marketplace (pure availability is not an intent match).
+            check(TradeRouter.assembleIntentDeal(.init(
+                myGiveMarked: [], myGivePref: ["P1"], theirGiveMarked: [], theirGivePref: ["Q1"])) == nil,
+                  "Intents: no marked intent on either side → no marketplace deal")
+
+            // Unbalanced → trims to k = min, keeping MARKED legs first (they're ordered ahead of pref).
+            let unbal = TradeRouter.assembleIntentDeal(.init(
+                myGiveMarked: ["A1"], myGivePref: ["P1", "P2"],
+                theirGiveMarked: ["B1"], theirGivePref: []))
+            check(unbal?.gives == ["A1"] && unbal?.takes == ["B1"] && unbal?.mutualMarked == 2,
+                  "Intents: balances to k=min and keeps the marked legs (drops surplus pref gives)")
+
+            // Intent-first ranking: a 3-person package with MORE mutual intent outranks a 2-person with less.
+            func pkg(_ id: String, people: Int, fire: Int) -> TradePackage {
+                let others = (1..<people).map { PackageAssignment(workerID: "\(id)-\($0)", name: "n", giveDayIDs: ["d"], takeDayIDs: ["e"]) }
+                var p = TradePackage(id: id, methodology: .greedy, assignments: others, route: nil)
+                p.fireCount = fire; return p
+            }
+            let ranked = TradeRouter.rankIntentPackages([pkg("two", people: 2, fire: 1), pkg("three", people: 3, fire: 3)])
+            check(ranked.first?.id == "three", "Intents: MOST mutual intent ranks first, even with more people (vs Trade Solutions' fewest-people-first)")
+        }
+
         // MARK: E1 — channel reads top-to-bottom (oldest → newest); pinned still first.
         do {
             func post(_ id: String, at: TimeInterval, pinned: Bool? = nil) -> BroadcastPost {

@@ -395,6 +395,152 @@ enum TradeRouter {
         return Self.rankPackages(scored)
     }
 
+    // MARK: - Intents marketplace (DISTINCT from packages — intent-for-intent, intent-first ranking)
+
+    /// One side's give-days for an intent pairing, split into MARKED (a real trade-away intent) and
+    /// PREF-ONLY (a day they'd merely accept covering). Used to assemble marketplace deals.
+    struct IntentPairing: Equatable, Sendable {
+        var myGiveMarked: [String]      // my marked trade-away days this peer would take
+        var myGivePref: [String]        // my other days this peer would take (pref, not marked)
+        var theirGiveMarked: [String]   // their marked trade-away days I would take
+        var theirGivePref: [String]     // their other days I would take (pref, not marked)
+    }
+
+    /// PURE core of the Intents marketplace. Assembles the best balanced TWO-person deal that fulfils
+    /// the most MARKED intents. Marketplace rule (distinct from `packages`): surface the deal if
+    /// EITHER side marked ≥1 day — so a peer's marked day I'd happily take seeds a deal even when I
+    /// marked no give. Marked legs are placed first so a balanced k-for-k swap maximises mutual intent.
+    /// Returns the chosen give/take day IDs + the mutual-marked leg count (the intent score). nil if
+    /// nothing marked on either side, or it can't balance.
+    static func assembleIntentDeal(_ p: IntentPairing) -> (gives: [String], takes: [String], mutualMarked: Int)? {
+        guard !p.myGiveMarked.isEmpty || !p.theirGiveMarked.isEmpty else { return nil }   // marketplace seed
+        let giveOrdered = p.myGiveMarked + p.myGivePref       // marked first → kept when we trim to balance
+        let takeOrdered = p.theirGiveMarked + p.theirGivePref
+        let k = min(giveOrdered.count, takeOrdered.count)
+        guard k >= 1 else { return nil }
+        let gives = Array(giveOrdered.prefix(k))
+        let takes = Array(takeOrdered.prefix(k))
+        let myMarked = Set(p.myGiveMarked), theirMarked = Set(p.theirGiveMarked)
+        let mutual = gives.filter(myMarked.contains).count + takes.filter(theirMarked.contains).count
+        return (gives, takes, mutual)
+    }
+
+    /// PURE, testable: the Intents ranking — INTENT-FIRST. The most mutual marked intent (`fireCount`)
+    /// wins, THEN fewest people, then bookends/date/urgency. This is the marquee difference from
+    /// `rankPackages` (Trade Solutions), which sorts fewest-people first.
+    static func rankIntentPackages(_ packages: [TradePackage]) -> [TradePackage] {
+        var seen = Set<String>()
+        let deduped = packages.filter { seen.insert($0.id).inserted }
+        return deduped.sorted {
+            if $0.fireCount != $1.fireCount { return $0.fireCount > $1.fireCount }        // most mutual intent first
+            if $0.peopleCount != $1.peopleCount { return $0.peopleCount < $1.peopleCount } // then fewest people
+            if $0.bookendTotal != $1.bookendTotal { return $0.bookendTotal > $1.bookendTotal }
+            let e0 = $0.earliestDayID ?? "9999-12-31", e1 = $1.earliestDayID ?? "9999-12-31"
+            if e0 != e1 { return e0 < e1 }
+            if $0.urgency != $1.urgency { return $0.urgency > $1.urgency }
+            return $0.id < $1.id
+        }
+    }
+
+    /// The Intents feed's engine — a MARKETPLACE of intent-for-intent deals involving you, ranked
+    /// intent-first. DISTINCT from `packages` (Trade Solutions): it seeds from BOTH your marked
+    /// trade-away days AND peers' marked trade-away days you'd take (so a peer's marked day seeds a
+    /// deal even when you marked no give), and ranks by most mutual intent. `generation` gates the
+    /// heavy 3+/circular work to Lucky → Generate, exactly like `packages` (U-PERF).
+    static func intentSolutions(excluding selfID: String, generation: SearchFilter = .fast) async -> [TradePackage] {
+        let (start, end) = horizon
+        let mySeeking = DayIntentStore.shared.seekingDayIDs
+        let myProfile = TradeProfileStore.shared.myProfile()
+
+        func wouldTake(_ prof: TradeProfile, _ leg: TwoWayLeg) -> Bool {
+            let cal = Calendar.current
+            let weekday = cal.component(.weekday, from: leg.date)
+            let region  = DeskRules.region(forDesk: leg.desk).rawValue
+            let type    = ShiftAvailabilityType.infer(fromStartHour: leg.startHour).rawValue
+            return prof.wouldPickUp(onDay: leg.dayID, weekday: weekday, desk: leg.desk,
+                                    shiftType: type, region: region, isBookend: leg.bookend)
+        }
+        func dayUrgency(_ dayID: String) -> Int {
+            let reason = DayIntentStore.shared.note(forDay: dayID)?.reason?.urgency ?? 0
+            switch DayIntentStore.shared.topology(forDay: dayID) {
+            case .personalMilestone: return reason + 3
+            case .highDemand:        return reason + 2
+            case .standard:          return reason
+            }
+        }
+        func urgency(of dayIDs: [String]) -> Int { dayIDs.map(dayUrgency).max() ?? 0 }
+
+        // Candidate universe = the whole roster (unknown-profile peers included), loaded once.
+        let allEntries = await RosterStore.shared.entries(from: start, to: end)
+        var maps: [String: [String: RosterEntry]] = [:]
+        var rosterMeta: [String: (name: String, quals: [String])] = [:]
+        for e in allEntries {
+            maps[e.workerID, default: [:]][e.day] = e
+            if rosterMeta[e.workerID] == nil { rosterMeta[e.workerID] = (e.workerName, e.quals) }
+        }
+        let profilesByID = TradeProfileStore.shared.others
+        let universe = MatchUniverse.candidates(
+            roster: rosterMeta.map { (id: $0.key, name: $0.value.name, quals: $0.value.quals) },
+            profiles: profilesByID, selfID: selfID)
+        func profileFor(_ id: String, _ name: String) -> TradeProfile {
+            profilesByID[id] ?? TradeProfile.defaultForUnpublished(workerID: id, name: name)
+        }
+        let mineEntries = Array((maps[selfID] ?? [:]).values)
+
+        var result: [TradePackage] = []
+        for cand in universe.sorted(by: { $0.workerID < $1.workerID }) {
+            let profile = profileFor(cand.workerID, cand.name)
+            let plan = await TradeMatcher.twoWayExplore(
+                withWorker: cand.workerID, name: cand.name,
+                windowStart: start, windowEnd: end,
+                mySeeking: mySeeking, theirSeeking: profile.seekingDayIDs,
+                myProfile: myProfile, theirProfile: profile, myID: selfID,
+                preloadedMine: mineEntries, preloadedPeer: Array((maps[cand.workerID] ?? [:]).values))
+
+            // Days each side can actually cover, split MARKED (wanted) vs PREF-only.
+            let myTakeable    = plan.iGive.filter { wouldTake(profile, $0) }     // my days the peer takes
+            let theirTakeable = plan.iTake.filter { wouldTake(myProfile, $0) }   // their days I take
+            let pairing = IntentPairing(
+                myGiveMarked:    myTakeable.filter { $0.wanted }.map(\.dayID),
+                myGivePref:      myTakeable.filter { !$0.wanted }.map(\.dayID),
+                theirGiveMarked: theirTakeable.filter { $0.wanted }.map(\.dayID),
+                theirGivePref:   theirTakeable.filter { !$0.wanted }.map(\.dayID))
+            guard let deal = assembleIntentDeal(pairing) else { continue }
+            let a = [PackageAssignment(workerID: cand.workerID, name: cand.name,
+                                       giveDayIDs: deal.gives, takeDayIDs: deal.takes)]
+            var pkg = TradePackage(id: "intent-\(cand.workerID)", methodology: .greedy, assignments: a,
+                                   route: nil, urgency: urgency(of: deal.gives + deal.takes),
+                                   isOptimal: deal.mutualMarked == deal.gives.count + deal.takes.count)
+            pkg.fireCount = deal.mutualMarked
+            result.append(pkg)
+        }
+
+        // Lucky (gated): also surface circular loops seeded from your marked give-days.
+        if generation.maxPeople >= 3, generation.engine != .minCost {
+            let giveShifts = await selfSeekingShifts(myID: selfID, start: start, end: end)
+            let loops = await nWayRoutes(seedShifts: giveShifts, maxDepth: generation.maxPeople, excluding: selfID)
+            for loop in loops.prefix(10) {
+                var gv: [String: [String]] = [:]; var tk: [String: [String]] = [:]
+                for leg in loop.legs {
+                    if leg.fromID == selfID { gv[leg.toID, default: []].append(leg.dayID) }
+                    if leg.toID == selfID   { tk[leg.fromID, default: []].append(leg.dayID) }
+                }
+                let participants = Set(gv.keys).union(tk.keys)
+                let a = participants.map { pid in
+                    PackageAssignment(workerID: pid, name: participantName(pid),
+                                      giveDayIDs: gv[pid] ?? [], takeDayIDs: tk[pid] ?? [])
+                }
+                var pkg = TradePackage(id: "intent-circular-\(loop.id)", methodology: .circular,
+                                       assignments: a, route: loop, urgency: urgency(of: a.flatMap(\.giveDayIDs)))
+                pkg.fireCount = loop.tier == .matchingIntents ? loop.legs.count : 0
+                pkg.bookendTotal = loop.bookendCount
+                result.append(pkg)
+            }
+        }
+
+        return rankIntentPackages(result)
+    }
+
     /// U4 priority tier (lower = higher priority): 0 = 🔥+bookends, 1 = 🔥-only, 2 = bookends-only.
     static func packageTier(_ p: TradePackage) -> Int {
         if p.fireCount > 0 { return p.bookendTotal > 0 ? 0 : 1 }

@@ -385,6 +385,15 @@
   the last save), and the Save button faded. Save, change, Discard again — it should revert only to that
   **last saved** state, not all the way to empty.
 
+### TR3-INTENTS — Intents is a distinct intent marketplace (not Trade Solutions)  [Auto ✅ core; device-check]
+1. Mark a few **trade-away** days on Home → SAVE. Have a peer mark trade-away days too (or seed test profiles).
+2. Open **Intents** tab.
+   - **Expect:** header reads **"Intent Matches"** (not "Trade Solutions"). Cards are **two-person** deals where each side is giving a **marked** day. The deals with the **most 🔥 (both sides marked)** are at the **top** — intent-first ranking.
+3. Compare to **Trade Solutions** (pick the same days, Find): there, fewest-people sorts first and peers are matched on availability — a different ordering/engine.
+4. **Marketplace check:** if a peer marked a day you'd happily take but you marked no give that pairs with them, you should still see a deal (you give a pref day back) — Intents surfaces *anyone's* marked intent involving you.
+5. **I'm Feeling Lucky → Generate** with N-Way/≤4 → 3+ and circular intent loops appear; Reset → back to fast two-person.
+- **Break it:** a pairing where neither side marked an intent must **not** appear in Intents (pure availability isn't an intent match).
+
 ### TR3-U-PERF — fast background, heavy search only on Lucky → Generate  [U-PERF · Auto ✅ thresholds; device-check]
 1. **Intents tab** (mark a few trade-away days first, then SAVE on Home): the feed should populate **quickly** and show **2-person** trades only — no 3-way/4-way or circular cards in the default view.
 2. **Trade Solutions** → pick days → **Find**: same — fast, 2-person cards only.
