@@ -417,14 +417,8 @@ struct SearchFilter: Equatable, Sendable {
     }
 }
 
-/// D4: the propose-button label. "Propose to {Name}" for a single counterparty,
-/// "Propose to All" only when 2+, plain "Propose" when there's nobody/no name (Just-2
-/// wrongly said "Propose to All" for a single person).
-func proposeButtonTitle(count: Int, name: String) -> String {
-    if count >= 2 { return "Propose to All" }
-    let n = name.trimmingCharacters(in: .whitespaces)
-    return (count == 1 && !n.isEmpty) ? "Propose to \(n)" : "Propose"
-}
+/// D4 (revised): a single generic propose label everywhere (user pref — no "to {Name}"/"to All").
+func proposeButtonTitle(count: Int, name: String) -> String { "Propose" }
 
 /// `distinctPeople` counts every participant INCLUDING you (You↔Cary ⇒ 2 ⇒
 /// "2-Person Swap"). Precedence: ECB one-way → qual swap → person count.

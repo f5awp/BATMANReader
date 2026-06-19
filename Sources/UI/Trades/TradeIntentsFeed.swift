@@ -99,7 +99,7 @@ struct TradeByIntentsFeed: View {
     private var luckyBar: some View {
         VStack(alignment: .leading, spacing: 6) {
             Button { showFilter = true } label: {
-                Label("I'm Feeling Lucky — filter the search", systemImage: "wand.and.stars")
+                Label("I'm Feeling Lucky", systemImage: "wand.and.stars")
                     .font(.subheadline.weight(.semibold))
                     .frame(maxWidth: .infinity)
             }
@@ -191,8 +191,8 @@ struct MasterFilterSheet: View {
                         ForEach(1...4, id: \.self) { Text("\($0)").tag($0) }
                     }.pickerStyle(.segmented)
                 }
-                Section("Force-include a person") {
-                    Picker("Must include", selection: Binding(
+                Section("Connection") {
+                    Picker("Connection", selection: Binding(
                         get: { filter.requiredWorkerID ?? "" },
                         set: { filter.requiredWorkerID = $0.isEmpty ? nil : $0 })) {
                         Text("Anyone").tag("")
@@ -542,10 +542,7 @@ struct PackageCard: View {
                 Button {
                     isCircular ? onExecute() : onPropose()
                 } label: {
-                    // D4: "Propose to {Name}" for a single counterparty, "Propose to All" for 2+.
-                    Label(isCircular ? "Propose Trade"
-                                     : proposeButtonTitle(count: package.assignments.count, name: package.assignments.first?.name ?? ""),
-                          systemImage: isCircular ? "arrow.triangle.2.circlepath" : "paperplane.fill")
+                    Label("Propose", systemImage: isCircular ? "arrow.triangle.2.circlepath" : "paperplane.fill")   // D4: generic
                 }
                 .buttonStyle(.borderedProminent).controlSize(.small)
                 Spacer()
@@ -679,8 +676,7 @@ struct PackageDetailView: View {
                     isCircular ? onExecute() : onPropose()
                     dismiss()
                 } label: {
-                    Label(isCircular ? "Propose Trade" : "Propose package",
-                          systemImage: isCircular ? "arrow.triangle.2.circlepath" : "paperplane.fill")
+                    Label("Propose", systemImage: isCircular ? "arrow.triangle.2.circlepath" : "paperplane.fill")   // D4: generic
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent).padding(.horizontal).padding(.bottom, 8)

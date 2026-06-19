@@ -853,7 +853,7 @@ struct ChannelView: View {
                         }
                     }
                     .listStyle(.plain)
-                    .refreshable { await store.refresh() }
+                    .refreshable { await store.refresh(); await TradeProfileStore.shared.refreshOthers() }
                 }
                 Divider()
                 HStack(spacing: 8) {
@@ -888,7 +888,7 @@ struct ChannelView: View {
             .navigationTitle(channelMeta.title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
-            .task { await store.refresh() }
+            .task { await store.refresh(); await TradeProfileStore.shared.refreshOthers() }   // E2: load peers so statuses render
             .alert("Sent", isPresented: Binding(get: { respondedNote != nil }, set: { if !$0 { respondedNote = nil } })) {
                 Button("OK", role: .cancel) {}
             } message: { Text(respondedNote ?? "") }
@@ -899,6 +899,15 @@ struct ChannelView: View {
                 Button("Cancel", role: .cancel) { editingReply = nil }
             }
         }
+    }
+
+    /// E2: the author's published status — mine from Settings, peers from the loaded profiles.
+    private func authorStatus(_ id: String) -> String? {
+        let raw = (id == SettingsManager.shared.username)
+            ? SettingsManager.shared.statusBroadcast
+            : (TradeProfileStore.shared.profile(forWorker: id)?.statusBroadcast ?? "")
+        let t = raw.trimmingCharacters(in: .whitespaces)
+        return t.isEmpty ? nil : t
     }
 
     private func postRow(_ post: BroadcastPost) -> some View {
@@ -914,9 +923,8 @@ struct ChannelView: View {
                 postMenu(post)
             }
             // E2: the author's published status (with emoji) under their name.
-            if let s = TradeProfileStore.shared.profile(forWorker: post.authorID)?.statusBroadcast,
-               !s.trimmingCharacters(in: .whitespaces).isEmpty {
-                Text(s).font(.caption2).italic().foregroundStyle(.secondary).lineLimit(1).padding(.leading, 46)
+            if let s = authorStatus(post.authorID) {
+                Text(s).font(.caption2).italic().foregroundStyle(.secondary).lineLimit(2).padding(.leading, 46)
             }
             if let b64 = post.imageBase64, let ui = PostImage.decode(b64) {
                 Image(uiImage: ui).resizable().scaledToFit()
@@ -961,7 +969,7 @@ struct ChannelView: View {
         .padding(.vertical, 2)
         .contentShape(Rectangle())
         .onTapGesture {
-            if !isOpen { expanded.insert(post.id) }
+            if isOpen { expanded.remove(post.id) } else { expanded.insert(post.id) }   // #10: tap toggles
         }
     }
 
