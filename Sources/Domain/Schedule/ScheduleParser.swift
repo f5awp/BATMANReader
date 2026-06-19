@@ -1,6 +1,44 @@
 // ScheduleParser.swift
 // Parses the ARIS/WorkNet "Expanded Schedule" CSV export into Shift objects.
 //
+// G4: ImportAudit — a PURE post-import sanity check. After any roster/schedule import we validate
+// the parsed workers and surface a pass/warn report, so a malformed/partial import (e.g. rows with
+// no name → the "660615" display bug) is caught and reported instead of silently shipping bad data.
+
+import Foundation
+
+/// Result of `ImportAudit.validate` — advisory (never blocks the import).
+struct ImportReport {
+    var ok: Bool
+    var workerCount: Int
+    var namelessWorkers: [String]   // employee IDs whose parsed name is missing/blank/numeric/==id
+    var duplicateIDs: [String]
+    var selfFound: Bool
+    var warnings: [String]          // human-readable messages for the import banner
+}
+
+enum ImportAudit {
+    /// Validate the parsed (id, name) list against `selfID`. Pure → fully harness-tested.
+    static func validate(workers: [(id: String, name: String)], selfID: String) -> ImportReport {
+        var nameless: [String] = []
+        var seen = Set<String>(), dupes = Set<String>()
+        for w in workers {
+            let n = w.name.trimmingCharacters(in: .whitespaces)
+            if n.isEmpty || n == w.id || TradeNames.isAllDigits(n) { nameless.append(w.id) }   // reuse G2a's "real name" rule
+            if !seen.insert(w.id).inserted { dupes.insert(w.id) }
+        }
+        let selfFound = workers.contains { $0.id == selfID }
+        var warnings: [String] = []
+        if workers.isEmpty { warnings.append("No dispatchers were parsed — the file may be the wrong format.") }
+        if !nameless.isEmpty { warnings.append("\(nameless.count) dispatcher(s) imported with no name (showing employee #). Check the report's name column.") }
+        if !dupes.isEmpty { warnings.append("\(dupes.count) duplicate employee ID(s) in the import.") }
+        if !selfFound && !selfID.isEmpty { warnings.append("Your employee ID (\(selfID)) wasn't found in this import.") }
+        return ImportReport(ok: warnings.isEmpty, workerCount: workers.count,
+                            namelessWorkers: nameless, duplicateIDs: Array(dupes),
+                            selfFound: selfFound, warnings: warnings)
+    }
+}
+//
 // The CSV is a visual calendar GRID, not a row-per-shift table:
 //   • Each month-strip begins with a header row ("Name (ID) Qualification, ,Jan, ,Jan,…"),
 //     followed by a day-number row (" , ,01, ,02,…"), a weekday row, then one row

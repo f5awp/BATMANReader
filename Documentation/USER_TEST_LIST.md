@@ -339,6 +339,12 @@
   **trade-away**, and **want-to-work** in their distinct colors (previously only their trade-away days
   showed). A day they marked nothing stays untinted.
 
+### TR3-G4 — import sanity check  [G4 · Auto-proven; device-check]
+1. Trades/Home → import a roster CSV.
+- **Expect:** the import result now ends with **"Import check: looks good ✓"** for a clean file, or a
+  **"⚠️ Import check: …"** line naming the problem (e.g. dispatchers with no name, duplicate IDs, your ID
+  not found). The import still loads either way — it's a heads-up, not a blocker.
+
 ---
 
 ### Notes for the tester

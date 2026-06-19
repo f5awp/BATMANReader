@@ -958,6 +958,21 @@ enum TradeEngineTests {
             check(r3.first?.id == "qual2", "D5: people-count dominates — a qual 2-way precedes a clean 3-way")
         }
 
+        // MARK: G4 — import-success audit. Flags name-less workers (the "660615" malformed
+        // import), missing-self, duplicate IDs, empty parse; clean import → ok with no warnings.
+        do {
+            let clean = ImportAudit.validate(workers: [("001", "Lee, Ervin"), ("002", "Khuu, Julie")], selfID: "001")
+            check(clean.ok && clean.warnings.isEmpty && clean.workerCount == 2, "G4: a clean import passes with no warnings")
+            let nameless = ImportAudit.validate(workers: [("660615", "660615"), ("002", "Khuu, Julie")], selfID: "002")
+            check(!nameless.ok && nameless.namelessWorkers.contains("660615"), "G4: a worker named like its employee # is flagged nameless")
+            let noSelf = ImportAudit.validate(workers: [("001", "Lee, Ervin")], selfID: "999")
+            check(!noSelf.ok && !noSelf.selfFound, "G4: the importer's own ID missing is flagged")
+            let dupes = ImportAudit.validate(workers: [("001", "A"), ("001", "A2")], selfID: "001")
+            check(!dupes.ok && dupes.duplicateIDs.contains("001"), "G4: duplicate employee IDs are flagged")
+            let empty = ImportAudit.validate(workers: [], selfID: "001")
+            check(!empty.ok && empty.workerCount == 0, "G4: an empty parse is flagged (wrong file format)")
+        }
+
         // MARK: Relief dispatcher — schedule unknown past the horizon (pure).
         let reliefDate = DateComponents(calendar: .current, year: 2026, month: 8, day: 7).date!
         let beforeRelief = DateComponents(calendar: .current, year: 2026, month: 8, day: 7).date!  // inclusive

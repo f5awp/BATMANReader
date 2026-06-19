@@ -182,6 +182,10 @@ struct HomeView: View {
                 if workers.count > 1 {
                     let rows = await RosterStore.shared.importRoster(workers)
                     lines.append("Roster: \(workers.count) dispatchers loaded for matching (\(rows) rows).")
+                    // G4: post-import sanity check — surface malformed/partial imports instead of shipping them.
+                    let report = ImportAudit.validate(workers: workers.map { ($0.id, $0.name) }, selfID: username)
+                    lines.append(report.ok ? "Import check: looks good ✓"
+                                           : "⚠️ Import check: " + report.warnings.joined(separator: " "))
                     if DevAccess.shared.unlocked {
                         let ok = await RosterStore.shared.publishMaster(csv: csv)
                         lines.append(ok ? "Published as MASTER roster — all users get this on their next launch."
