@@ -1074,6 +1074,12 @@ enum TradeEngineTests {
             check(TradeMerge.merge(base: merged, bridge: bridge).id == merged.id, "B2: merging an already-merged request is a no-op")
         }
 
+        // MARK: B1 — detect a qual-gated (international) desk in the selection, which enables the
+        // glowing "Qual Swap" button.
+        check(DeskRules.hasQualGatedSelection(desks: ["50", "10"]), "B1: a qual-gated desk (50) enables qual-swap")
+        check(!DeskRules.hasQualGatedSelection(desks: ["10", "29"]), "B1: only domestic desks → qual-swap disabled")
+        check(!DeskRules.hasQualGatedSelection(desks: []), "B1: empty selection → disabled")
+
         // MARK: Relief dispatcher — schedule unknown past the horizon (pure).
         let reliefDate = DateComponents(calendar: .current, year: 2026, month: 8, day: 7).date!
         let beforeRelief = DateComponents(calendar: .current, year: 2026, month: 8, day: 7).date!  // inclusive

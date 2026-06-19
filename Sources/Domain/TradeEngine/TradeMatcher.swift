@@ -98,6 +98,13 @@ enum DeskRules {
         return quals.contains(required)
     }
 
+    /// B1: does the selection include a qual-gated (international) desk? "D" is universal (every
+    /// dispatcher holds it), so only a NON-D required qual counts. Drives the "Qual Swap" button
+    /// (gray → glowing green) — a give-day on such a desk may need a bridge.
+    static func hasQualGatedSelection(desks: [String]) -> Bool {
+        desks.contains { let r = requiredQual(forDesk: $0); return r != nil && r != "D" }
+    }
+
     /// SINGLE SOURCE OF TRUTH: does giving `desk` to a taker holding `takerQuals`
     /// require a qual swap? True exactly when the taker isn't qualified for the desk.
     /// Every matcher path (trade search, intents, routes) calls this — not its own copy.
