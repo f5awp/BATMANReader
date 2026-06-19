@@ -648,7 +648,7 @@ final class MessagingStore {
     static func sortedForChannel(_ posts: [BroadcastPost]) -> [BroadcastPost] {
         posts.sorted { a, b in
             if a.isPinned != b.isPinned { return a.isPinned }   // pinned first
-            return a.createdAt > b.createdAt                     // then newest
+            return a.createdAt < b.createdAt                     // E1: then OLDEST first (thread reads top→bottom)
         }
     }
 

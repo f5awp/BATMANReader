@@ -334,7 +334,7 @@ enum TradeEngineTests {
             bp("pinnedOld", at: n.addingTimeInterval(-600), pinned: true),
         ])
         check(sortedPosts.first?.id == "pinnedOld", "pin: a pinned (even old) post sorts to the very top")
-        check(sortedPosts.map(\.id) == ["pinnedOld", "newest", "old"], "pin: then unpinned by newest")
+        check(sortedPosts.map(\.id) == ["pinnedOld", "old", "newest"], "pin: pinned first, then unpinned OLDEST→newest (E1 thread order)")
 
         // MARK: Brush completeness (F1). EVERY intent must be paintable — this is the
         // exact guard against "I thought the brush already covered it". A new enum case
@@ -1032,6 +1032,19 @@ enum TradeEngineTests {
             check(!req.isEmpty && req.allSatisfy { $0.assignments.contains { a in a.workerID == "C" } },
                   "A2: required person → only solutions containing them")
             check(Set(SearchFilter.Engine.allCases.map(\.rawValue)) == ["minCost", "nWay", "both"], "A2: engine CaseIterable universe guard")
+        }
+
+        // MARK: E1 — channel reads top-to-bottom (oldest → newest); pinned still first.
+        do {
+            func post(_ id: String, at: TimeInterval, pinned: Bool? = nil) -> BroadcastPost {
+                BroadcastPost(id: id, authorID: "x", authorName: "x", text: "t",
+                              createdAt: Date(timeIntervalSince1970: at), expiresAt: Date(timeIntervalSince1970: at + 86400),
+                              pinned: pinned)
+            }
+            let ordered = MessagingStore.sortedForChannel([post("new", at: 300), post("old", at: 100), post("mid", at: 200)])
+            check(ordered.map(\.id) == ["old", "mid", "new"], "E1: channel posts read oldest→newest (top to bottom)")
+            let withPin = MessagingStore.sortedForChannel([post("old", at: 100), post("pinNew", at: 500, pinned: true)])
+            check(withPin.first?.id == "pinNew", "E1: a pinned post stays first regardless of age")
         }
 
         // MARK: Relief dispatcher — schedule unknown past the horizon (pure).

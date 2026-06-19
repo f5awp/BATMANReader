@@ -913,6 +913,11 @@ struct ChannelView: View {
                             timestamp: post.createdAt, message: post.text) {
                 postMenu(post)
             }
+            // E2: the author's published status (with emoji) under their name.
+            if let s = TradeProfileStore.shared.profile(forWorker: post.authorID)?.statusBroadcast,
+               !s.trimmingCharacters(in: .whitespaces).isEmpty {
+                Text(s).font(.caption2).italic().foregroundStyle(.secondary).lineLimit(1).padding(.leading, 46)
+            }
             if let b64 = post.imageBase64, let ui = PostImage.decode(b64) {
                 Image(uiImage: ui).resizable().scaledToFit()
                     .frame(maxHeight: 220).clipShape(RoundedRectangle(cornerRadius: 10))
@@ -930,8 +935,18 @@ struct ChannelView: View {
 
             if isOpen {
                 HStack(spacing: 8) {
-                    Rectangle().fill(.quaternary).frame(width: 2)
+                    // Reddit-style threadline — a tappable rail that collapses the thread.
+                    Capsule().fill(Color.accentColor.opacity(0.35)).frame(width: 2.5)
+                        .contentShape(Rectangle())
+                        .onTapGesture { expanded.remove(post.id) }
                     VStack(alignment: .leading, spacing: 2) {
+                        if !reps.isEmpty {
+                            Button { expanded.remove(post.id) } label: {
+                                Label("Hide ^[\(reps.count) reply](inflect: true)", systemImage: "chevron.up")
+                                    .font(.caption2.weight(.semibold))
+                            }
+                            .buttonStyle(.plain).foregroundStyle(.secondary)
+                        }
                         ForEach(reps) { r in replyRow(r) }
                         BroadcastReplyComposer(isAuthor: store.isMine(post)) { text, isPublic, image in
                             Task { await store.addReply(to: post, text: text, isPublic: isPublic, imageBase64: image) }

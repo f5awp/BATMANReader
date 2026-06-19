@@ -354,6 +354,14 @@
   show as **chips** under the button. (Known: this filters the existing results and caps at 100; deeper
   best-first/cancellable search is a follow-on.)
 
+### TR3-E1/E2/E3 — channel thread + statuses + settings colors  [device-check]
+1. **Channel (E1):** open the broadcast channel. Posts now read **oldest at top → newest at bottom**
+   (pinned still on top). Tap a post to expand its replies (indented under a **threadline**); tap the
+   threadline or **"Hide N replies"** to collapse. Replies read oldest→newest.
+2. **Statuses (E2):** a poster who set a status shows it (with emoji) **under their name** in the channel.
+3. **Settings (E3):** Trade Settings → the **Qual-swap** sections have an indigo tint and the **Relief
+   Dispatcher** box a teal tint, visually separated from the blacklist sections.
+
 ---
 
 ### Notes for the tester

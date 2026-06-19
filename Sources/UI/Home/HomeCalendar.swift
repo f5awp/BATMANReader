@@ -782,6 +782,7 @@ struct TradeSettingsSheet: View {
         } footer: {
             Text("Relief dispatchers only get their schedule ~45 days out; the master roster pads the rest of the year with placeholder AMs. Set the last real date — your shifts after it are hidden from your calendar and from trading (for everyone), and stay hidden across roster updates.")
         }
+        .listRowBackground(Color.teal.opacity(0.08))   // E3: relief box visually distinct
     }
 
     // MARK: Qual-swap preferences (Q4)
@@ -810,6 +811,7 @@ struct TradeSettingsSheet: View {
         } footer: {
             Text("When a trade needs a qual swap, you'll be asked to move onto a different desk. You'll accept only if that desk's qual is ranked EQUAL OR HIGHER than the qual of the desk you're already working that day.\n\n• Open = no preference (you'll take it).\n• Won't work (0) = never swap into that qual.\n• 1 = least preferred … higher = more preferred.")
         }
+        .listRowBackground(Color.indigo.opacity(0.07))   // E3: qual-swap section distinct from blacklists above
 
         Section {
             TextField("e.g. 64, 65", text: qualSwapDeskText)
@@ -819,6 +821,7 @@ struct TradeSettingsSheet: View {
         } footer: {
             Text("Specific desk numbers you'll never qual-swap into — blocked regardless of qual preference.")
         }
+        .listRowBackground(Color.indigo.opacity(0.07))   // E3
     }
 }
 
