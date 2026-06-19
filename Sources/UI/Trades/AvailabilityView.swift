@@ -96,9 +96,21 @@ struct FindCandidatesSection: View {
         }
         .sheet(isPresented: $showFilter) { MasterFilterSheet(filter: $searchFilter, people: rosterPeople) }
         .sheet(isPresented: $showQualSwaps) {
-            QualSwapDaysSheet(packages: qualSwapResults, loading: loadingQual) { pkg in
+            QualSwapDaysSheet(packages: qualSwapResults, loading: loadingQual) { selectedPkgs in
                 showQualSwaps = false
-                if let leg = pkg.qualSwap { pkgSwap = PackageSwapContext(leg: leg) }   // reuse the blast picker
+                Task {
+                    var n = 0
+                    for pkg in selectedPkgs {
+                        guard let leg = pkg.qualSwap else { continue }
+                        await MessagingStore.shared.sendRequest(
+                            to: leg.takerID, toName: leg.takerName,
+                            note: "Qual swap to give away \(SwapChips.chipDay(leg.giveShiftDayID)) — \(leg.takerName) takes a freed desk.",
+                            take: [], give: [leg.giveShiftDayID], qualSwap: leg)
+                        n += 1
+                    }
+                    WidgetData.update()
+                    packageSent = "Qual-swap request\(n == 1 ? "" : "s") sent to \(n) dispatcher\(n == 1 ? "" : "s"). Track replies in your Inbox."
+                }
             }
         }
         .sheet(item: $execRoute) { ExecutionConfirmationView(route: $0) }
@@ -182,12 +194,14 @@ struct FindCandidatesSection: View {
                     .accessibilityLabel(calendarExpanded ? "Collapse calendar" : "Expand calendar")
                 }
 
+                // #4: lucky bar ABOVE the calendar so it's always visible at the top of Trade
+                // Solutions — when the calendar is expanded it would otherwise push this off-screen.
+                luckyBar
+
                 if calendarExpanded {
                     ShiftSelectCalendar(shifts: store.shifts, selection: $selectedIDs)
                         .transition(.move(edge: .top).combined(with: .opacity))
                 }
-
-                if hasSearched { luckyBar }   // #4: always visible after a search (was buried in the results list)
 
                 Toggle(isOn: $whatIf.animation()) {
                     Label("What If? Mode — show every legal option", systemImage: "wand.and.stars")
@@ -1449,17 +1463,21 @@ struct PackageSwapContext: Identifiable {
 }
 
 /// B1: a per-day paged sheet of potential qual swaps for the selected international give-days.
-/// Swipe between days; each lists the qual-swap options for that day; "Broadcast" opens the blast picker.
+/// Swipe between days; each lists the qual-swap options. You SELECT which dispatchers to ask
+/// (multi-select, all selected by default) then BATCH-broadcast them all at once — no per-row button.
 struct QualSwapDaysSheet: View {
     let packages: [TradePackage]
     var loading: Bool = false
-    let onBroadcast: (TradePackage) -> Void
+    let onBroadcast: ([TradePackage]) -> Void
     @Environment(\.dismiss) private var dismiss
+    @State private var selected: Set<String> = []
 
     private var byDay: [(day: String, pkgs: [TradePackage])] {
         let grouped = Dictionary(grouping: packages) { $0.qualSwap?.giveShiftDayID ?? "" }
         return grouped.keys.sorted().map { (day: $0, pkgs: grouped[$0] ?? []) }
     }
+    private var allIDs: [String] { packages.filter { $0.qualSwap != nil }.map(\.id) }
+    private var selectedPkgs: [TradePackage] { packages.filter { selected.contains($0.id) } }
 
     var body: some View {
         NavigationStack {
@@ -1470,41 +1488,79 @@ struct QualSwapDaysSheet: View {
                     ContentUnavailableView("No qual swaps found", systemImage: "arrow.triangle.swap",
                         description: Text("No off dispatcher could take these international shifts with a desk swap. Try other days."))
                 } else {
-                    TabView {
-                        ForEach(byDay, id: \.day) { group in
-                            ScrollView {
-                                VStack(alignment: .leading, spacing: 10) {
-                                    Text(SwapChips.chipDay(group.day)).font(.title3.bold()).padding(.horizontal)
-                                    Text("Trading away this day may need a qual swap — pick who to ask.")
-                                        .font(.caption).foregroundStyle(.secondary).padding(.horizontal)
-                                    ForEach(group.pkgs) { pkg in
-                                        HStack {
-                                            VStack(alignment: .leading, spacing: 2) {
-                                                Text(pkg.assignments.first?.name ?? "Taker").font(.subheadline.bold())
-                                                if let leg = pkg.qualSwap {
-                                                    Text("desk \(leg.giveDesk) (\(leg.giveQual)) · ^[\(leg.candidates.count) bridge](inflect: true)")
-                                                        .font(.caption2).foregroundStyle(.secondary)
-                                                }
-                                            }
-                                            Spacer()
-                                            Button("Broadcast") { onBroadcast(pkg) }
-                                                .buttonStyle(.borderedProminent).controlSize(.small)
-                                        }
-                                        .padding(10)
-                                        .background(.bar, in: RoundedRectangle(cornerRadius: 10))
-                                        .padding(.horizontal)
-                                    }
-                                }.padding(.vertical)
-                            }.tag(group.day)
+                    VStack(spacing: 0) {
+                        TabView {
+                            ForEach(byDay, id: \.day) { group in
+                                ScrollView {
+                                    VStack(alignment: .leading, spacing: 10) {
+                                        Text(SwapChips.chipDay(group.day)).font(.title3.bold()).padding(.horizontal)
+                                        Text("Trading away this day may need a qual swap — tap to select who to ask, then broadcast.")
+                                            .font(.caption).foregroundStyle(.secondary).padding(.horizontal)
+                                        ForEach(group.pkgs) { pkg in selectableRow(pkg) }
+                                    }.padding(.vertical)
+                                }.tag(group.day)
+                            }
                         }
+                        .tabViewStyle(.page(indexDisplayMode: .always))
+                        broadcastBar
                     }
-                    .tabViewStyle(.page(indexDisplayMode: .always))
                 }
             }
             .navigationTitle("Qual Swaps")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } }
+                if !byDay.isEmpty {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button(selected.count == allIDs.count ? "Deselect All" : "Select All") {
+                            selected = selected.count == allIDs.count ? [] : Set(allIDs)
+                        }
+                    }
+                }
+            }
+            .onAppear { if selected.isEmpty { selected = Set(allIDs) } }   // default: everyone selected
         }
+    }
+
+    private func selectableRow(_ pkg: TradePackage) -> some View {
+        let on = selected.contains(pkg.id)
+        return Button {
+            if on { selected.remove(pkg.id) } else { selected.insert(pkg.id) }
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: on ? "checkmark.circle.fill" : "circle")
+                    .font(.title3).foregroundStyle(on ? Color.accentColor : .secondary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(pkg.assignments.first?.name ?? "Taker").font(.subheadline.bold())
+                    if let leg = pkg.qualSwap {
+                        Text("desk \(leg.giveDesk) (\(leg.giveQual)) · ^[\(leg.candidates.count) bridge](inflect: true)")
+                            .font(.caption2).foregroundStyle(.secondary)
+                    }
+                }
+                Spacer()
+            }
+            .padding(10)
+            .background(.bar, in: RoundedRectangle(cornerRadius: 10))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(on ? Color.accentColor : .clear, lineWidth: 1.5))
+            .padding(.horizontal)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var broadcastBar: some View {
+        HStack {
+            Text("\(selected.count) selected").font(.caption).foregroundStyle(.secondary)
+            Spacer()
+            Button { onBroadcast(selectedPkgs) } label: {
+                Label("Broadcast", systemImage: "megaphone.fill").font(.subheadline.weight(.bold))
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(selected.isEmpty)
+        }
+        .padding()
+        .background(.bar)
+        .overlay(alignment: .top) { Divider() }
     }
 }
 
