@@ -100,7 +100,7 @@ struct FindCandidatesSection: View {
                               onReset: { if !selectedIDs.isEmpty { Task { await searchFast() } } })
         }
         .sheet(isPresented: $showQualSwaps) {
-            QualSwapDaysSheet(packages: qualSwapResults, loading: loadingQual) { selectedPkgs in
+            QualSwapDaysSheet(packages: qualSwapResults, loading: loadingQual, selectedShifts: selectedShifts) { selectedPkgs in
                 showQualSwaps = false
                 Task {
                     var n = 0
@@ -1486,6 +1486,7 @@ struct PackageSwapContext: Identifiable {
 struct QualSwapDaysSheet: View {
     let packages: [TradePackage]
     var loading: Bool = false
+    var selectedShifts: [Shift] = []   // ALL the days you picked — so we can label qual vs normal
     let onBroadcast: ([TradePackage]) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var selected: Set<String> = []
@@ -1497,30 +1498,46 @@ struct QualSwapDaysSheet: View {
     private var allIDs: [String] { packages.filter { $0.qualSwap != nil }.map(\.id) }
     private var selectedPkgs: [TradePackage] { packages.filter { selected.contains($0.id) } }
 
+    // Multi-day breakdown of the selection (qual-only flow: domestic days stay in Find).
+    private var workingShifts: [Shift] { selectedShifts.filter { !$0.isOff } }
+    private var qualGatedDays: [String] {
+        workingShifts.filter { DeskRules.hasQualGatedSelection(desks: [$0.desk]) }.map(\.id).sorted()
+    }
+    private var solvedDays: Set<String> { Set(packages.compactMap { $0.qualSwap?.giveShiftDayID }) }
+    private var unsolvedQualDays: [String] { qualGatedDays.filter { !solvedDays.contains($0) }.sorted() }
+    private var normalDays: [String] {
+        workingShifts.filter { !DeskRules.hasQualGatedSelection(desks: [$0.desk]) }.map(\.id).sorted()
+    }
+    private func dayList(_ ids: [String]) -> String { ids.map(SwapChips.chipDay).joined(separator: ", ") }
+
     var body: some View {
         NavigationStack {
             Group {
                 if loading {
                     ProgressView("Finding qual swaps…").frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if byDay.isEmpty {
-                    ContentUnavailableView("No qual swaps found", systemImage: "arrow.triangle.swap",
-                        description: Text("No off dispatcher could take these international shifts with a desk swap. Try other days."))
                 } else {
                     VStack(spacing: 0) {
-                        TabView {
-                            ForEach(byDay, id: \.day) { group in
-                                ScrollView {
-                                    VStack(alignment: .leading, spacing: 10) {
-                                        Text(SwapChips.chipDay(group.day)).font(.title3.bold()).padding(.horizontal)
-                                        Text("Trading away this day may need a qual swap — tap to select who to ask, then broadcast.")
-                                            .font(.caption).foregroundStyle(.secondary).padding(.horizontal)
-                                        ForEach(group.pkgs) { pkg in selectableRow(pkg) }
-                                    }.padding(.vertical)
-                                }.tag(group.day)
+                        if !selectedShifts.isEmpty { summaryHeader }
+                        if byDay.isEmpty {
+                            ContentUnavailableView("No qual swaps found", systemImage: "arrow.triangle.swap",
+                                description: Text("No off dispatcher could take these international shifts with a desk swap. Try other days."))
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        } else {
+                            TabView {
+                                ForEach(byDay, id: \.day) { group in
+                                    ScrollView {
+                                        VStack(alignment: .leading, spacing: 10) {
+                                            Text(SwapChips.chipDay(group.day)).font(.title3.bold()).padding(.horizontal)
+                                            Text("Select who to ask for this day, then broadcast. Each request only goes out for the day it covers.")
+                                                .font(.caption).foregroundStyle(.secondary).padding(.horizontal)
+                                            ForEach(group.pkgs) { pkg in selectableRow(pkg) }
+                                        }.padding(.vertical)
+                                    }.tag(group.day)
+                                }
                             }
+                            .tabViewStyle(.page(indexDisplayMode: .always))
+                            broadcastBar
                         }
-                        .tabViewStyle(.page(indexDisplayMode: .always))
-                        broadcastBar
                     }
                 }
             }
@@ -1538,6 +1555,31 @@ struct QualSwapDaysSheet: View {
             }
             .onAppear { if selected.isEmpty { selected = Set(allIDs) } }   // default: everyone selected
         }
+    }
+
+    /// Clear multi-day breakdown: how many of the selected days need a qual swap, which had a bridge,
+    /// which didn't, and which are normal days handled by Find.
+    private var summaryHeader: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("^[\(qualGatedDays.count) of \(workingShifts.count) selected day](inflect: true) need a qual swap.")
+                .font(.subheadline.weight(.semibold))
+            if !solvedDays.isEmpty {
+                Label("Options for: \(dayList(solvedDays.sorted()))", systemImage: "checkmark.circle.fill")
+                    .font(.caption).foregroundStyle(.green)
+            }
+            if !unsolvedQualDays.isEmpty {
+                Label("No bridge found for: \(dayList(unsolvedQualDays))", systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption).foregroundStyle(.orange)
+            }
+            if !normalDays.isEmpty {
+                Label("Normal days (trade in Find): \(dayList(normalDays))", systemImage: "arrow.left.arrow.right")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal).padding(.vertical, 10)
+        .background(.bar)
+        .overlay(alignment: .bottom) { Divider() }
     }
 
     private func selectableRow(_ pkg: TradePackage) -> some View {
