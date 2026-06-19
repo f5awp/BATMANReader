@@ -1080,6 +1080,17 @@ enum TradeEngineTests {
         check(!DeskRules.hasQualGatedSelection(desks: ["10", "29"]), "B1: only domestic desks → qual-swap disabled")
         check(!DeskRules.hasQualGatedSelection(desks: []), "B1: empty selection → disabled")
 
+        // MARK: C1 — the trade recompute is gated on an explicit SAVE (a revision bump), not on
+        // every intent edit, so the search isn't re-run constantly.
+        do {
+            let store = DayIntentStore.shared
+            let before = store.intentsRevision
+            store.markIntentsSaved()
+            check(store.intentsRevision == before + 1, "C1: markIntentsSaved bumps the recompute revision")
+            store.markIntentsSaved()
+            check(store.intentsRevision == before + 2, "C1: each SAVE advances the revision")
+        }
+
         // MARK: Relief dispatcher — schedule unknown past the horizon (pure).
         let reliefDate = DateComponents(calendar: .current, year: 2026, month: 8, day: 7).date!
         let beforeRelief = DateComponents(calendar: .current, year: 2026, month: 8, day: 7).date!  // inclusive

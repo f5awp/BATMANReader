@@ -18,6 +18,12 @@ final class DayIntentStore {
 
     static let shared = DayIntentStore()
 
+    /// C1: bumped ONLY by an explicit SAVE (`markIntentsSaved`). The trade feeds recompute when this
+    /// changes — so editing intents no longer re-runs the heavy search on every keystroke; you SAVE,
+    /// then the search re-runs once.
+    private(set) var intentsRevision: Int = 0
+    func markIntentsSaved() { intentsRevision += 1 }
+
     // MARK: Stored state (the single source of truth)
 
     /// ISO day → intent for a day the user works.

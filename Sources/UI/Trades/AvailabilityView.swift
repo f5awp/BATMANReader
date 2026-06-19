@@ -195,9 +195,8 @@ struct FindCandidatesSection: View {
                 }
                 .tint(.purple)
                 .onChange(of: whatIf) { _, _ in if hasSearched { Task { await search() } } }
-                // Re-run the search when any matching input changes (openness / mercenary /
-                // intents / blacklist) so results aren't stale. S-ENG-9.
-                .onChange(of: MatchInputsSignature.current) { _, _ in if hasSearched { Task { await search() } } }
+                // C1: re-run on an explicit SAVE (intents revision), not on every edit.
+                .onChange(of: DayIntentStore.shared.intentsRevision) { _, _ in if hasSearched { Task { await search() } } }
             }
         }
         .padding(.horizontal).padding(.vertical, 8)

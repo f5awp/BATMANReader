@@ -85,9 +85,9 @@ struct TradeByIntentsFeed: View {
         .sheet(isPresented: $showFilter) { MasterFilterSheet(filter: $searchFilter, people: rosterPeople) }
         .task { await reload() }
         .onChange(of: whatIf) { _, _ in Task { await reload() } }
-        // Recompute whenever any matching input changes (openness / mercenary / intents /
-        // availability / blacklist) — fixes "changed my settings but nothing refreshed". S-ENG-9.
-        .onChange(of: MatchInputsSignature.current) { _, _ in Task { await reload() } }
+        // C1: recompute on an explicit SAVE (intents revision) — NOT on every edit (was
+        // MatchInputsSignature, which re-ran the heavy search on every keystroke).
+        .onChange(of: DayIntentStore.shared.intentsRevision) { _, _ in Task { await reload() } }
         .alert("Package sent", isPresented: Binding(
             get: { sentMessage != nil }, set: { if !$0 { sentMessage = nil } })) {
             Button("OK", role: .cancel) {}

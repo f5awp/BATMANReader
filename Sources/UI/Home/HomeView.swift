@@ -49,6 +49,7 @@ struct HomeView: View {
     @State private var noteBrush = ""   // F2: when set, each tapped day also gets this note
     @State private var pendingConflict: PendingConflict?
     @State private var overwriteConfirmed = false   // #10: ask-overwrite ONCE per mass-action session
+    @State private var savedConfirm = false          // C1: SAVE confirmation
     @State private var showKey = false
     @State private var showAppSettings = false
 
@@ -63,6 +64,15 @@ struct HomeView: View {
                 HStack(alignment: .center, spacing: 10) {
                     if mode == .off { markIntentsPill }
                     Spacer()
+                    // C1: SAVE your marks → the trade search re-runs (it no longer re-runs on every edit).
+                    Button {
+                        DayIntentStore.shared.markIntentsSaved()
+                        Task { await TradeProfileStore.shared.publishMine() }
+                        savedConfirm = true
+                    } label: {
+                        Label("Save", systemImage: "checkmark.circle.fill").font(.subheadline.weight(.bold))
+                    }
+                    .buttonStyle(.borderedProminent).controlSize(.small).tint(.green)
                     VisibilityToolbar(layers: $layers)
                 }
                 .padding(.horizontal).padding(.top, 2)
@@ -136,6 +146,9 @@ struct HomeView: View {
             } message: {
                 Text("This day is already marked \"\(pendingConflict?.existing ?? "")\". Overwrite it? You won't be asked again while painting with this brush.")
             }
+            .alert("Saved", isPresented: $savedConfirm) {
+                Button("OK", role: .cancel) {}
+            } message: { Text("Your marks are saved — Trade Solutions & Intents will use them on the next search.") }
             .onAppear(perform: reconcileSnapshot)
             // R-B: load peers when Home appears so matching/status reflect what everyone
             // published (peer status/intents were blank cross-device).
