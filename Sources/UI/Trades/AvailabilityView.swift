@@ -426,6 +426,9 @@ struct JustTwoSection: View {
     @State private var execRoute: NWayRoute?
     @State private var packageSent: String?
     @State private var pkgSwap: PackageSwapContext?
+    // D2: full-roster lookup — pick ANYONE to see their schedule + any trades (not just matches).
+    @State private var rosterPeople: [(id: String, name: String)] = []
+    @State private var lookupCandidate: PlanCandidate?
 
     /// Only direct two-person packages (you + exactly one counterparty).
     private var twoOnly: [TradePackage] { packages.filter { $0.peopleCount == 2 } }
@@ -451,6 +454,7 @@ struct JustTwoSection: View {
                               onPropose: { Task { await propose(pkg) } },
                               onExecute: { if let r = pkg.route { execRoute = r } })
         }
+        .fullScreenCover(item: $lookupCandidate) { TwoWaySheet(candidate: $0) }   // D2: look up anyone
         .sheet(item: $execRoute) { ExecutionConfirmationView(route: $0) }
         .sheet(item: $pkgSwap) { ctx in
             QualSwapPickerSheet(giveDeskLabel: "desk \(ctx.leg.giveDesk) (\(ctx.leg.giveQual))",
@@ -472,6 +476,19 @@ struct JustTwoSection: View {
         .alert("Sent", isPresented: Binding(get: { packageSent != nil }, set: { if !$0 { packageSent = nil } })) {
             Button("OK", role: .cancel) {}
         } message: { Text(packageSent ?? "") }
+        .task { await loadRoster() }
+    }
+
+    /// D2: load the full distinct roster (minus you), names resolved (G2a), for the lookup dropdown.
+    private func loadRoster() async {
+        let myID = settings.username
+        let now = Date(); let end = Calendar.current.date(byAdding: .month, value: 12, to: now) ?? now
+        let entries = await RosterStore.shared.entries(from: now, to: end)
+        var seen = Set<String>(); var out: [(id: String, name: String)] = []
+        for e in entries where e.workerID != myID && seen.insert(e.workerID).inserted {
+            out.append((e.workerID, TradeNames.resolved(displayName: nil, rosterName: e.workerName, workerID: e.workerID)))
+        }
+        rosterPeople = out.sorted { $0.name < $1.name }
     }
 
     private var controls: some View {
@@ -493,6 +510,26 @@ struct JustTwoSection: View {
                 ShiftSelectCalendar(shifts: store.shifts, selection: $selectedIDs)
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
+            // D2: look up ANY dispatcher's schedule + trades (always available, full roster).
+            Menu {
+                ForEach(rosterPeople, id: \.id) { p in
+                    Button(p.name) {
+                        lookupCandidate = PlanCandidate(workerID: p.id, name: p.name, quals: [],
+                                                        coveredShiftIDs: [], bookendShiftIDs: [], week: [])
+                    }
+                }
+            } label: {
+                HStack {
+                    Image(systemName: "magnifyingglass.circle")
+                    Text("Look up a dispatcher (\(rosterPeople.count))")
+                    Spacer(); Image(systemName: "chevron.down").font(.caption2)
+                }
+                .font(.caption).padding(.horizontal, 10).padding(.vertical, 6)
+                .background(.bar, in: Capsule())
+            }
+            .disabled(rosterPeople.isEmpty)
+
+            // Optional: filter the found two-person results to one dispatcher.
             if hasSearched && !people.isEmpty {
                 Menu {
                     Button("All dispatchers") { personFilter = nil }
@@ -500,7 +537,7 @@ struct JustTwoSection: View {
                 } label: {
                     HStack {
                         Image(systemName: "line.3.horizontal.decrease.circle")
-                        Text(personFilter.flatMap { id in people.first { $0.id == id }?.name } ?? "All dispatchers")
+                        Text(personFilter.flatMap { id in people.first { $0.id == id }?.name } ?? "Filter results")
                         Spacer(); Image(systemName: "chevron.down").font(.caption2)
                     }
                     .font(.caption).padding(.horizontal, 10).padding(.vertical, 6)
