@@ -929,8 +929,8 @@ enum TradeEngineTests {
                   "G2c: must-be-off outranks trade-away when a day is in both")
         }
 
-        // MARK: #3 — a separate 2-person trade always outranks a 3-person circular loop
-        // (Intents prefers individual 2-person trades; loops sink below them).
+        // MARK: #3 — a separate two-person trade always outranks a three-person circular loop
+        // (Intents prefers individual pairwise trades; loops sink below them).
         do {
             let two = TradePackage(id: "two", methodology: .greedy,
                                    assignments: [PackageAssignment(workerID: "A", name: "A", giveDayIDs: ["d"], takeDayIDs: ["e"])], route: nil)
@@ -939,7 +939,7 @@ enum TradeEngineTests {
                                                   PackageAssignment(workerID: "B", name: "B", giveDayIDs: ["f"], takeDayIDs: [])],
                                     route: nil, fireCount: 9)
             check(TradeRouter.rankPackages([loop, two]).first?.id == "two",
-                  "#3: a 2-person trade outranks a 3-person loop even when the loop has more 🔥")
+                  "#3: a two-person trade outranks a three-person loop even when the loop has more 🔥")
         }
 
         // MARK: D5 — qual-swap packages sort UNDER clean ones for the SAME N (regardless of 🔥/

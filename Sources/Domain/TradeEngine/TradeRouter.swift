@@ -230,7 +230,7 @@ enum TradeRouter {
                                               giveDayIDs: $0.giveDayIDs, takeDayIDs: $0.takeDayIDs) }
         }
 
-        // 1) #3: a SEPARATE 2-person trade per peer for the days THEY can reciprocally cover —
+        // 1) #3: a SEPARATE two-person trade per peer for the days THEY can reciprocally cover —
         //    full OR partial. The user proposes these individually instead of one bundled N-person
         //    package; 2-person packages outrank circular via rankPackages (peopleCount). Full-cover
         //    (one peer takes everything) is flagged optimal so it floats to the top of the 2-person band.
