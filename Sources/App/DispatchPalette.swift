@@ -77,6 +77,22 @@ enum BrickPalette {
     static let personalDay = milestone                                  // pink — personal milestone
 }
 
+/// D1/F1: THE single stable per-worker calendar color, used by EVERY trade surface so the
+/// same person reads the same color everywhere. You are always `mineScheme` (blue); each peer
+/// gets a deterministic color from `traderThemes` keyed on their workerID — fixes the two-way
+/// sheet that hardcoded blue/red. Deterministic (UTF8 byte sum, NOT the randomized
+/// `String.hashValue`, which would change the color every launch).
+enum TradeColors {
+    static func stableIndex(_ workerID: String, count: Int) -> Int {
+        guard count > 0 else { return 0 }
+        return workerID.utf8.reduce(0) { $0 &+ Int($1) } % count
+    }
+    static func forWorker(_ workerID: String, myID: String) -> Color {
+        if workerID == myID { return BrickPalette.mineScheme }
+        return BrickPalette.traderThemes[stableIndex(workerID, count: BrickPalette.traderThemes.count)]
+    }
+}
+
 // MARK: - Intent → brick color
 
 extension WorkingIntentState {

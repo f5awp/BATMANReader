@@ -883,6 +883,22 @@ enum TradeEngineTests {
                   "A8: an Open profile still accepts the split (proves the default is what changes behavior)")
         }
 
+        // MARK: D1/F1 — ONE stable per-worker calendar color, used by every trade surface
+        // (fixes the two-way sheet that hardcoded blue/red). Deterministic, mine = blue, peer ≠ blue.
+        do {
+            let me = "me-001"
+            check(TradeColors.forWorker(me, myID: me) == BrickPalette.mineScheme, "D1: my own color is mineScheme (blue)")
+            check(TradeColors.forWorker("660615", myID: me) != BrickPalette.mineScheme, "D1: a peer is NEVER the mine blue")
+            check(TradeColors.forWorker("660615", myID: me) == TradeColors.forWorker("660615", myID: me),
+                  "D1: same worker → same color every call (stable, not randomized)")
+            // Deterministic index in range, independent of String.hashValue randomization.
+            let n = BrickPalette.traderThemes.count
+            check((0..<n).contains(TradeColors.stableIndex("660615", count: n)), "D1: stableIndex is within the palette range")
+            check(TradeColors.stableIndex("abc", count: n) == TradeColors.stableIndex("abc", count: n),
+                  "D1: stableIndex is deterministic across calls")
+            check(TradeColors.stableIndex("x", count: 0) == 0, "D1: stableIndex guards empty palette (no crash)")
+        }
+
         // MARK: Relief dispatcher — schedule unknown past the horizon (pure).
         let reliefDate = DateComponents(calendar: .current, year: 2026, month: 8, day: 7).date!
         let beforeRelief = DateComponents(calendar: .current, year: 2026, month: 8, day: 7).date!  // inclusive

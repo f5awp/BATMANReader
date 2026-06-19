@@ -284,15 +284,10 @@ struct HandoffChain: View {
                         toID: l.toID, toName: l.toName, dayID: l.dayID, desk: l.desk) }
     }
 
-    /// Participants in first-appearance order, so each non-me person maps to a stable
-    /// calendar color (R2-#10e — chips were uniformly indigo).
-    private var orderedPeers: [String] {
-        var ids: [String] = []
-        for s in steps { for id in [s.fromID, s.toID] where id != myID && !ids.contains(id) { ids.append(id) } }
-        return ids
-    }
+    /// D1/F1: each person reads in their STABLE per-worker color, consistent across every
+    /// surface (was index-based via R2-#10e `orderedPeers`).
     private func color(_ id: String) -> Color {
-        id == myID ? BrickPalette.mineScheme : traderColor(orderedPeers.firstIndex(of: id) ?? 0)
+        TradeColors.forWorker(id, myID: myID)
     }
 
     var body: some View {
@@ -436,8 +431,8 @@ struct PackageCard: View {
                     VStack(alignment: .leading, spacing: 8) {
                         TraderChips(name: "You", color: BrickPalette.mineScheme,
                                     giveDays: a.giveDayIDs, getDays: a.takeDayIDs)
-                        TraderChips(name: a.name, color: traderColor(idx),
-                                    giveDays: a.takeDayIDs, getDays: a.giveDayIDs, id: a.workerID)
+                        TraderChips(name: a.name, color: TradeColors.forWorker(a.workerID, myID: SettingsManager.shared.username),
+                                    giveDays: a.takeDayIDs, getDays: a.giveDayIDs, id: a.workerID)   // D1/F1: stable per-worker color
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     if idx < package.assignments.count - 1 { Divider() }
@@ -528,8 +523,7 @@ struct PackageDetailView: View {
         return ids
     }
     private func colorFor(_ id: String) -> Color {
-        if id == myID { return youColor }
-        return traderColor(participants.filter { $0 != myID }.firstIndex(of: id) ?? 0)
+        TradeColors.forWorker(id, myID: myID)   // D1/F1: stable per-worker color, consistent everywhere
     }
     private func name(_ id: String) -> String { id == myID ? "You" : participantName(id) }
     private func gives(_ id: String) -> Set<String> { Set(steps.filter { $0.fromID == id }.map(\.dayID)) }

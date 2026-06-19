@@ -915,7 +915,8 @@ struct TwoWaySheet: View {
     @State private var qualSwapNoBridge: String?               // Q1: a needed swap has no eligible bridge
 
     private let youColor  = BrickPalette.mineScheme
-    private let themColor = BrickPalette.peerScheme
+    // F1/D1: the peer reads in their STABLE per-worker color (was hardcoded red).
+    private var themColor: Color { TradeColors.forWorker(candidate.workerID, myID: SettingsManager.shared.username) }
 
     private var glanceBaseHeight: CGFloat { 720 }   // two full-width calendars, stacked
 
