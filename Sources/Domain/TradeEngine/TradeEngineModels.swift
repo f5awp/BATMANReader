@@ -225,6 +225,7 @@ struct NWayRoute: Sendable, Hashable, Identifiable {
     let tier: SolutionTier
     let score: Double
     let usesBookends: Bool
+    var bookendCount: Int = 0   // G3: how many legs are a bookend for their receiver (more = better)
 
     var id: String { participants.joined(separator: ">") + "#" + legs.map(\.id).joined(separator: ",") }
 
@@ -376,6 +377,17 @@ enum TradeScore {
     /// Admissible upper bound on a partial route's final log-prob: the running sum (remaining legs
     /// can only add ≤ 0). Prune mid-DFS when this drops below log(threshold) — never drops a valid route.
     static func upperBoundLogProb(partial legs: [LegFeatures]) -> Double { packageLogProb(legs) }
+
+    /// G3: desirability (log-joint-acceptance) of a circular route from its per-leg bookend/🔥
+    /// flags. A non-bookend leg is treated as a SPLIT (penalized), so split-the-weekend loops
+    /// score below clean ones. Empty route → 0 (log 1).
+    static func routeDesirability(legBookends: [Bool], legFires: [Bool]) -> Double {
+        let feats = zip(legBookends, legFires).map { b, f in
+            LegFeatures(bookend: b, split: !b, mutualFire: f, giverWants: false,
+                        receiverWants: f, timeValue: 0.5, needsQualBridge: false, hoursStrain: 0)
+        }
+        return packageLogProb(feats)
+    }
 }
 
 /// D4: the propose-button label. "Propose to {Name}" for a single counterparty,

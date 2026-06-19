@@ -1002,6 +1002,16 @@ enum TradeEngineTests {
             check(TradeScore.legProb(ecbHi) > TradeScore.legProb(ecbLo), "H1: more ECB offered → higher acceptance")
         }
 
+        // MARK: G3 — a circular route's desirability drops when a leg SPLITS its receiver's
+        // time off (non-bookend); all-bookend routes score highest.
+        check(TradeScore.routeDesirability(legBookends: [true, true, true], legFires: [false, false, false])
+              > TradeScore.routeDesirability(legBookends: [true, false, true], legFires: [false, false, false]),
+              "G3: a split leg lowers the route's desirability vs all-bookend")
+        check(TradeScore.routeDesirability(legBookends: [true, true], legFires: [true, true])
+              > TradeScore.routeDesirability(legBookends: [true, true], legFires: [false, false]),
+              "G3: mutual-🔥 legs raise the route's desirability")
+        check(TradeScore.routeDesirability(legBookends: [], legFires: []) == 0, "G3: empty route → logprob 0")
+
         // MARK: Relief dispatcher — schedule unknown past the horizon (pure).
         let reliefDate = DateComponents(calendar: .current, year: 2026, month: 8, day: 7).date!
         let beforeRelief = DateComponents(calendar: .current, year: 2026, month: 8, day: 7).date!  // inclusive

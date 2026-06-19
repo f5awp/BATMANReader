@@ -367,7 +367,7 @@ enum TradeRouter {
             var p = pkg
             if let route = pkg.route {
                 p.fireCount    = route.tier == .matchingIntents ? route.legs.count : 0
-                p.bookendTotal = route.usesBookends ? route.legs.count : 0
+                p.bookendTotal = route.bookendCount   // G3: real per-leg bookend count (split legs don't count)
             } else {
                 var fire = 0, book = 0
                 for a in pkg.assignments {
@@ -499,11 +499,18 @@ enum TradeRouter {
                                               desk: entry.desk, startHour: entry.startHour)
                         let legs = path + [closing]
                         let participants = [selfID] + legs.dropLast().map(\.toID)
+                        // G3: count legs that are a bookend for their RECEIVER (no split). Drives the
+                        // package's bookendTotal so split-heavy loops rank below clean ones.
+                        let bookendCount = legs.filter { leg in
+                            guard let d = TradeMatcher.dayDate(fromISO: leg.dayID), let m = maps[leg.toID] else { return false }
+                            return TradeMatcher.isAnchored(day: d, map: m, plan: [leg.dayID])
+                        }.count
                         let route = NWayRoute(
                             participants: participants, legs: legs,
                             tier: .matchingIntents,
                             score: Double(participants.count) + topologyWeight(of: legs, selfID: selfID),
-                            usesBookends: constraints.enforceChaining)
+                            usesBookends: constraints.enforceChaining,
+                            bookendCount: bookendCount)
                         if seen.insert(route.id).inserted { routes.append(route) }
                         break
                     }
