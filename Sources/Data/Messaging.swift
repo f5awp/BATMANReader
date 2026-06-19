@@ -232,6 +232,12 @@ enum TradeMerge {
                             ecb: base.ecb, ecbValue: base.ecbValue, offerID: base.offerID,
                             chain: base.chain, qualSwap: bridge.qualSwap, perfectMatch: base.perfectMatch)
     }
+
+    /// PURE: the clean base request a `bridge` (qual-swap) can merge into, if any — searched among the
+    /// candidates (e.g. the active inbox). Drives whether the "Merge with base trade" button shows.
+    static func findBase(for bridge: TradeRequest, in candidates: [TradeRequest]) -> TradeRequest? {
+        candidates.first { canMerge(base: $0, bridge: bridge) }
+    }
 }
 
 /// Formats an ECB amount with no trailing ".0" (9 → "9", 13.5 → "13.5").
@@ -805,6 +811,27 @@ final class MessagingStore {
               leg.acceptances.contains(where: { $0.workerID == chosenWorkerID }) else { return }
         leg.chosenWorkerID = chosenWorkerID
         await updateQualSwapLeg(request, leg)
+    }
+
+    /// B2: fuse an accepted qual-swap `bridge` into its clean `base` trade — one request supersedes
+    /// the two. Saves the merged record and ARCHIVES both originals (reversible; not deleted, so no
+    /// CloudKit cross-user delete and no split-brain accept state). Returns the merged request, or nil
+    /// if they aren't mergeable.
+    @discardableResult
+    func mergeRequests(base: TradeRequest, bridge: TradeRequest) async -> TradeRequest? {
+        guard TradeMerge.canMerge(base: base, bridge: bridge) else { return nil }
+        let merged = TradeMerge.merge(base: base, bridge: bridge)
+        await service.sendRequest(merged)
+        requests = (requests.filter { $0.id != merged.id } + [merged]).sorted { $0.createdAt < $1.createdAt }
+        archiveRequest(base.id)
+        archiveRequest(bridge.id)
+        return merged
+    }
+
+    /// The clean active base a finalized qual-swap `bridge` can merge into (nil = none / not mergeable).
+    func mergeBase(for bridge: TradeRequest) -> TradeRequest? {
+        guard bridge.qualSwap?.status == .finalized else { return nil }   // only a settled bridge merges
+        return TradeMerge.findBase(for: bridge, in: Self.active(requests, archived: archivedRequestIDs))
     }
 
     /// The taker declines → the whole package becomes invalid (reason: qual swap).

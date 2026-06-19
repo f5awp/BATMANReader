@@ -1158,6 +1158,16 @@ enum TradeEngineTests {
             check(merged.qualSwap == bridgeLeg && merged.giveDayIDs == base.giveDayIDs && merged.id != base.id,
                   "B2: merged request carries the bridge's qual-swap + base's days, with a new id")
             check(TradeMerge.merge(base: merged, bridge: bridge).id == merged.id, "B2: merging an already-merged request is a no-op")
+
+            // B2 lifecycle (pure parts): findBase locates the mergeable clean base; active() drops the
+            // archived originals and keeps the merged record — the inbox shows ONE card after merge.
+            check(TradeMerge.findBase(for: bridge, in: [base, req("other", give: ["2027-03-09"], qual: nil)])?.id == "base",
+                  "B2: findBase locates the clean base sharing the give-day")
+            check(TradeMerge.findBase(for: bridge, in: [req("other", give: ["2027-03-09"], qual: nil)]) == nil,
+                  "B2: findBase returns nil when no base shares the give-day")
+            let archivedAfter: Set<String> = [base.id, bridge.id]   // what mergeRequests archives
+            let activeAfter = MessagingStore.active([base, bridge, merged], archived: archivedAfter)
+            check(activeAfter.map(\.id) == [merged.id], "B2: after merge, only the merged request stays active (originals archived)")
         }
 
         // MARK: B1 — detect a qual-gated (international) desk in the selection, which enables the

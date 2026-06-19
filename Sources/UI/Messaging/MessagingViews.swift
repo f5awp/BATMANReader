@@ -720,6 +720,22 @@ struct ThreadView: View {
                     Label("This trade is contingent on the qual swap.", systemImage: "hourglass")
                         .font(.caption).foregroundStyle(.secondary)
                 }
+
+                // B2: once a bridge is finalized, the giver can fuse this qual swap with their clean
+                // base trade on the same day into ONE request.
+                if role == .giver, let base = store.mergeBase(for: request) {
+                    Button {
+                        Task {
+                            await store.mergeRequests(base: base, bridge: request)
+                            dismiss()   // both originals archived; the merged card is in the inbox
+                        }
+                    } label: {
+                        Label("Merge with base trade", systemImage: "arrow.triangle.merge")
+                    }
+                    .tint(.indigo)
+                    Text("Combines this qual swap with your clean trade on \(prettyDay(leg.giveShiftDayID)) into a single request.")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
             } header: {
                 Text("Qual swap")
             }
