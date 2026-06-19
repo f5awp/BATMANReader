@@ -331,6 +331,53 @@ struct MatchInputsSignature: Hashable {
 
 /// The ONLY function allowed to produce a trade-type badge. Its entire output
 /// universe is exactly three shapes: "1-Way Swap", "Qual Swap", "{n}-Person Swap".
+// MARK: - H1: unified acceptance-likelihood score (one model, every trade surface)
+
+/// The bounded per-leg signals that drive acceptance probability. Indicators are 0/1; `timeValue`,
+/// `hoursStrain`, `ecbValue` are in [0,1]. All inputs are pre-normalized so the score is
+/// deterministic (no data-dependent normalization) and harness-testable.
+struct LegFeatures {
+    var bookend: Bool          // covering this day keeps the RECEIVER's time off contiguous (+)
+    var split: Bool            // it fragments the receiver's off-stretch (−, the G3 problem)
+    var mutualFire: Bool       // both parties want this day (+)
+    var giverWants: Bool       // giver marked the day trade-away (+)
+    var receiverWants: Bool    // receiver marked want-to-work (+)
+    var timeValue: Double      // sooner = higher, e.g. exp(−λ·daysUntil) ∈ [0,1] (+)
+    var needsQualBridge: Bool  // leg requires a qual swap (−)
+    var hoursStrain: Double    // pushes receiver over/under weekly target, [0,1] (−)
+    var ecbValue: Double = 0   // ECB points offered, normalized [0,1] (+; ECB legs only)
+}
+
+/// Objective: maximize P(trade executes) = ∏ p(leg). Work in log-space (additive → admissible
+/// pruning bound). Per-leg `p = σ(weighted features)`; the σ bounds it to (0,1) intrinsically.
+/// Hand-tuned weights now; later fit from inbox accept/decline data (logistic regression).
+enum TradeScore {
+    static let w0 = 0.4, wBook = 1.5, wSplit = 2.5, wFire = 2.0, wGive = 0.5,
+               wRecv = 1.0, wTime = 0.8, wQual = 1.2, wHours = 1.0, wEcb = 1.5
+
+    static func legLogit(_ f: LegFeatures) -> Double {
+        w0
+        + wBook * (f.bookend ? 1 : 0)
+        - wSplit * (f.split ? 1 : 0)
+        + wFire * (f.mutualFire ? 1 : 0)
+        + wGive * (f.giverWants ? 1 : 0)
+        + wRecv * (f.receiverWants ? 1 : 0)
+        + wTime * f.timeValue
+        - wQual * (f.needsQualBridge ? 1 : 0)
+        - wHours * f.hoursStrain
+        + wEcb * f.ecbValue
+    }
+    /// Probability the receiver accepts this leg, in (0,1).
+    static func legProb(_ f: LegFeatures) -> Double { 1.0 / (1.0 + exp(-legLogit(f))) }
+    /// Joint probability the whole package executes (all parties accept) = ∏ legProb.
+    static func packageProb(_ legs: [LegFeatures]) -> Double { legs.map(legProb).reduce(1.0, *) }
+    /// log of the joint probability = Σ log legProb (each term ≤ 0). The ranking/threshold signal.
+    static func packageLogProb(_ legs: [LegFeatures]) -> Double { legs.map { log(legProb($0)) }.reduce(0.0, +) }
+    /// Admissible upper bound on a partial route's final log-prob: the running sum (remaining legs
+    /// can only add ≤ 0). Prune mid-DFS when this drops below log(threshold) — never drops a valid route.
+    static func upperBoundLogProb(partial legs: [LegFeatures]) -> Double { packageLogProb(legs) }
+}
+
 /// D4: the propose-button label. "Propose to {Name}" for a single counterparty,
 /// "Propose to All" only when 2+, plain "Propose" when there's nobody/no name (Just-2
 /// wrongly said "Propose to All" for a single person).

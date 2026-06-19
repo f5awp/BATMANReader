@@ -973,6 +973,35 @@ enum TradeEngineTests {
             check(!empty.ok && empty.workerCount == 0, "G4: an empty parse is flagged (wrong file format)")
         }
 
+        // MARK: H1 — unified acceptance-likelihood score (log-joint). legProb is a sigmoid of
+        // weighted features; package = product (weakest-link); pruning bound is admissible.
+        do {
+            let base = LegFeatures(bookend: false, split: false, mutualFire: false, giverWants: false,
+                                   receiverWants: false, timeValue: 0, needsQualBridge: false, hoursStrain: 0)
+            var book = base; book.bookend = true
+            var split = base; split.split = true
+            var fire = base; fire.mutualFire = true
+            check(TradeScore.legProb(book) > TradeScore.legProb(base), "H1: a bookend leg is more likely accepted")
+            check(TradeScore.legProb(split) < TradeScore.legProb(base), "H1: a split leg is less likely accepted")
+            check(TradeScore.legProb(fire) > TradeScore.legProb(base), "H1: a mutual-🔥 leg is more likely accepted")
+            check((0...1).contains(TradeScore.legProb(base)), "H1: legProb is a probability in [0,1]")
+            // package = product of leg probs; logProb = sum of logs.
+            let legs = [book, fire, split]
+            let prod = TradeScore.packageProb(legs)
+            let viaLog = exp(TradeScore.packageLogProb(legs))
+            check(abs(prod - viaLog) < 1e-9, "H1: packageLogProb == log of the product (consistent)")
+            // weakest-link: one bad (split) leg tanks the joint probability below all-good.
+            check(TradeScore.packageProb([book, fire]) > TradeScore.packageProb([book, fire, split]),
+                  "H1: a split leg drags the whole package's joint probability down")
+            // admissible prune bound: adding legs never RAISES the log-prob (each log p ≤ 0).
+            check(TradeScore.packageLogProb([book]) >= TradeScore.packageLogProb([book, fire]) - 1e-12,
+                  "H1: partial-route log-prob is an admissible upper bound (monotone non-increasing)")
+            // ECB lever: more points offered → higher acceptance.
+            var ecbLo = base; ecbLo.ecbValue = 0.1
+            var ecbHi = base; ecbHi.ecbValue = 0.9
+            check(TradeScore.legProb(ecbHi) > TradeScore.legProb(ecbLo), "H1: more ECB offered → higher acceptance")
+        }
+
         // MARK: Relief dispatcher — schedule unknown past the horizon (pure).
         let reliefDate = DateComponents(calendar: .current, year: 2026, month: 8, day: 7).date!
         let beforeRelief = DateComponents(calendar: .current, year: 2026, month: 8, day: 7).date!  // inclusive
