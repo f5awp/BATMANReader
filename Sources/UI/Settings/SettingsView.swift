@@ -16,6 +16,7 @@ struct SettingsView: View {
     @State private var showClearConfirm   = false
     @State private var showCalendarPicker = false
     @State private var debugMessage: String?
+    @State private var calendarResetMessage: String?
     @State private var showDebugPrompt = false
     @State private var debugPwDraft = ""
     @State private var checkingCloudKit = false
@@ -139,10 +140,22 @@ struct SettingsView: View {
                         Text(ekManager.personalCalendarName)
                             .foregroundStyle(.secondary)
                     }
+                    // Resets every calendar event the app created (clears duplicates), then re-adds
+                    // your current shifts ONCE, cleanly. Fixes accidental duplicate buildup.
+                    Button(role: .destructive) {
+                        Task { @MainActor in
+                            EventKitManager.shared.removeAllEvents()        // clear first (predicate-based — kills duplicates)
+                            let n = EventKitManager.shared.resyncPersonalEvents(for: ShiftStore.shared.shifts)  // re-add clean (deduped)
+                            calendarResetMessage = "Cleared the app's calendar events and re-added \(n) shift\(n == 1 ? "" : "s") cleanly. Duplicates are gone."
+                        }
+                    } label: {
+                        Label("Reset app calendar events", systemImage: "calendar.badge.exclamationmark")
+                    }
+                    .disabled(!ekManager.isAuthorized)
                 } header: {
                     Text("Personal Calendar (Your Shifts)")
                 } footer: {
-                    Text("Your shifts are added to '\(ekManager.personalCalendarName)' automatically on every fetch. Traded shifts are removed automatically.")
+                    Text("Your shifts are added to '\(ekManager.personalCalendarName)' automatically on every fetch. Traded shifts are removed automatically. Use Reset if you see duplicate events — it clears the app's events and re-adds your shifts once.")
                 }
 
                 // ── Shared dispatcher calendar ───────────────────────
@@ -391,6 +404,14 @@ struct SettingsView: View {
                 Button("OK", role: .cancel) {}
             } message: {
                 Text(debugMessage ?? "")
+            }
+            .alert("Calendar Reset", isPresented: Binding(
+                get: { calendarResetMessage != nil },
+                set: { if !$0 { calendarResetMessage = nil } }
+            )) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(calendarResetMessage ?? "")
             }
             .alert("Developer Access", isPresented: $showDebugPrompt) {
                 SecureField("Password", text: $debugPwDraft)

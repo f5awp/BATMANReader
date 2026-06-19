@@ -199,19 +199,28 @@ final class EventKitManager {
     // MARK: - Personal calendar events
 
     private func addPersonalEvents(for shifts: [Shift]) {
-        guard let cal = personalCalendar() else { return }
+        guard !shifts.isEmpty, let cal = personalCalendar() else { return }
         var map       = personalEventIDMap
         let leadHours = SettingsManager.shared.notificationLeadHours
+        let relief    = SettingsManager.shared.effectiveReliefThrough
+        // DEDUP: index the events ALREADY in our calendar (by title+start). If a matching event
+        // exists we (re)link tracking and SKIP creating — so we never duplicate, even when the
+        // tracked map is stale/invalid (the launch-time duplication bug). SPEC CAL-DEDUP.
+        let existing = existingEventIDsByKey(in: cal, spanning: shifts)
 
-        let relief = SettingsManager.shared.effectiveReliefThrough
         for shift in shifts {
             // Relief dispatcher: never add a shift past the relief horizon (it isn't real).
             if TradeProfile.isPastRelief(day: shift.date, reliefThrough: relief) { continue }
-            let event       = EKEvent(eventStore: ekStore)
-            event.calendar  = cal
             // Title is just the shift + desk, e.g. "AM 82" (CAL1). The event is already
             // time-positioned, so the raw start time isn't repeated in the title.
-            event.title     = shift.shiftShortLabel.isEmpty ? shift.title : shift.shiftShortLabel
+            let title = shift.shiftShortLabel.isEmpty ? shift.title : shift.shiftShortLabel
+            if let existingID = existing[Self.eventKey(title: title, start: shift.startDate)] {
+                map[shift.id] = existingID   // already in the calendar → just track it, don't duplicate
+                continue
+            }
+            let event       = EKEvent(eventStore: ekStore)
+            event.calendar  = cal
+            event.title     = title
             event.startDate = shift.startDate
             event.endDate   = shift.endDate
             event.notes     = buildPersonalNotes(for: shift)
@@ -240,33 +249,44 @@ final class EventKitManager {
     }
 
     private func removeAllPersonalEvents() {
-        var map = personalEventIDMap
-        for (shiftID, eid) in map {
-            if let event = ekStore.event(withIdentifier: eid) {
-                try? ekStore.remove(event, span: .thisEvent, commit: false)
+        // PREDICATE-BASED: the personal "AA Schedule" calendar is entirely app-created, so delete
+        // EVERY event in it over a wide window. This catches duplicates/orphans whose identifiers the
+        // tracked map lost — the tracked-map-only removal couldn't (the bug behind launch duplication).
+        if let cal = existingPersonalCalendar() {
+            let (start, end) = scanWindow
+            let pred = ekStore.predicateForEvents(withStart: start, end: end, calendars: [cal])
+            for ev in ekStore.events(matching: pred) {
+                try? ekStore.remove(ev, span: .thisEvent, commit: false)
             }
-            map.removeValue(forKey: shiftID)
+            try? ekStore.commit()
         }
-        try? ekStore.commit()
-        personalEventIDMap = map
+        personalEventIDMap = [:]
     }
 
     // MARK: - Shared calendar (availability / off days)
 
     private func addSharedAvailabilityEvents(for offDays: [Shift]) {
-        guard let cal = sharedCalendar() else { return }
+        guard !offDays.isEmpty, let cal = sharedCalendar() else { return }
         let name = SettingsManager.shared.displayName.isEmpty
             ? SettingsManager.shared.username
             : SettingsManager.shared.displayName
         var map = sharedEventIDMap
         let relief = SettingsManager.shared.effectiveReliefThrough
+        // DEDUP: index our existing availability events on the shared calendar (by title+day) so a
+        // re-run never posts a second "<name> — Available" for the same day. SPEC CAL-DEDUP.
+        let existing = existingSharedKeys(in: cal, spanning: offDays, title: "\(name) — Available")
 
         for offDay in offDays {
             // Relief dispatcher: past the horizon we don't know they're off — don't publish availability.
             if TradeProfile.isPastRelief(day: offDay.date, reliefThrough: relief) { continue }
+            let title = "\(name) — Available"
+            if let existingID = existing[Self.sharedKey(title: title, day: offDay.date)] {
+                map[offDay.id] = existingID   // already posted for this day → don't duplicate
+                continue
+            }
             let event        = EKEvent(eventStore: ekStore)
             event.calendar   = cal
-            event.title      = "\(name) — Available"
+            event.title      = title
             event.isAllDay   = true
             event.startDate  = offDay.date
             event.endDate    = offDay.date
@@ -295,15 +315,69 @@ final class EventKitManager {
     }
 
     private func removeAllSharedEvents() {
-        var map = sharedEventIDMap
-        for (shiftID, eid) in map {
-            if let event = ekStore.event(withIdentifier: eid) {
-                try? ekStore.remove(event, span: .thisEvent, commit: false)
+        // The shared calendar is GROUP-owned — only remove the availability events WE wrote
+        // (tagged in notes), never anyone else's. Predicate-based so it catches orphans too.
+        if let cal = sharedCalendar() {
+            let (start, end) = scanWindow
+            let pred = ekStore.predicateForEvents(withStart: start, end: end, calendars: [cal])
+            for ev in ekStore.events(matching: pred) where (ev.notes ?? "").contains("BATMANReader") {
+                try? ekStore.remove(ev, span: .thisEvent, commit: false)
             }
-            map.removeValue(forKey: shiftID)
+            try? ekStore.commit()
         }
-        try? ekStore.commit()
-        sharedEventIDMap = map
+        sharedEventIDMap = [:]
+    }
+
+    // MARK: - Dedup + reset helpers
+
+    /// The wide window scanned for bulk delete / dedup (EventKit predicates need explicit bounds).
+    private var scanWindow: (start: Date, end: Date) {
+        let cal = Calendar.current
+        let start = cal.date(byAdding: .year, value: -2, to: Date()) ?? Date()
+        let end   = cal.date(byAdding: .year, value:  2, to: Date()) ?? Date()
+        return (start, end)
+    }
+
+    /// The saved personal calendar WITHOUT creating one (used by reset so we never spawn a calendar).
+    private func existingPersonalCalendar() -> EKCalendar? {
+        guard let id = savedPersonalCalendarID else { return nil }
+        return ekStore.calendar(withIdentifier: id)
+    }
+
+    /// title+start key for an existing personal (timed) event, for dedup.
+    private static func eventKey(title: String, start: Date) -> String {
+        "\(title)|\(Int(start.timeIntervalSince1970))"
+    }
+    /// title+day key for a shared (all-day) availability event, for dedup.
+    private static func sharedKey(title: String, day: Date) -> String {
+        "\(title)|\(dayKeyFormatter.string(from: day))"
+    }
+    private static let dayKeyFormatter: DateFormatter = {
+        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; return f
+    }()
+
+    /// Index of events already in `cal` over the shifts' span: dedup-key → eventIdentifier.
+    private func existingEventIDsByKey(in cal: EKCalendar, spanning shifts: [Shift]) -> [String: String] {
+        guard let minD = shifts.map(\.startDate).min(), let maxD = shifts.map(\.endDate).max() else { return [:] }
+        let pred = ekStore.predicateForEvents(withStart: minD.addingTimeInterval(-86400),
+                                              end: maxD.addingTimeInterval(86400), calendars: [cal])
+        var index: [String: String] = [:]
+        for ev in ekStore.events(matching: pred) {
+            index[Self.eventKey(title: ev.title ?? "", start: ev.startDate)] = ev.eventIdentifier
+        }
+        return index
+    }
+
+    /// Index of OUR existing availability events on the shared calendar: dedup-key → eventIdentifier.
+    private func existingSharedKeys(in cal: EKCalendar, spanning offDays: [Shift], title: String) -> [String: String] {
+        guard let minD = offDays.map(\.date).min(), let maxD = offDays.map(\.date).max() else { return [:] }
+        let pred = ekStore.predicateForEvents(withStart: minD.addingTimeInterval(-86400),
+                                              end: maxD.addingTimeInterval(86400), calendars: [cal])
+        var index: [String: String] = [:]
+        for ev in ekStore.events(matching: pred) where ev.title == title {
+            index[Self.sharedKey(title: ev.title ?? "", day: ev.startDate)] = ev.eventIdentifier
+        }
+        return index
     }
 
     // MARK: - Helpers
