@@ -498,9 +498,11 @@ enum TradeRouter {
         }
 
         var result: [TradePackage] = []
-        // Intents only matches peers who PUBLISHED a profile — an unprofiled peer has no marked
-        // intent, so any deal with them is purely availability-based (low value). Skip them here.
-        for cand in universe.filter({ profilesByID[$0.workerID] != nil }).sorted(by: { $0.workerID < $1.workerID }) {
+        // The WHOLE roster is eligible as a counterparty. The INTENT side must be someone who actually
+        // marked a day (enforced by `assembleIntentDeal`'s marketplace seed) — but the OTHER side may be
+        // an unprofiled peer joining via PREFERENCES (bookend-only by default, A8). Low-intent deals
+        // simply score lower and fall off the top-20 cap.
+        for cand in universe.sorted(by: { $0.workerID < $1.workerID }) {
             let profile = profileFor(cand.workerID, cand.name)
             let plan = await TradeMatcher.twoWayExplore(
                 withWorker: cand.workerID, name: cand.name,
@@ -531,17 +533,18 @@ enum TradeRouter {
             result.append(pkg)
         }
 
-        // Lucky (gated): TRUE intent-for-intent circular loops — every participant (including the
-        // closing one) gives a day THEY marked. `intentOnly` enforces it; fireCount = real marked legs.
+        // Lucky (gated): circular loops that need only ≥1 marked-intent leg (the marked seed
+        // guarantees it). Other participants join via PREFERENCES (`allowPrefMiddles`). fireCount =
+        // the REAL marked-leg count, so all-intent loops rank highest without hard-coding it.
         if generation.maxPeople >= 3, generation.engine != .minCost {
             let giveShifts = await selfSeekingShifts(myID: selfID, start: start, end: end)
             let loops = await nWayRoutes(seedShifts: giveShifts, maxDepth: generation.maxPeople,
-                                         excluding: selfID, intentOnly: true)
+                                         excluding: selfID, allowPrefMiddles: true)
             func legMarked(_ leg: NWayLeg) -> Bool {
                 leg.fromID == selfID ? mySeeking.contains(leg.dayID)
                     : (profilesByID[leg.fromID]?.seekingDayIDs.contains(leg.dayID) ?? false)
             }
-            for loop in loops.prefix(10) {
+            for loop in loops.prefix(10) where loop.legs.contains(where: legMarked) {
                 var gv: [String: [String]] = [:]; var tk: [String: [String]] = [:]
                 for leg in loop.legs {
                     if leg.fromID == selfID { gv[leg.toID, default: []].append(leg.dayID) }
@@ -663,13 +666,14 @@ enum TradeRouter {
     /// Resolves 3- and 4-person circular swap loops seeded from the user's
     /// give-away days. A→B→C→A: each person gives one shift and receives one, so
     /// everyone nets the same hours. Bounded by `maxDepth` participants.
-    /// `intentOnly` (used by the Intents marketplace) requires EVERY leg — including the closing leg
-    /// back to self — to be a day its giver actually MARKED to trade away, so the whole loop is a true
-    /// intent-for-intent chain among 3–4 people, not just availability-filled middles.
+    /// `allowPrefMiddles` (used by the Intents marketplace) lets non-seed participants join a loop on
+    /// their PREFERENCES (availability/bookend) rather than requiring each to have marked the day. The
+    /// loop still starts from a marked seed (≥1 intent leg); ranking by the real marked-leg count then
+    /// floats all-intent loops to the top — without hard-coding an all-marked requirement.
     static func nWayRoutes(seedShifts: [Shift], maxDepth: Int = 4,
                            excluding selfID: String,
                            constraints: MatchConstraints = .standard,
-                           intentOnly: Bool = false) async -> [NWayRoute] {
+                           allowPrefMiddles: Bool = false) async -> [NWayRoute] {
         let giveDays = seedShifts.filter { !$0.isOff }
         guard !giveDays.isEmpty else { return [] }
 
@@ -732,13 +736,6 @@ enum TradeRouter {
                     guard entry.day >= TradeMatcher.isoDay(start) else { continue }
                     guard !keepDays(current).contains(entry.day) else { continue }   // never give a Keep day
                     guard !giveBlocked(current, entry) else { continue }             // relief: not a real shift
-                    // intentOnly: the closing giver must have MARKED this day (true intent loop).
-                    if intentOnly {
-                        let wants = current == selfID
-                            ? DayIntentStore.shared.seekingDayIDs.contains(entry.day)
-                            : (TradeProfileStore.shared.profile(forWorker: current)?.seekingDayIDs.contains(entry.day) ?? false)
-                        if !wants { continue }
-                    }
                     // current gives `entry`; self must cover it.
                     if canCover(covererID: selfID, covererMap: selfMap, giver: entry) {
                         let closing = NWayLeg(fromID: current, toID: selfID, dayID: entry.day,
@@ -768,11 +765,13 @@ enum TradeRouter {
             for entry in currentMap.values where !entry.isOff {
                 if keepDays(current).contains(entry.day) { continue }   // never give a Keep day
                 if giveBlocked(current, entry) { continue }             // relief: not a real shift
-                // Prefer days the current giver actually wants to give (intent).
+                // Prefer days the current giver actually wants to give (intent). The Intents engine
+                // (`allowPrefMiddles`) lets non-seed participants join via preferences instead — the
+                // marked seed still guarantees ≥1 intent leg, and ranking rewards more marked legs.
                 let wantsGive: Bool = current == selfID
                     ? DayIntentStore.shared.seekingDayIDs.contains(entry.day)
                     : (TradeProfileStore.shared.profile(forWorker: current)?.seekingDayIDs.contains(entry.day) ?? false)
-                if constraints.enforceChaining && !wantsGive { continue }
+                if constraints.enforceChaining && !allowPrefMiddles && !wantsGive { continue }
 
                 for (nextID, nextMap) in maps.sorted(by: { $0.key < $1.key }) where !visited.contains(nextID) && nextID != selfID {
                     guard canCover(covererID: nextID, covererMap: nextMap, giver: entry) else { continue }
