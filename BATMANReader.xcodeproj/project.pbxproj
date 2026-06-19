@@ -7,58 +7,10 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		916E54002FDCE21900A1CE2B /* CloudKitRosterService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 916E53FF2FDCE21900A1CE2B /* CloudKitRosterService.swift */; };
-		916E54022FDCE50200A1CE2B /* CloudPush.swift in Sources */ = {isa = PBXBuildFile; fileRef = 916E54012FDCE50200A1CE2B /* CloudPush.swift */; };
-		916E54042FDCF23700A1CE2B /* HelpView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 916E54032FDCF23700A1CE2B /* HelpView.swift */; };
-		916E54062FDCF7FF00A1CE2B /* AccountService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 916E54052FDCF7FF00A1CE2B /* AccountService.swift */; };
-		916E54152FDE2F0A00A1CE2B /* TradeEngineModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 916E54142FDE2F0A00A1CE2B /* TradeEngineModels.swift */; };
-		916E54172FDE2F2B00A1CE2B /* DayIntentStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 916E54162FDE2F2B00A1CE2B /* DayIntentStore.swift */; };
-		916E54192FDE314700A1CE2B /* TradeHistoryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 916E54182FDE314700A1CE2B /* TradeHistoryStore.swift */; };
-		916E541B2FDE318D00A1CE2B /* TradeRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 916E541A2FDE318D00A1CE2B /* TradeRouter.swift */; };
-		916E541D2FDE323800A1CE2B /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 916E541C2FDE323800A1CE2B /* HomeView.swift */; };
-		916E541F2FDE328200A1CE2B /* HomeCalendar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 916E541E2FDE328200A1CE2B /* HomeCalendar.swift */; };
-		916E54212FDE32F800A1CE2B /* TradesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 916E54202FDE32F800A1CE2B /* TradesView.swift */; };
-		916E54232FDE332F00A1CE2B /* TradeIntentsFeed.swift in Sources */ = {isa = PBXBuildFile; fileRef = 916E54222FDE332F00A1CE2B /* TradeIntentsFeed.swift */; };
-		916E54252FDE376100A1CE2B /* DispatchPalette.swift in Sources */ = {isa = PBXBuildFile; fileRef = 916E54242FDE376100A1CE2B /* DispatchPalette.swift */; };
-		916E54272FDE3B6B00A1CE2B /* SlackKit.swift in Sources */ = {isa = PBXBuildFile; fileRef = 916E54262FDE3B6B00A1CE2B /* SlackKit.swift */; };
-		916E54292FDE3FEE00A1CE2B /* ReasonClassifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = 916E54282FDE3FEE00A1CE2B /* ReasonClassifier.swift */; };
-		916E542B2FDE569700A1CE2B /* Holidays.swift in Sources */ = {isa = PBXBuildFile; fileRef = 916E542A2FDE569700A1CE2B /* Holidays.swift */; };
-		916E542D2FDE87CB00A1CE2B /* MinCostFlow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 916E542C2FDE87CB00A1CE2B /* MinCostFlow.swift */; };
-		916E542F2FDE880800A1CE2B /* OptimalMatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 916E542E2FDE880800A1CE2B /* OptimalMatcher.swift */; };
-		916E54312FDE8DE900A1CE2B /* EngineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 916E54302FDE8DE900A1CE2B /* EngineTests.swift */; };
-		91D1B89D2FDA65050049CAF7 /* ShiftAvailability.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B8992FDA65050049CAF7 /* ShiftAvailability.swift */; };
-		91D1B89E2FDA65050049CAF7 /* AIScheduleSummaryIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B88A2FDA65050049CAF7 /* AIScheduleSummaryIntent.swift */; };
-		91D1B89F2FDA65050049CAF7 /* SettingsManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B8962FDA65050049CAF7 /* SettingsManager.swift */; };
-		91D1B8A02FDA65050049CAF7 /* ShiftEntity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B89A2FDA65050049CAF7 /* ShiftEntity.swift */; };
-		91D1B8A12FDA65050049CAF7 /* BATMANReaderApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B88E2FDA65050049CAF7 /* BATMANReaderApp.swift */; };
-		91D1B8A22FDA65050049CAF7 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B8972FDA65050049CAF7 /* SettingsView.swift */; };
-		91D1B8A32FDA65050049CAF7 /* AvailabilityIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B88B2FDA65050049CAF7 /* AvailabilityIntents.swift */; };
-		91D1B8A42FDA65050049CAF7 /* Shift.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B8982FDA65050049CAF7 /* Shift.swift */; };
-		91D1B8A52FDA65050049CAF7 /* ScheduleIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B8942FDA65050049CAF7 /* ScheduleIntents.swift */; };
-		91D1B8A62FDA65050049CAF7 /* ScheduleDiff.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B8932FDA65050049CAF7 /* ScheduleDiff.swift */; };
-		91D1B8A72FDA65050049CAF7 /* EventKitManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B8902FDA65050049CAF7 /* EventKitManager.swift */; };
-		91D1B8A82FDA65050049CAF7 /* NotificationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B8912FDA65050049CAF7 /* NotificationManager.swift */; };
-		91D1B8A92FDA65050049CAF7 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B88F2FDA65050049CAF7 /* ContentView.swift */; };
-		91D1B8AA2FDA65050049CAF7 /* ScheduleParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B8952FDA65050049CAF7 /* ScheduleParser.swift */; };
-		91D1B8AB2FDA65050049CAF7 /* AvailabilityManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B88C2FDA65050049CAF7 /* AvailabilityManager.swift */; };
-		91D1B8AC2FDA65050049CAF7 /* WebController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B89C2FDA65050049CAF7 /* WebController.swift */; };
-		91D1B8AD2FDA65050049CAF7 /* ShiftStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B89B2FDA65050049CAF7 /* ShiftStore.swift */; };
-		91D1B8AE2FDA65050049CAF7 /* AvailabilityView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B88D2FDA65050049CAF7 /* AvailabilityView.swift */; };
-		91D1B8AF2FDA65050049CAF7 /* README_ShortcutsSetup.md in Resources */ = {isa = PBXBuildFile; fileRef = 91D1B8922FDA65050049CAF7 /* README_ShortcutsSetup.md */; };
-		91D1B8B52FDBDEA40049CAF7 /* RosterShift.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B8B42FDBDEA40049CAF7 /* RosterShift.swift */; };
-		91D1B8B72FDBDEB30049CAF7 /* RosterStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B8B62FDBDEB30049CAF7 /* RosterStore.swift */; };
-		91D1B8B92FDBE47C0049CAF7 /* TradeMatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B8B82FDBE47C0049CAF7 /* TradeMatcher.swift */; };
-		91D1B8BD2FDBF3850049CAF7 /* ShiftSelectCalendar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B8BC2FDBF3850049CAF7 /* ShiftSelectCalendar.swift */; };
-		91D1B8BF2FDC488D0049CAF7 /* TradeIntentStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B8BE2FDC488D0049CAF7 /* TradeIntentStore.swift */; };
-		91D1B8C12FDC49AD0049CAF7 /* TradeProfile.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B8C02FDC49AD0049CAF7 /* TradeProfile.swift */; };
-		91D1B8C32FDC5B2E0049CAF7 /* CloudKitTradeProfileService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B8C22FDC5B2E0049CAF7 /* CloudKitTradeProfileService.swift */; };
+		91D1B8AF2FDA65050049CAF7 /* Documentation/README_ShortcutsSetup.md in Resources */ = {isa = PBXBuildFile; fileRef = 91D1B8922FDA65050049CAF7 /* Documentation/README_ShortcutsSetup.md */; };
 		91D1B8CB2FDC65470049CAF7 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 91D1B8CA2FDC65470049CAF7 /* WidgetKit.framework */; };
 		91D1B8CD2FDC65470049CAF7 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 91D1B8CC2FDC65470049CAF7 /* SwiftUI.framework */; };
 		91D1B8DE2FDC65490049CAF7 /* BATMANWidgetsExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 91D1B8C82FDC65470049CAF7 /* BATMANWidgetsExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
-		91D1B8E52FDC65BC0049CAF7 /* Messaging.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B8E42FDC65BC0049CAF7 /* Messaging.swift */; };
-		91D1B8E72FDC66240049CAF7 /* CloudKitMessagingService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B8E62FDC66240049CAF7 /* CloudKitMessagingService.swift */; };
-		91D1B8EB2FDC67DD0049CAF7 /* WidgetData.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B8EA2FDC67DD0049CAF7 /* WidgetData.swift */; };
-		91D1B8ED2FDC69DF0049CAF7 /* MessagingViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D1B8EC2FDC69DF0049CAF7 /* MessagingViews.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -84,60 +36,11 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
-		916E53FF2FDCE21900A1CE2B /* CloudKitRosterService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/Services/CloudKitRosterService.swift; sourceTree = "<group>"; };
-		916E54012FDCE50200A1CE2B /* CloudPush.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/Services/CloudPush.swift; sourceTree = "<group>"; };
-		916E54032FDCF23700A1CE2B /* HelpView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/UI/Settings/HelpView.swift; sourceTree = "<group>"; };
-		916E54052FDCF7FF00A1CE2B /* AccountService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/Services/AccountService.swift; sourceTree = "<group>"; };
-		916E54142FDE2F0A00A1CE2B /* TradeEngineModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/Domain/TradeEngine/TradeEngineModels.swift; sourceTree = "<group>"; };
-		916E54162FDE2F2B00A1CE2B /* DayIntentStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/Data/DayIntentStore.swift; sourceTree = "<group>"; };
-		916E54182FDE314700A1CE2B /* TradeHistoryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/Data/TradeHistoryStore.swift; sourceTree = "<group>"; };
-		916E541A2FDE318D00A1CE2B /* TradeRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/Domain/TradeEngine/TradeRouter.swift; sourceTree = "<group>"; };
-		916E541C2FDE323800A1CE2B /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/UI/Home/HomeView.swift; sourceTree = "<group>"; };
-		916E541E2FDE328200A1CE2B /* HomeCalendar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/UI/Home/HomeCalendar.swift; sourceTree = "<group>"; };
-		916E54202FDE32F800A1CE2B /* TradesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/UI/Trades/TradesView.swift; sourceTree = "<group>"; };
-		916E54222FDE332F00A1CE2B /* TradeIntentsFeed.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/UI/Trades/TradeIntentsFeed.swift; sourceTree = "<group>"; };
-		916E54242FDE376100A1CE2B /* DispatchPalette.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/App/DispatchPalette.swift; sourceTree = "<group>"; };
-		916E54262FDE3B6B00A1CE2B /* SlackKit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/UI/Shared/SlackKit.swift; sourceTree = "<group>"; };
-		916E54282FDE3FEE00A1CE2B /* ReasonClassifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/Domain/TradeEngine/ReasonClassifier.swift; sourceTree = "<group>"; };
-		916E542A2FDE569700A1CE2B /* Holidays.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/Domain/Schedule/Holidays.swift; sourceTree = "<group>"; };
-		916E542C2FDE87CB00A1CE2B /* MinCostFlow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/Domain/TradeEngine/MinCostFlow.swift; sourceTree = "<group>"; };
-		916E542E2FDE880800A1CE2B /* OptimalMatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/Domain/TradeEngine/OptimalMatcher.swift; sourceTree = "<group>"; };
-		916E54302FDE8DE900A1CE2B /* EngineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/Support/EngineTests.swift; sourceTree = "<group>"; };
 		91B5643C2FDA47E400D38BBE /* BATMANReader.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = BATMANReader.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		91D1B88A2FDA65050049CAF7 /* AIScheduleSummaryIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/Intents/AIScheduleSummaryIntent.swift; sourceTree = "<group>"; };
-		91D1B88B2FDA65050049CAF7 /* AvailabilityIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/Intents/AvailabilityIntents.swift; sourceTree = "<group>"; };
-		91D1B88C2FDA65050049CAF7 /* AvailabilityManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/Services/AvailabilityManager.swift; sourceTree = "<group>"; };
-		91D1B88D2FDA65050049CAF7 /* AvailabilityView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/UI/Trades/AvailabilityView.swift; sourceTree = "<group>"; };
-		91D1B88E2FDA65050049CAF7 /* BATMANReaderApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/App/BATMANReaderApp.swift; sourceTree = "<group>"; };
-		91D1B88F2FDA65050049CAF7 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/App/ContentView.swift; sourceTree = "<group>"; };
-		91D1B8902FDA65050049CAF7 /* EventKitManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/Services/EventKitManager.swift; sourceTree = "<group>"; };
-		91D1B8912FDA65050049CAF7 /* NotificationManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/Services/NotificationManager.swift; sourceTree = "<group>"; };
-		91D1B8922FDA65050049CAF7 /* README_ShortcutsSetup.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = Documentation/README_ShortcutsSetup.md; sourceTree = "<group>"; };
-		91D1B8932FDA65050049CAF7 /* ScheduleDiff.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/Domain/Schedule/ScheduleDiff.swift; sourceTree = "<group>"; };
-		91D1B8942FDA65050049CAF7 /* ScheduleIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/Intents/ScheduleIntents.swift; sourceTree = "<group>"; };
-		91D1B8952FDA65050049CAF7 /* ScheduleParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/Domain/Schedule/ScheduleParser.swift; sourceTree = "<group>"; };
-		91D1B8962FDA65050049CAF7 /* SettingsManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/Data/SettingsManager.swift; sourceTree = "<group>"; };
-		91D1B8972FDA65050049CAF7 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/UI/Settings/SettingsView.swift; sourceTree = "<group>"; };
-		91D1B8982FDA65050049CAF7 /* Shift.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/Domain/Schedule/Shift.swift; sourceTree = "<group>"; };
-		91D1B8992FDA65050049CAF7 /* ShiftAvailability.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/Domain/Intents/ShiftAvailability.swift; sourceTree = "<group>"; };
-		91D1B89A2FDA65050049CAF7 /* ShiftEntity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/Intents/ShiftEntity.swift; sourceTree = "<group>"; };
-		91D1B89B2FDA65050049CAF7 /* ShiftStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/Data/ShiftStore.swift; sourceTree = "<group>"; };
-		91D1B89C2FDA65050049CAF7 /* WebController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/Services/WebController.swift; sourceTree = "<group>"; };
-		91D1B8B42FDBDEA40049CAF7 /* RosterShift.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/Domain/Schedule/RosterShift.swift; sourceTree = "<group>"; };
-		91D1B8B62FDBDEB30049CAF7 /* RosterStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/Data/RosterStore.swift; sourceTree = "<group>"; };
-		91D1B8B82FDBE47C0049CAF7 /* TradeMatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/Domain/TradeEngine/TradeMatcher.swift; sourceTree = "<group>"; };
-		91D1B8BC2FDBF3850049CAF7 /* ShiftSelectCalendar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/UI/Shared/ShiftSelectCalendar.swift; sourceTree = "<group>"; };
-		91D1B8BE2FDC488D0049CAF7 /* TradeIntentStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/Data/TradeIntentStore.swift; sourceTree = "<group>"; };
-		91D1B8C02FDC49AD0049CAF7 /* TradeProfile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/Domain/Intents/TradeProfile.swift; sourceTree = "<group>"; };
-		91D1B8C22FDC5B2E0049CAF7 /* CloudKitTradeProfileService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/Services/CloudKitTradeProfileService.swift; sourceTree = "<group>"; };
+		91D1B8922FDA65050049CAF7 /* Documentation/README_ShortcutsSetup.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = Documentation/README_ShortcutsSetup.md; sourceTree = "<group>"; };
 		91D1B8C82FDC65470049CAF7 /* BATMANWidgetsExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = BATMANWidgetsExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		91D1B8CA2FDC65470049CAF7 /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
 		91D1B8CC2FDC65470049CAF7 /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
-		91D1B8E42FDC65BC0049CAF7 /* Messaging.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/Data/Messaging.swift; sourceTree = "<group>"; };
-		91D1B8E62FDC66240049CAF7 /* CloudKitMessagingService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/Services/CloudKitMessagingService.swift; sourceTree = "<group>"; };
-		91D1B8E92FDC670F0049CAF7 /* BATMANWidgetsExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Sources/Support/BATMANWidgetsExtension.entitlements; sourceTree = "<group>"; };
-		91D1B8EA2FDC67DD0049CAF7 /* WidgetData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/Services/WidgetData.swift; sourceTree = "<group>"; };
-		91D1B8EC2FDC69DF0049CAF7 /* MessagingViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/UI/Messaging/MessagingViews.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -158,6 +61,11 @@
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		9138AF2A2FE4F021002E98F1 /* Sources */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Sources;
+			sourceTree = "<group>";
+		};
 		91B5643E2FDA47E400D38BBE /* BATMANReader */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
@@ -195,60 +103,12 @@
 		91B564332FDA47E400D38BBE = {
 			isa = PBXGroup;
 			children = (
-				91D1B8E92FDC670F0049CAF7 /* BATMANWidgetsExtension.entitlements */,
 				91B5643E2FDA47E400D38BBE /* BATMANReader */,
 				91D1B8CE2FDC65470049CAF7 /* BATMANWidgets */,
 				91D1B8C92FDC65470049CAF7 /* Frameworks */,
 				91B5643D2FDA47E400D38BBE /* Products */,
-				91D1B88A2FDA65050049CAF7 /* AIScheduleSummaryIntent.swift */,
-				91D1B88B2FDA65050049CAF7 /* AvailabilityIntents.swift */,
-				91D1B88C2FDA65050049CAF7 /* AvailabilityManager.swift */,
-				91D1B88D2FDA65050049CAF7 /* AvailabilityView.swift */,
-				91D1B88E2FDA65050049CAF7 /* BATMANReaderApp.swift */,
-				91D1B88F2FDA65050049CAF7 /* ContentView.swift */,
-				91D1B8902FDA65050049CAF7 /* EventKitManager.swift */,
-				91D1B8912FDA65050049CAF7 /* NotificationManager.swift */,
-				91D1B8922FDA65050049CAF7 /* README_ShortcutsSetup.md */,
-				91D1B8932FDA65050049CAF7 /* ScheduleDiff.swift */,
-				91D1B8942FDA65050049CAF7 /* ScheduleIntents.swift */,
-				91D1B8952FDA65050049CAF7 /* ScheduleParser.swift */,
-				91D1B8962FDA65050049CAF7 /* SettingsManager.swift */,
-				91D1B8972FDA65050049CAF7 /* SettingsView.swift */,
-				91D1B8982FDA65050049CAF7 /* Shift.swift */,
-				91D1B8992FDA65050049CAF7 /* ShiftAvailability.swift */,
-				91D1B89A2FDA65050049CAF7 /* ShiftEntity.swift */,
-				91D1B89B2FDA65050049CAF7 /* ShiftStore.swift */,
-				91D1B89C2FDA65050049CAF7 /* WebController.swift */,
-				91D1B8B42FDBDEA40049CAF7 /* RosterShift.swift */,
-				91D1B8B62FDBDEB30049CAF7 /* RosterStore.swift */,
-				91D1B8B82FDBE47C0049CAF7 /* TradeMatcher.swift */,
-				91D1B8BC2FDBF3850049CAF7 /* ShiftSelectCalendar.swift */,
-				91D1B8BE2FDC488D0049CAF7 /* TradeIntentStore.swift */,
-				91D1B8C02FDC49AD0049CAF7 /* TradeProfile.swift */,
-				91D1B8C22FDC5B2E0049CAF7 /* CloudKitTradeProfileService.swift */,
-				91D1B8E42FDC65BC0049CAF7 /* Messaging.swift */,
-				91D1B8E62FDC66240049CAF7 /* CloudKitMessagingService.swift */,
-				91D1B8EA2FDC67DD0049CAF7 /* WidgetData.swift */,
-				91D1B8EC2FDC69DF0049CAF7 /* MessagingViews.swift */,
-				916E53FF2FDCE21900A1CE2B /* CloudKitRosterService.swift */,
-				916E54012FDCE50200A1CE2B /* CloudPush.swift */,
-				916E54032FDCF23700A1CE2B /* HelpView.swift */,
-				916E54052FDCF7FF00A1CE2B /* AccountService.swift */,
-				916E54142FDE2F0A00A1CE2B /* TradeEngineModels.swift */,
-				916E54162FDE2F2B00A1CE2B /* DayIntentStore.swift */,
-				916E54182FDE314700A1CE2B /* TradeHistoryStore.swift */,
-				916E541A2FDE318D00A1CE2B /* TradeRouter.swift */,
-				916E541C2FDE323800A1CE2B /* HomeView.swift */,
-				916E541E2FDE328200A1CE2B /* HomeCalendar.swift */,
-				916E54202FDE32F800A1CE2B /* TradesView.swift */,
-				916E54222FDE332F00A1CE2B /* TradeIntentsFeed.swift */,
-				916E54242FDE376100A1CE2B /* DispatchPalette.swift */,
-				916E54262FDE3B6B00A1CE2B /* SlackKit.swift */,
-				916E54282FDE3FEE00A1CE2B /* ReasonClassifier.swift */,
-				916E542A2FDE569700A1CE2B /* Holidays.swift */,
-				916E542C2FDE87CB00A1CE2B /* MinCostFlow.swift */,
-				916E542E2FDE880800A1CE2B /* OptimalMatcher.swift */,
-				916E54302FDE8DE900A1CE2B /* EngineTests.swift */,
+				91D1B8922FDA65050049CAF7 /* Documentation/README_ShortcutsSetup.md */,
+				9138AF2A2FE4F021002E98F1 /* Sources */,
 			);
 			sourceTree = "<group>";
 		};
@@ -288,6 +148,7 @@
 				91D1B8DD2FDC65490049CAF7 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
+				9138AF2A2FE4F021002E98F1 /* Sources */,
 				91B5643E2FDA47E400D38BBE /* BATMANReader */,
 			);
 			name = BATMANReader;
@@ -356,7 +217,7 @@
 		91B5643A2FDA47E400D38BBE /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			files = (
-				91D1B8AF2FDA65050049CAF7 /* README_ShortcutsSetup.md in Resources */,
+				91D1B8AF2FDA65050049CAF7 /* Documentation/README_ShortcutsSetup.md in Resources */,
 			);
 		};
 		91D1B8C62FDC65470049CAF7 /* Resources */ = {
@@ -370,54 +231,6 @@
 		91B564382FDA47E400D38BBE /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			files = (
-				91D1B89D2FDA65050049CAF7 /* ShiftAvailability.swift in Sources */,
-				916E54192FDE314700A1CE2B /* TradeHistoryStore.swift in Sources */,
-				916E542B2FDE569700A1CE2B /* Holidays.swift in Sources */,
-				916E54022FDCE50200A1CE2B /* CloudPush.swift in Sources */,
-				91D1B89E2FDA65050049CAF7 /* AIScheduleSummaryIntent.swift in Sources */,
-				91D1B8B92FDBE47C0049CAF7 /* TradeMatcher.swift in Sources */,
-				916E54292FDE3FEE00A1CE2B /* ReasonClassifier.swift in Sources */,
-				91D1B8ED2FDC69DF0049CAF7 /* MessagingViews.swift in Sources */,
-				91D1B8C12FDC49AD0049CAF7 /* TradeProfile.swift in Sources */,
-				91D1B89F2FDA65050049CAF7 /* SettingsManager.swift in Sources */,
-				916E54212FDE32F800A1CE2B /* TradesView.swift in Sources */,
-				91D1B8A02FDA65050049CAF7 /* ShiftEntity.swift in Sources */,
-				916E54172FDE2F2B00A1CE2B /* DayIntentStore.swift in Sources */,
-				91D1B8A12FDA65050049CAF7 /* BATMANReaderApp.swift in Sources */,
-				916E54062FDCF7FF00A1CE2B /* AccountService.swift in Sources */,
-				91D1B8A22FDA65050049CAF7 /* SettingsView.swift in Sources */,
-				91D1B8A32FDA65050049CAF7 /* AvailabilityIntents.swift in Sources */,
-				91D1B8BF2FDC488D0049CAF7 /* TradeIntentStore.swift in Sources */,
-				916E541D2FDE323800A1CE2B /* HomeView.swift in Sources */,
-				916E541F2FDE328200A1CE2B /* HomeCalendar.swift in Sources */,
-				91D1B8A42FDA65050049CAF7 /* Shift.swift in Sources */,
-				91D1B8A52FDA65050049CAF7 /* ScheduleIntents.swift in Sources */,
-				916E54252FDE376100A1CE2B /* DispatchPalette.swift in Sources */,
-				91D1B8A62FDA65050049CAF7 /* ScheduleDiff.swift in Sources */,
-				91D1B8A72FDA65050049CAF7 /* EventKitManager.swift in Sources */,
-				916E542F2FDE880800A1CE2B /* OptimalMatcher.swift in Sources */,
-				916E54232FDE332F00A1CE2B /* TradeIntentsFeed.swift in Sources */,
-				916E541B2FDE318D00A1CE2B /* TradeRouter.swift in Sources */,
-				916E54042FDCF23700A1CE2B /* HelpView.swift in Sources */,
-				91D1B8A82FDA65050049CAF7 /* NotificationManager.swift in Sources */,
-				91D1B8EB2FDC67DD0049CAF7 /* WidgetData.swift in Sources */,
-				91D1B8E72FDC66240049CAF7 /* CloudKitMessagingService.swift in Sources */,
-				916E54152FDE2F0A00A1CE2B /* TradeEngineModels.swift in Sources */,
-				91D1B8B72FDBDEB30049CAF7 /* RosterStore.swift in Sources */,
-				916E54312FDE8DE900A1CE2B /* EngineTests.swift in Sources */,
-				91D1B8BD2FDBF3850049CAF7 /* ShiftSelectCalendar.swift in Sources */,
-				91D1B8E52FDC65BC0049CAF7 /* Messaging.swift in Sources */,
-				91D1B8C32FDC5B2E0049CAF7 /* CloudKitTradeProfileService.swift in Sources */,
-				91D1B8A92FDA65050049CAF7 /* ContentView.swift in Sources */,
-				916E542D2FDE87CB00A1CE2B /* MinCostFlow.swift in Sources */,
-				916E54002FDCE21900A1CE2B /* CloudKitRosterService.swift in Sources */,
-				91D1B8AA2FDA65050049CAF7 /* ScheduleParser.swift in Sources */,
-				91D1B8B52FDBDEA40049CAF7 /* RosterShift.swift in Sources */,
-				91D1B8AB2FDA65050049CAF7 /* AvailabilityManager.swift in Sources */,
-				916E54272FDE3B6B00A1CE2B /* SlackKit.swift in Sources */,
-				91D1B8AC2FDA65050049CAF7 /* WebController.swift in Sources */,
-				91D1B8AD2FDA65050049CAF7 /* ShiftStore.swift in Sources */,
-				91D1B8AE2FDA65050049CAF7 /* AvailabilityView.swift in Sources */,
 			);
 		};
 		91D1B8C42FDC65470049CAF7 /* Sources */ = {
