@@ -96,7 +96,8 @@ struct FindCandidatesSection: View {
         }
         .sheet(isPresented: $showFilter) {
             MasterFilterSheet(filter: $searchFilter, people: rosterPeople,
-                              onApply: { if !selectedIDs.isEmpty { Task { await search() } } })
+                              onGenerate: { f in if !selectedIDs.isEmpty { Task { await search(generation: f) } } },
+                              onReset: { if !selectedIDs.isEmpty { Task { await searchFast() } } })
         }
         .sheet(isPresented: $showQualSwaps) {
             QualSwapDaysSheet(packages: qualSwapResults, loading: loadingQual) { selectedPkgs in
@@ -167,7 +168,7 @@ struct FindCandidatesSection: View {
                     }
                     .controlSize(.small).disabled(selectedIDs.isEmpty)
                     .accessibilityLabel("Email selected days to dispatch DL")
-                    Button { TradeHistoryStore.shared.recordSearch(at: Date()); Task { await search() } } label: {
+                    Button { TradeHistoryStore.shared.recordSearch(at: Date()); Task { await searchFast() } } label: {
                         Label("Find", systemImage: "magnifyingglass")
                     }
                     .buttonStyle(.borderedProminent).controlSize(.small)
@@ -211,9 +212,10 @@ struct FindCandidatesSection: View {
                         .font(.caption.weight(.semibold))
                 }
                 .tint(.purple)
-                .onChange(of: whatIf) { _, _ in if hasSearched { Task { await search() } } }
-                // C1: re-run on an explicit SAVE (intents revision), not on every edit.
-                .onChange(of: DayIntentStore.shared.intentsRevision) { _, _ in if hasSearched { Task { await search() } } }
+                .onChange(of: whatIf) { _, _ in if hasSearched { Task { await searchFast() } } }
+                // C1: re-run on an explicit SAVE (intents revision), not on every edit. Background
+                // reruns stay FAST (2-person); the heavy 3+/N-Way search runs only via Lucky → Generate.
+                .onChange(of: DayIntentStore.shared.intentsRevision) { _, _ in if hasSearched { Task { await searchFast() } } }
             }
         }
         .padding(.horizontal).padding(.vertical, 8)
@@ -329,7 +331,15 @@ struct FindCandidatesSection: View {
         else { displayed.forEach { selected.insert($0.id) } }
     }
 
-    private func search() async {
+    /// Find: fast 2-person generation, with any Lucky filter cleared so the results show.
+    private func searchFast() async {
+        searchFilter = .normal
+        await search(generation: .fast)
+    }
+
+    /// `generation` bounds the engine work: `.fast` (2-person, the Find default) or the user's Lucky
+    /// criteria (heavy 3+/N-Way, one-time via Generate). Display still filters via `searchFilter`.
+    private func search(generation: SearchFilter = .fast) async {
         let shifts = selectedShifts
         guard !shifts.isEmpty else { return }
         isSearching = true
@@ -380,8 +390,9 @@ struct FindCandidatesSection: View {
             return $0.name < $1.name
         }
 
-        // Same packaging algos as Trade by Intents, seeded from the selected days.
-        packages = await TradeRouter.packages(forGiveShifts: shifts, excluding: settings.username)
+        // Same packaging algos as Trade by Intents, seeded from the selected days. Generation
+        // scope gates the heavy 3+/N-Way work to Lucky → Generate (Find stays fast).
+        packages = await TradeRouter.packages(forGiveShifts: shifts, excluding: settings.username, generation: generation)
 
         // A2: people for the Connection dropdown — candidates + published peers + result participants.
         var seen = Set<String>(); var people: [(id: String, name: String)] = []

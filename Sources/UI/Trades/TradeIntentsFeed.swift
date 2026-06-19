@@ -89,13 +89,16 @@ struct TradeByIntentsFeed: View {
             }
         }
         .sheet(isPresented: $showFilter) {
-            MasterFilterSheet(filter: $searchFilter, people: rosterPeople, onApply: { Task { await reload() } })
+            MasterFilterSheet(filter: $searchFilter, people: rosterPeople,
+                              onGenerate: { f in Task { await reload(generation: f) } },
+                              onReset: { Task { await reloadFast() } })
         }
-        .task { await reload() }
-        .onChange(of: whatIf) { _, _ in Task { await reload() } }
+        .task { await reloadFast() }
+        .onChange(of: whatIf) { _, _ in Task { await reloadFast() } }
         // C1: recompute on an explicit SAVE (intents revision) — NOT on every edit (was
-        // MatchInputsSignature, which re-ran the heavy search on every keystroke).
-        .onChange(of: DayIntentStore.shared.intentsRevision) { _, _ in Task { await reload() } }
+        // MatchInputsSignature, which re-ran the heavy search on every keystroke). Background
+        // reruns stay FAST (2-person) — the heavy 3+/N-Way search only runs via Lucky → Generate.
+        .onChange(of: DayIntentStore.shared.intentsRevision) { _, _ in Task { await reloadFast() } }
         .alert("Package sent", isPresented: Binding(
             get: { sentMessage != nil }, set: { if !$0 { sentMessage = nil } })) {
             Button("OK", role: .cancel) {}
@@ -139,11 +142,20 @@ struct TradeByIntentsFeed: View {
         .padding(.horizontal).padding(.top, 4)
     }
 
-    private func reload() async {
+    /// Background/default: fast 2-person generation, and clear any Lucky filter so the
+    /// 2-person results aren't hidden by a stale engine/people selection.
+    private func reloadFast() async {
+        searchFilter = .normal
+        await reload(generation: .fast)
+    }
+
+    /// `generation` bounds the engine work: `.fast` (2-person, background) or the user's Lucky
+    /// criteria (heavy 3+/N-Way, one-time). The display still filters via `searchFilter`.
+    private func reload(generation: SearchFilter = .fast) async {
         loading = true
         await TradeProfileStore.shared.refreshOthers()
         let myID = SettingsManager.shared.username
-        packages = await TradeRouter.packages(excluding: myID)
+        packages = await TradeRouter.packages(excluding: myID, generation: generation)
         // A2: people for the Connection dropdown — union of the roster, published peers, and anyone
         // already in a result — names resolved (G2a) — so it's never blank with a thin roster.
         let now = Date()
@@ -183,13 +195,16 @@ struct TradeByIntentsFeed: View {
 struct MasterFilterSheet: View {
     @Binding var filter: SearchFilter
     let people: [(id: String, name: String)]
-    /// Re-runs the generation once, with whatever filter is now committed (Generate or Reset).
-    var onApply: () -> Void = {}
+    /// One-time HEAVY generation with the chosen criteria (runs 3+ / N-Way).
+    var onGenerate: (SearchFilter) -> Void = { _ in }
+    /// Back to the section's fast NORMAL generation (2-person only).
+    var onReset: () -> Void = {}
     @Environment(\.dismiss) private var dismiss
     @State private var draft: SearchFilter
 
-    init(filter: Binding<SearchFilter>, people: [(id: String, name: String)], onApply: @escaping () -> Void = {}) {
-        _filter = filter; self.people = people; self.onApply = onApply
+    init(filter: Binding<SearchFilter>, people: [(id: String, name: String)],
+         onGenerate: @escaping (SearchFilter) -> Void = { _ in }, onReset: @escaping () -> Void = {}) {
+        _filter = filter; self.people = people; self.onGenerate = onGenerate; self.onReset = onReset
         _draft = State(initialValue: filter.wrappedValue)
     }
 
@@ -220,20 +235,22 @@ struct MasterFilterSheet: View {
                     Text("Only show trades that include this dispatcher.").font(.caption2).foregroundStyle(.secondary)
                 }
                 Section {
-                    // One-time generation for the chosen criteria.
+                    // One-time HEAVY generation for the chosen criteria (3+ / N-Way included).
                     Button {
-                        filter = draft; onApply(); dismiss()
+                        filter = draft; onGenerate(draft); dismiss()
                     } label: {
                         Label("Generate matches", systemImage: "wand.and.stars").frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
-                    // Reset back to the section's NORMAL criteria.
+                    // Reset back to the fast NORMAL generation (2-person only).
                     Button(role: .destructive) {
-                        draft = .normal; filter = .normal; onApply(); dismiss()
+                        draft = .normal; filter = .normal; onReset(); dismiss()
                     } label: {
                         Label("Reset to normal", systemImage: "arrow.uturn.backward").frame(maxWidth: .infinity)
                     }
                     .disabled(!filter.isActive && !draft.isActive)
+                } footer: {
+                    Text("Generate runs the heavy 3+ person and circular (N-Way) search once. The normal feed stays fast with 2-person trades only.")
                 }
             }
             .navigationTitle("I'm Feeling Lucky")

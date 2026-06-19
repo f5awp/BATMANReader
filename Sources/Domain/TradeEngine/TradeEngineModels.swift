@@ -400,6 +400,9 @@ struct SearchFilter: Equatable, Sendable {
 
     /// The default "normal" criteria — every engine, up to 4 people, anyone.
     static let normal = SearchFilter()
+    /// The fast BACKGROUND generation scope: 2-person trades only (no 3+ multi-cover, no N-Way
+    /// circular DFS). Used for auto-feeds; the heavy search runs only on an explicit Generate.
+    static let fast = SearchFilter(engine: .minCost, maxPeople: 2)
     /// True when the user has narrowed away from the normal criteria (drives the Reset button +
     /// the "Lucky" button label). A default filter shows everything, so it's NOT active.
     var isActive: Bool { self != SearchFilter.normal }

@@ -385,6 +385,17 @@
   the last save), and the Save button faded. Save, change, Discard again — it should revert only to that
   **last saved** state, not all the way to empty.
 
+### TR3-U-PERF — fast background, heavy search only on Lucky → Generate  [U-PERF · Auto ✅ thresholds; device-check]
+1. **Intents tab** (mark a few trade-away days first, then SAVE on Home): the feed should populate **quickly** and show **2-person** trades only — no 3-way/4-way or circular cards in the default view.
+2. **Trade Solutions** → pick days → **Find**: same — fast, 2-person cards only.
+3. Open **I'm Feeling Lucky** → set Engine = **N-Way** (or Both) and Max people = **3** or **4** → **Generate matches**.
+   - **Expect:** *now* the heavier search runs once and 3+/circular solutions appear. The button reads e.g. **"Lucky: N-Way · ≤4"** (orange).
+4. Tap **I'm Feeling Lucky** again → **Reset to normal**.
+   - **Expect:** back to the fast 2-person view; button reads "I'm Feeling Lucky" again.
+5. Make an intent change + SAVE (or toggle What If?) while a Lucky result is showing.
+   - **Expect:** the background re-run is **fast** (2-person) — the heavy 3+/N-Way search does **not** silently re-run; you must Generate again.
+- **Break it:** confirm the default feed never shows a circular/3-4 person card until you Generate.
+
 ### TR3-status-pos — Channel status sits right of the name  [device-check]
 1. Open the broadcast channel where someone has a status set.
 - **Expect:** their status (italic, with emoji) appears **immediately to the right of their name**, not

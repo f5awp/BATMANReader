@@ -1047,6 +1047,13 @@ enum TradeEngineTests {
             check(sum == "N-Way · ≤3 · with Cary", "A2b: summary lists only the non-default selections")
             check(SearchFilter(engine: .both, maxPeople: 4, requiredWorkerID: "C").summary(nameFor: { _ in "Cary" }) == "with Cary",
                   "A2b: summary omits defaulted engine/people, keeps the required person")
+
+            // U-PERF: the fast BACKGROUND scope must stay 2-person / minCost — these thresholds GATE the
+            // expensive 3+ multi-cover (maxPeople >= 3) and N-Way circular (engine != minCost) in packages().
+            check(SearchFilter.fast.maxPeople == 2, "U-PERF: fast generation caps at 2 people (no 3+ multi-cover)")
+            check(SearchFilter.fast.engine == .minCost, "U-PERF: fast generation is minCost (no N-Way circular DFS)")
+            check(SearchFilter.fast.maxPeople < 3 && SearchFilter.fast.engine == .minCost,
+                  "U-PERF: fast scope fails BOTH heavy-step gates (3+ and N-Way) — background stays cheap")
         }
 
         // MARK: E1 — channel reads top-to-bottom (oldest → newest); pinned still first.

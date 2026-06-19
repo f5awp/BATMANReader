@@ -118,17 +118,22 @@ enum TradeRouter {
     /// Build proposable packages for the user's give-away days. Greedy "fewest
     /// people" covers come first; if the best greedy needs >2 coverers, circular
     /// swap loops are offered alongside (not instead). Sorted fewest-people first.
-    static func packages(excluding selfID: String) async -> [TradePackage] {
+    /// `generation` bounds how hard the search works. The DEFAULT (`.fast`) finds only 2-person
+    /// trades — cheap enough to auto-run in the background. The expensive 3+ multi-person covers and
+    /// N-Way circular DFS run ONLY when the caller widens the scope (the "I'm Feeling Lucky" Generate),
+    /// so they never burn cycles in the background. (Speed: U-PERF.)
+    static func packages(excluding selfID: String, generation: SearchFilter = .fast) async -> [TradePackage] {
         let (start, end) = horizon
         let giveShifts = await selfSeekingShifts(myID: selfID, start: start, end: end)
-        return await packages(forGiveShifts: giveShifts, excluding: selfID)
+        return await packages(forGiveShifts: giveShifts, excluding: selfID, generation: generation)
     }
 
     /// RECIPROCAL packaging for an explicit set of give-away shifts. Every package
     /// is balanced — you give N and receive N back, all passing your criteria. A
     /// pairwise greedy (fewest counterparties) comes first; N-way circular loops
     /// are offered when pairwise can't fully reciprocate. Used by both feeds.
-    static func packages(forGiveShifts giveShifts: [Shift], excluding selfID: String) async -> [TradePackage] {
+    static func packages(forGiveShifts giveShifts: [Shift], excluding selfID: String,
+                         generation: SearchFilter = .fast) async -> [TradePackage] {
         let giveDayIDs = Set(giveShifts.filter { !$0.isOff }.map(\.id))
         guard !giveDayIDs.isEmpty else { return [] }
 
@@ -247,8 +252,9 @@ enum TradeRouter {
         }
 
         // 2) If nobody can do it alone, find the fewest-people multi-person cover
-        //    (optimal), else a greedy balanced cover.
-        if result.isEmpty {
+        //    (optimal), else a greedy balanced cover. GATED: 3+ people only when the
+        //    caller widened the scope (Lucky/Generate) — never in the fast background pass.
+        if result.isEmpty, generation.maxPeople >= 3 {
             let cands = peerSwaps.map {
                 OptimalMatcher.Cand(id: $0.id, name: $0.name, canTake: Set($0.canTake), givesBack: $0.givesBack)
             }
@@ -292,10 +298,11 @@ enum TradeRouter {
             }
         }
 
-        // 3) Circular loops — ALWAYS surfaced (not only when solos are scarce) so the N+1 group
-        //    appears alongside the N=2 solos (U3 "N=2 then N+1"). `rankPackages` orders N=2 first.
-        do {
-            let loops = await nWayRoutes(seedShifts: giveShifts, excluding: selfID)
+        // 3) Circular loops — GATED: the N-Way DFS is the most expensive step, so it runs ONLY when
+        //    the caller widened the scope (Lucky/Generate with N-Way/Both and ≥3 people), never in the
+        //    fast background pass. `maxDepth` is bounded to the requested people cap.
+        if generation.maxPeople >= 3, generation.engine != .minCost {
+            let loops = await nWayRoutes(seedShifts: giveShifts, maxDepth: generation.maxPeople, excluding: selfID)
             for loop in loops.prefix(targetCount * 2) {
                 var gv: [String: [String]] = [:]   // peer → my days they cover
                 var tk: [String: [String]] = [:]   // peer → their days I cover
