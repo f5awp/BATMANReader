@@ -49,6 +49,12 @@ struct FindCandidatesSection: View {
     @State private var packageSent: String?
     @State private var detailPackage: TradePackage?
     @State private var pkgSwap: PackageSwapContext?    // Q1: qual-swap package → blast picker
+    // A1/A2 on Trade Solutions: candidate-focused Master Filter (engine / max-people / Connection),
+    // applied to the package results (TS keeps whole packages — no 2-person decomposition).
+    @State private var searchFilter = SearchFilter()
+    @State private var showFilter = false
+    @State private var rosterPeople: [(id: String, name: String)] = []
+    private var filteredPackages: [TradePackage] { searchFilter.filter(packages) }
 
     private var hasShifts: Bool { !store.upcomingWorkingShifts().isEmpty }
     private var selectedShifts: [Shift] {
@@ -83,6 +89,7 @@ struct FindCandidatesSection: View {
         .fullScreenCover(item: $twoWayCandidate) { c in
             TwoWaySheet(candidate: c)
         }
+        .sheet(isPresented: $showFilter) { MasterFilterSheet(filter: $searchFilter, people: rosterPeople) }
         .sheet(item: $execRoute) { ExecutionConfirmationView(route: $0) }
         .fullScreenCover(item: $detailPackage) { pkg in
             PackageDetailView(package: pkg,
@@ -191,14 +198,47 @@ struct FindCandidatesSection: View {
                 Text("Swap away all selected days — fewest people first, then most 🔥 and bookends.")
                     .font(.caption).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal)
-                ForEach(packages) { pkg in
-                    PackageCard(package: pkg,
-                                onPropose: { Task { await propose(pkg) } },
-                                onExecute: { if let r = pkg.route { execRoute = r } },
-                                onOpen: { detailPackage = pkg })
+                luckyBar
+                let shown = filteredPackages
+                if shown.isEmpty {
+                    ContentUnavailableView("No matches for your filter", systemImage: "line.3.horizontal.decrease.circle",
+                        description: Text("Widen the filter (engine / max people / Connection)."))
+                        .padding(.top, 12)
+                } else {
+                    ForEach(shown) { pkg in
+                        PackageCard(package: pkg,
+                                    onPropose: { Task { await propose(pkg) } },
+                                    onExecute: { if let r = pkg.route { execRoute = r } },
+                                    onOpen: { detailPackage = pkg })
+                    }
                 }
             }
         }
+    }
+
+    /// A1/A2: the "I'm Feeling Lucky" filter bar for Trade Solutions + active-choice chips.
+    private var luckyBar: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Button { showFilter = true } label: {
+                Label("I'm Feeling Lucky", systemImage: "wand.and.stars").font(.subheadline.weight(.semibold)).frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent).controlSize(.small)
+            HStack(spacing: 6) {
+                luckyChip(searchFilter.engine == .both ? "Both engines" : (searchFilter.engine == .minCost ? "Min-Cost" : "N-Way"))
+                luckyChip("≤ \(searchFilter.maxPeople) people")
+                if let rid = searchFilter.requiredWorkerID {
+                    luckyChip("with " + (rosterPeople.first { $0.id == rid }?.name ?? rid))
+                }
+                Spacer()
+            }
+            .font(.caption2)
+        }
+        .padding(.horizontal).padding(.top, 4)
+    }
+
+    private func luckyChip(_ t: String) -> some View {
+        Text(t).font(.caption2.weight(.semibold)).padding(.horizontal, 8).padding(.vertical, 3)
+            .background(Color(.tertiarySystemFill), in: Capsule())
     }
 
     private var resultsHeader: some View {
@@ -293,6 +333,17 @@ struct FindCandidatesSection: View {
 
         // Same packaging algos as Trade by Intents, seeded from the selected days.
         packages = await TradeRouter.packages(forGiveShifts: shifts, excluding: settings.username)
+
+        // A2: people for the Connection dropdown — candidates + published peers + result participants.
+        var seen = Set<String>(); var people: [(id: String, name: String)] = []
+        func add(_ id: String, _ name: String) {
+            guard id != settings.username, seen.insert(id).inserted else { return }
+            people.append((id, TradeNames.resolved(displayName: nil, rosterName: name, workerID: id)))
+        }
+        for c in candidates { add(c.workerID, c.name) }
+        for (id, p) in profiles.others { add(id, p.displayName) }
+        for pkg in packages { for a in pkg.assignments { add(a.workerID, a.name) } }
+        rosterPeople = people.sorted { $0.name < $1.name }
 
         isSearching = false
         hasSearched = true
