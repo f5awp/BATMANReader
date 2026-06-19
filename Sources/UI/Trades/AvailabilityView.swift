@@ -908,6 +908,7 @@ struct TwoWaySheet: View {
     @State private var selectedGive: Set<String> = []       // your days they'll take
     @State private var theirSeeking: Set<String> = []       // days they want to trade away
     @State private var theirStatus: String?                  // R-B: peer's published status, shown in-context
+    @State private var peerDisplayName: String?              // G2a: published displayName (resolved into peerName)
     @State private var ignoreMyBlacklist = false            // active-outbound override
     @State private var zoom: CGFloat = 1
     @State private var showIntents = true                   // intent tint overlay on both calendars
@@ -917,6 +918,8 @@ struct TwoWaySheet: View {
     private let youColor  = BrickPalette.mineScheme
     // F1/D1: the peer reads in their STABLE per-worker color (was hardcoded red).
     private var themColor: Color { TradeColors.forWorker(candidate.workerID, myID: SettingsManager.shared.username) }
+    // G2a: the peer's human name — published displayName → roster name → employee # (fixes "660615").
+    private var peerName: String { TradeNames.resolved(displayName: peerDisplayName, rosterName: candidate.name, workerID: candidate.workerID) }
 
     private var glanceBaseHeight: CGFloat { 720 }   // two full-width calendars, stacked
 
@@ -961,10 +964,10 @@ struct TwoWaySheet: View {
                     ContentUnavailableView(
                         "No Bookend Swaps",
                         systemImage: "arrow.triangle.swap",
-                        description: Text("No feasible bookend swaps with \(candidate.name) in the next \(TradeMatcher.twoWayHorizonMonths) months."))
+                        description: Text("No feasible bookend swaps with \(peerName) in the next \(TradeMatcher.twoWayHorizonMonths) months."))
                 }
             }
-            .navigationTitle("Swap with \(candidate.name)")
+            .navigationTitle("Swap with \(peerName)")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
             .task { await load() }
@@ -972,7 +975,7 @@ struct TwoWaySheet: View {
             .alert("Request sent", isPresented: $sentConfirmation) {
                 Button("OK") { dismiss() }
             } message: {
-                Text("Sent to \(candidate.name). Track it in your Trade Inbox.")
+                Text("Sent to \(peerName). Track it in your Trade Inbox.")
             }
             .alert("Qual swap needed", isPresented: Binding(
                 get: { qualSwapNoBridge != nil }, set: { if !$0 { qualSwapNoBridge = nil } })) {
@@ -1042,7 +1045,7 @@ struct TwoWaySheet: View {
                                          giveDays: selectedGive, takeDays: selectedTake,
                                          gold: myGoldDays, intent: myIntent,
                                          topology: myTopology, eventName: myEvent)
-                        MiniScheduleGrid(title: candidate.name, days: theirDays, month: monthAnchor(off),
+                        MiniScheduleGrid(title: peerName, days: theirDays, month: monthAnchor(off),
                                          accent: themColor,
                                          giveDays: selectedTake, takeDays: selectedGive,
                                          gold: theirGoldDays, intent: theirIntent,
@@ -1233,6 +1236,8 @@ struct TwoWaySheet: View {
         let theirProf    = await TradeProfileStore.shared.fetchProfile(forWorker: candidate.workerID)
             ?? TradeProfile.defaultForUnpublished(workerID: candidate.workerID, name: candidate.name)   // A8: missing → Bookends Only
         let theirSeek    = theirProf.seekingDayIDs
+        peerDisplayName  = theirProf.displayName   // G2a
+
         theirSeeking = theirSeek
         let trimmedStatus = theirProf.statusBroadcast?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         theirStatus  = trimmedStatus.isEmpty ? nil : trimmedStatus
@@ -1275,7 +1280,7 @@ struct TwoWaySheet: View {
                     takerID: candidate.workerID, takerQuals: candidate.quals,
                     excludeIDs: [SettingsManager.shared.username])
                 guard !bridges.isEmpty else {
-                    qualSwapNoBridge = "\(candidate.name) isn't qualified for desk \(gap.desk), and no one working that day can qual-swap onto it. Adjust the days you give away."
+                    qualSwapNoBridge = "\(peerName) isn't qualified for desk \(gap.desk), and no one working that day can qual-swap onto it. Adjust the days you give away."
                     return
                 }
                 let qual = DeskRules.requiredQual(forDesk: gap.desk) ?? "D"

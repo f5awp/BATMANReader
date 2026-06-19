@@ -899,6 +899,21 @@ enum TradeEngineTests {
             check(TradeColors.stableIndex("x", count: 0) == 0, "D1: stableIndex guards empty palette (no crash)")
         }
 
+        // MARK: G2a — peer name resolution (the IMG-42 "660615" bug). Prefer a real
+        // displayName → real roster name → employee #; a numeric "name" is never preferred.
+        do {
+            check(TradeNames.resolved(displayName: "Lee, Ervin", rosterName: "660615", workerID: "660615") == "Lee, Ervin",
+                  "G2a: a real displayName wins over a numeric roster name")
+            check(TradeNames.resolved(displayName: nil, rosterName: "Khuu, Julie", workerID: "555") == "Khuu, Julie",
+                  "G2a: falls back to a real roster name when no displayName")
+            check(TradeNames.resolved(displayName: "660615", rosterName: "Mitchell, Kristi", workerID: "660615") == "Mitchell, Kristi",
+                  "G2a: a numeric displayName is rejected in favor of a real roster name")
+            check(TradeNames.resolved(displayName: nil, rosterName: nil, workerID: "660615") == "660615",
+                  "G2a: with no real name, falls back to the employee #")
+            check(TradeNames.resolved(displayName: "  ", rosterName: "660615", workerID: "660615") == "660615",
+                  "G2a: blank/numeric everywhere → employee # (nothing real to show)")
+        }
+
         // MARK: Relief dispatcher — schedule unknown past the horizon (pure).
         let reliefDate = DateComponents(calendar: .current, year: 2026, month: 8, day: 7).date!
         let beforeRelief = DateComponents(calendar: .current, year: 2026, month: 8, day: 7).date!  // inclusive

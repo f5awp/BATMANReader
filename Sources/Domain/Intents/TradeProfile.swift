@@ -18,6 +18,21 @@ enum CloudKitConfig {
     static let containerID = "iCloud.com.ervinlee.batmanreader"
 }
 
+/// G2a: THE single source of a peer's human-readable name, used by every surface so a peer
+/// never renders as a bare employee number (the IMG-42 "660615" bug). Prefers a real
+/// `displayName` → real roster name → the employee #. A candidate is NOT "real" if it's
+/// empty/blank, equals the workerID, or is all-digits.
+enum TradeNames {
+    static func isAllDigits(_ s: String) -> Bool { !s.isEmpty && s.allSatisfy(\.isNumber) }
+    static func resolved(displayName: String?, rosterName: String?, workerID: String) -> String {
+        for candidate in [displayName, rosterName] {
+            let c = candidate?.trimmingCharacters(in: .whitespaces) ?? ""
+            if !c.isEmpty, c != workerID, !isAllDigits(c) { return c }
+        }
+        return workerID
+    }
+}
+
 /// Thread-safe "do this once" gate (used to resume a continuation exactly once).
 final class OnceFlag: @unchecked Sendable {
     private let lock = NSLock()
