@@ -1047,6 +1047,28 @@ enum TradeEngineTests {
             check(withPin.first?.id == "pinNew", "E1: a pinned post stays first regardless of age")
         }
 
+        // MARK: B2 — merge an accepted qual-swap bridge into its base trade (one request).
+        do {
+            let now = Date()
+            func req(_ id: String, give: [String], qual: QualSwapLegData?) -> TradeRequest {
+                TradeRequest(id: id, fromID: "me", fromName: "Me", toID: "B", toName: "B", note: "",
+                             takeDayIDs: [], giveDayIDs: give, createdAt: now, expiresAt: now.addingTimeInterval(86400),
+                             qualSwap: qual)
+            }
+            let bridgeLeg = QualSwapLegData(giveShiftDayID: "2027-03-01", giveDesk: "50", giveQual: "E",
+                                            takerID: "B", takerName: "B", candidates: [])
+            let base = req("base", give: ["2027-03-01"], qual: nil)
+            let bridge = req("bridge", give: ["2027-03-01"], qual: bridgeLeg)
+            check(TradeMerge.canMerge(base: base, bridge: bridge), "B2: clean base + bridge sharing the give-day can merge")
+            check(!TradeMerge.canMerge(base: req("b2", give: ["2027-03-09"], qual: nil), bridge: bridge),
+                  "B2: cannot merge when the give-day doesn't match")
+            check(!TradeMerge.canMerge(base: bridge, bridge: bridge), "B2: a base that already has a qual-swap can't merge again")
+            let merged = TradeMerge.merge(base: base, bridge: bridge)
+            check(merged.qualSwap == bridgeLeg && merged.giveDayIDs == base.giveDayIDs && merged.id != base.id,
+                  "B2: merged request carries the bridge's qual-swap + base's days, with a new id")
+            check(TradeMerge.merge(base: merged, bridge: bridge).id == merged.id, "B2: merging an already-merged request is a no-op")
+        }
+
         // MARK: Relief dispatcher — schedule unknown past the horizon (pure).
         let reliefDate = DateComponents(calendar: .current, year: 2026, month: 8, day: 7).date!
         let beforeRelief = DateComponents(calendar: .current, year: 2026, month: 8, day: 7).date!  // inclusive

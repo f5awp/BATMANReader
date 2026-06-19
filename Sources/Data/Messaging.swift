@@ -161,6 +161,31 @@ struct TradeRequest: Sendable, Codable, Identifiable, Hashable {
     static func clampECB(_ v: Double) -> Double { min(25, max(5, (v * 2).rounded() / 2)) }
 }
 
+/// B2: compose an accepted qual-swap **bridge** request into its **base** trade so the two become
+/// one request (a qual swap is structurally a normal trade + a middle-man leg on the same day).
+/// Pure → harness-tested; the messaging lifecycle (archive originals, save the merged record) is
+/// layered on top by `MessagingStore`.
+enum TradeMerge {
+    /// Mergeable iff the base is a CLEAN trade (no qual-swap yet), the bridge HAS a qual-swap, they're
+    /// distinct, and the bridge's give-day is one of the base's give-days (same day in play).
+    static func canMerge(base: TradeRequest, bridge: TradeRequest) -> Bool {
+        guard base.qualSwap == nil, let leg = bridge.qualSwap, base.id != bridge.id else { return false }
+        return base.giveDayIDs.contains(leg.giveShiftDayID)
+    }
+    /// The combined request: the base trade carrying the bridge's qual-swap leg, under a new id.
+    /// A no-op (returns `base`) when `!canMerge` — so merging twice is idempotent.
+    static func merge(base: TradeRequest, bridge: TradeRequest) -> TradeRequest {
+        guard canMerge(base: base, bridge: bridge) else { return base }
+        return TradeRequest(id: "merged-\(base.id)-\(bridge.id)", fromID: base.fromID, fromName: base.fromName,
+                            toID: base.toID, toName: base.toName,
+                            note: base.note.isEmpty ? "Trade incl. a qual swap" : base.note + " (incl. qual swap)",
+                            takeDayIDs: base.takeDayIDs, giveDayIDs: base.giveDayIDs,
+                            createdAt: base.createdAt, expiresAt: base.expiresAt,
+                            ecb: base.ecb, ecbValue: base.ecbValue, offerID: base.offerID,
+                            chain: base.chain, qualSwap: bridge.qualSwap, perfectMatch: base.perfectMatch)
+    }
+}
+
 /// Formats an ECB amount with no trailing ".0" (9 → "9", 13.5 → "13.5").
 func ecbText(_ v: Double) -> String {
     v == v.rounded() ? String(Int(v)) : String(format: "%.1f", v)
