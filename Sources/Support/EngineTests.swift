@@ -1093,6 +1093,12 @@ enum TradeEngineTests {
             }
             let ranked = TradeRouter.rankIntentPackages([pkg("two", people: 2, fire: 1), pkg("three", people: 3, fire: 3)])
             check(ranked.first?.id == "three", "Intents: MOST mutual intent ranks first, even with more people (vs Trade Solutions' fewest-people-first)")
+
+            // Cap: intentSolutions surfaces only the top-N highest-scoring (unprofiled/low matches trimmed).
+            check(TradeRouter.intentResultCap == 20, "Intents: results capped at the top 20")
+            let many = (0..<50).map { pkg("p\($0)", people: 2, fire: $0 % 5) }
+            check(Array(TradeRouter.rankIntentPackages(many).prefix(TradeRouter.intentResultCap)).count == 20,
+                  "Intents: ranking + cap yields at most 20")
         }
 
         // MARK: E1 — channel reads top-to-bottom (oldest → newest); pinned still first.
