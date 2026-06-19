@@ -828,6 +828,20 @@ final class MessagingStore {
         return merged
     }
 
+    /// H2: a partner's learned acceptance PRIOR (logit) from their accept/decline responses — feeds
+    /// the Intents ranking tiebreaker so partners who historically say yes float up.
+    func partnerAcceptanceLogOdds(_ workerID: String) -> Double {
+        var accepted = 0, declined = 0
+        for r in responses where r.responderID == workerID {
+            switch r.statusValue {
+            case .accepted: accepted += 1
+            case .declined: declined += 1
+            default:        break
+            }
+        }
+        return PersonPrior.logOdds(accepted: accepted, declined: declined)
+    }
+
     /// The clean active base a finalized qual-swap `bridge` can merge into (nil = none / not mergeable).
     func mergeBase(for bridge: TradeRequest) -> TradeRequest? {
         guard bridge.qualSwap?.status == .finalized else { return nil }   // only a settled bridge merges

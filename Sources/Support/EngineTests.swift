@@ -1094,6 +1094,21 @@ enum TradeEngineTests {
             let ranked = TradeRouter.rankIntentPackages([pkg("two", people: 2, fire: 1), pkg("three", people: 3, fire: 3)])
             check(ranked.first?.id == "three", "Intents: MOST mutual intent ranks first, even with more people (vs Trade Solutions' fewest-people-first)")
 
+            // H2: person-prior — neutral at no history; +/- with accept/decline; clamped; weights the logit.
+            check(PersonPrior.logOdds(accepted: 0, declined: 0) == 0, "H2: no history → neutral prior (0)")
+            check(PersonPrior.logOdds(accepted: 5, declined: 0) > 0, "H2: a history of accepting → positive prior")
+            check(PersonPrior.logOdds(accepted: 0, declined: 5) < 0, "H2: a history of declining → negative prior")
+            check(PersonPrior.logOdds(accepted: 1000, declined: 0) <= 2.0001, "H2: prior is clamped (thin/extreme record can't dominate)")
+            var fHi = LegFeatures(bookend: false, split: false, mutualFire: false, giverWants: false,
+                                  receiverWants: false, timeValue: 0.5, needsQualBridge: false, hoursStrain: 0)
+            var fLo = fHi; fHi.personPrior = 1.5; fLo.personPrior = -1.5
+            check(TradeScore.legProb(fHi) > TradeScore.legProb(fLo), "H2: a higher person-prior raises the leg's acceptance probability")
+
+            // H2 tiebreaker: equal intent/people/bookends → the higher partnerPrior package ranks first.
+            var pa = pkg("low", people: 2, fire: 2); pa.partnerPrior = -0.5
+            var pb = pkg("high", people: 2, fire: 2); pb.partnerPrior = 0.5
+            check(TradeRouter.rankIntentPackages([pa, pb]).first?.id == "high", "H2: all else equal, the likelier-to-accept partner ranks first")
+
             // Cap: intentSolutions surfaces only the top-N highest-scoring (unprofiled/low matches trimmed).
             check(TradeRouter.intentResultCap == 20, "Intents: results capped at the top 20")
             let many = (0..<50).map { pkg("p\($0)", people: 2, fire: $0 % 5) }

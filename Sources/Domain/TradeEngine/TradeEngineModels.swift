@@ -347,6 +347,18 @@ struct LegFeatures {
     var needsQualBridge: Bool  // leg requires a qual swap (−)
     var hoursStrain: Double    // pushes receiver over/under weekly target, [0,1] (−)
     var ecbValue: Double = 0   // ECB points offered, normalized [0,1] (+; ECB legs only)
+    var personPrior: Double = 0 // H2: receiver's acceptance bias in LOGIT space (+ = historically says yes)
+}
+
+/// H2: a partner's acceptance PRIOR as a logit offset, learned from their accept/decline history.
+/// Laplace-smoothed log-odds `log((accepted+α)/(declined+α))` — neutral (no history) → 0, clamped to
+/// ±`cap` so a thin record can't dominate the score. PURE → harness-tested.
+enum PersonPrior {
+    static func logOdds(accepted: Int, declined: Int, alpha: Double = 1, cap: Double = 2) -> Double {
+        let a = Double(max(0, accepted)) + alpha
+        let d = Double(max(0, declined)) + alpha
+        return min(cap, max(-cap, log(a / d)))
+    }
 }
 
 /// Objective: maximize P(trade executes) = ∏ p(leg). Work in log-space (additive → admissible
@@ -354,7 +366,8 @@ struct LegFeatures {
 /// Hand-tuned weights now; later fit from inbox accept/decline data (logistic regression).
 enum TradeScore {
     static let w0 = 0.4, wBook = 1.5, wSplit = 2.5, wFire = 2.0, wGive = 0.5,
-               wRecv = 1.0, wTime = 0.8, wQual = 1.2, wHours = 1.0, wEcb = 1.5
+               wRecv = 1.0, wTime = 0.8, wQual = 1.2, wHours = 1.0, wEcb = 1.5,
+               wPerson = 1.0   // H2: weight on the receiver's learned acceptance prior
 
     static func legLogit(_ f: LegFeatures) -> Double {
         w0
@@ -367,6 +380,7 @@ enum TradeScore {
         - wQual * (f.needsQualBridge ? 1 : 0)
         - wHours * f.hoursStrain
         + wEcb * f.ecbValue
+        + wPerson * f.personPrior   // H2: nudges toward partners who historically accept
     }
     /// Probability the receiver accepts this leg, in (0,1).
     static func legProb(_ f: LegFeatures) -> Double { 1.0 / (1.0 + exp(-legLogit(f))) }

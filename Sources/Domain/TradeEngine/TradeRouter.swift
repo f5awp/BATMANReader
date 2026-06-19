@@ -65,15 +65,20 @@ struct TradePackage: Sendable, Hashable, Identifiable {
     // Q1: a qual-swap leg this package depends on (a give-day blocked only by qualification, with
     // a bridge available). nil = no qual swap needed. Drives the card indicator + send-time blast.
     var qualSwap: QualSwapLegData? = nil
+    // H2: avg of the counterparties' learned acceptance priors (logit). A late ranking tiebreaker so,
+    // all else equal, partners who historically accept float up. 0 = neutral / no history.
+    var partnerPrior: Double = 0
 
     // EXPLICIT init — freezes the construction signature so adding the fields above doesn't
     // churn the memberwise-init symbol (stale-incremental-link fix). New fields are defaulted.
     init(id: String, methodology: TradeMethodology, assignments: [PackageAssignment],
          route: NWayRoute?, urgency: Int = 0, isOptimal: Bool = false,
-         fireCount: Int = 0, bookendTotal: Int = 0, qualSwap: QualSwapLegData? = nil) {
+         fireCount: Int = 0, bookendTotal: Int = 0, qualSwap: QualSwapLegData? = nil,
+         partnerPrior: Double = 0) {
         self.id = id; self.methodology = methodology; self.assignments = assignments
         self.route = route; self.urgency = urgency; self.isOptimal = isOptimal
         self.fireCount = fireCount; self.bookendTotal = bookendTotal; self.qualSwap = qualSwap
+        self.partnerPrior = partnerPrior
     }
     // TOTAL distinct people INCLUDING you (SPEC S-ENG-5): You↔Cary ⇒ 2. The route
     // lists each participant once (incl. self); assignments list only the others, so + you.
@@ -435,6 +440,7 @@ enum TradeRouter {
             if $0.fireCount != $1.fireCount { return $0.fireCount > $1.fireCount }        // most mutual intent first
             if $0.peopleCount != $1.peopleCount { return $0.peopleCount < $1.peopleCount } // then fewest people
             if $0.bookendTotal != $1.bookendTotal { return $0.bookendTotal > $1.bookendTotal }
+            if $0.partnerPrior != $1.partnerPrior { return $0.partnerPrior > $1.partnerPrior } // H2: likelier-to-accept partners
             let e0 = $0.earliestDayID ?? "9999-12-31", e1 = $1.earliestDayID ?? "9999-12-31"
             if e0 != e1 { return e0 < e1 }
             if $0.urgency != $1.urgency { return $0.urgency > $1.urgency }
@@ -530,6 +536,7 @@ enum TradeRouter {
                                    route: nil, urgency: urgency(of: deal.gives + deal.takes),
                                    isOptimal: deal.mutualMarked == deal.gives.count + deal.takes.count)
             pkg.fireCount = deal.mutualMarked
+            pkg.partnerPrior = MessagingStore.shared.partnerAcceptanceLogOdds(cand.workerID)   // H2
             result.append(pkg)
         }
 
@@ -559,6 +566,11 @@ enum TradeRouter {
                                        assignments: a, route: loop, urgency: urgency(of: a.flatMap(\.giveDayIDs)))
                 pkg.fireCount = loop.legs.filter(legMarked).count   // real mutual-intent legs (not assumed)
                 pkg.bookendTotal = loop.bookendCount
+                // H2: average the other participants' acceptance priors.
+                let others = participants
+                if !others.isEmpty {
+                    pkg.partnerPrior = others.map { MessagingStore.shared.partnerAcceptanceLogOdds($0) }.reduce(0, +) / Double(others.count)
+                }
                 result.append(pkg)
             }
         }
