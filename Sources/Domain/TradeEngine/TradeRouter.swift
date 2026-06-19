@@ -230,16 +230,20 @@ enum TradeRouter {
                                               giveDayIDs: $0.giveDayIDs, takeDayIDs: $0.takeDayIDs) }
         }
 
-        // 1) Single-person full swaps — EVERY peer who can reciprocally cover all
-        //    your give-days alone is its own clean 1-person option. This is the main
-        //    source of variety (you often have several people who could each do it).
-        for ps in peerSwaps where Set(ps.canTake).isSuperset(of: giveDayIDs) && ps.givesBack.count >= giveAll.count {
+        // 1) #3: a SEPARATE 2-person trade per peer for the days THEY can reciprocally cover —
+        //    full OR partial. The user proposes these individually instead of one bundled N-person
+        //    package; 2-person packages outrank circular via rankPackages (peopleCount). Full-cover
+        //    (one peer takes everything) is flagged optimal so it floats to the top of the 2-person band.
+        for ps in peerSwaps {
+            let canTakeSet = Set(ps.canTake)
+            let cover = giveAll.filter { canTakeSet.contains($0) }
+            guard !cover.isEmpty, ps.givesBack.count >= cover.count else { continue }
             let a = [PackageAssignment(workerID: ps.id, name: ps.name,
-                                       giveDayIDs: giveAll, takeDayIDs: Array(ps.givesBack.prefix(giveAll.count)))]
-            if contiguityOK(asOpt(a)) {
-                result.append(TradePackage(id: "solo-" + ps.id, methodology: .greedy, assignments: a,
-                                           route: nil, urgency: urgency(of: giveAll), isOptimal: true))
-            }
+                                       giveDayIDs: cover, takeDayIDs: Array(ps.givesBack.prefix(cover.count)))]
+            guard contiguityOK(asOpt(a)) else { continue }
+            let fullCover = Set(cover).isSuperset(of: giveDayIDs)
+            result.append(TradePackage(id: "two-\(ps.id)", methodology: .greedy, assignments: a,
+                                       route: nil, urgency: urgency(of: cover), isOptimal: fullCover))
         }
 
         // 2) If nobody can do it alone, find the fewest-people multi-person cover
