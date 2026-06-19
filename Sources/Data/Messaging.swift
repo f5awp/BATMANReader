@@ -77,18 +77,66 @@ struct BroadcastReply: Sendable, Codable, Identifiable, Hashable {
     var deleted: Bool? = nil     // soft-delete tombstone → renders "[Deleted]" (B4).
     var reactions: [Reaction]? = nil   // emoji reactions (B6). Optional ⇒ old records decode.
     var imageBase64: String? = nil     // attached photo (downscaled JPEG, base64) — replies (#8b).
+    var parentReplyID: String? = nil   // #9 Reddit threading: nil = top-level reply to the post;
+                                       // otherwise a reply to another reply. Optional ⇒ old records decode.
 
     // EXPLICIT init — freezes the construction signature (stale-incremental-link fix); new optional
     // fields are set via assignment / passed explicitly, never churning callers' object files.
     init(id: String, postID: String, authorID: String, authorName: String, text: String,
          isPublic: Bool, createdAt: Date, editedAt: Date? = nil, deleted: Bool? = nil,
-         reactions: [Reaction]? = nil, imageBase64: String? = nil) {
+         reactions: [Reaction]? = nil, imageBase64: String? = nil, parentReplyID: String? = nil) {
         self.id = id; self.postID = postID; self.authorID = authorID; self.authorName = authorName
         self.text = text; self.isPublic = isPublic; self.createdAt = createdAt
-        self.editedAt = editedAt; self.deleted = deleted; self.reactions = reactions; self.imageBase64 = imageBase64
+        self.editedAt = editedAt; self.deleted = deleted; self.reactions = reactions
+        self.imageBase64 = imageBase64; self.parentReplyID = parentReplyID
     }
 
     var isDeleted: Bool { deleted == true }
+}
+
+/// One reply positioned in a Reddit-style thread tree (its nesting `depth` drives indentation).
+struct ThreadedReply: Identifiable, Sendable, Hashable {
+    let reply: BroadcastReply
+    let depth: Int
+    var id: String { reply.id }
+}
+
+/// PURE thread-tree builder (#9). Flattens the flat reply list into a Reddit-style **pre-order** walk
+/// — each reply immediately followed by its descendants — with siblings ordered **oldest→newest** (E1).
+/// A reply whose parent is missing surfaces at the top level; cycles are broken by a visited set.
+enum ReplyThread {
+    static func flatten(_ replies: [BroadcastReply]) -> [ThreadedReply] {
+        let byParent = Dictionary(grouping: replies) { $0.parentReplyID ?? "" }
+        var out: [ThreadedReply] = []
+        var visited = Set<String>()
+        func emit(parentKey: String, depth: Int) {
+            for k in (byParent[parentKey] ?? []).sorted(by: { $0.createdAt < $1.createdAt }) where !visited.contains(k.id) {
+                visited.insert(k.id)
+                out.append(ThreadedReply(reply: k, depth: depth))
+                emit(parentKey: k.id, depth: depth + 1)
+            }
+        }
+        emit(parentKey: "", depth: 0)   // explicit roots (parentReplyID nil/empty)
+        // Anything still unvisited — an orphan (missing parent) or a member of a parent CYCLE — surfaces
+        // at the top level so a reply is never silently dropped.
+        for u in replies.sorted(by: { $0.createdAt < $1.createdAt }) where !visited.contains(u.id) {
+            visited.insert(u.id)
+            out.append(ThreadedReply(reply: u, depth: 0))
+            emit(parentKey: u.id, depth: 1)
+        }
+        return out
+    }
+
+    /// IDs of `reply` and all its descendants — for per-comment collapse (hide a subtree).
+    static func subtreeIDs(of replyID: String, in replies: [BroadcastReply]) -> Set<String> {
+        let byParent = Dictionary(grouping: replies) { $0.parentReplyID ?? "" }
+        var ids: Set<String> = []
+        func walk(_ pid: String) {
+            for k in byParent[pid] ?? [] where !ids.contains(k.id) { ids.insert(k.id); walk(k.id) }
+        }
+        walk(replyID)
+        return ids
+    }
 }
 
 /// A moderation flag created by an admin to HIDE a post or reply for everyone
@@ -536,12 +584,15 @@ final class MessagingStore {
         replies.removeAll { $0.id == id }
     }
 
-    func addReply(to post: BroadcastPost, text: String, isPublic: Bool, imageBase64: String? = nil) async {
+    /// `parentReplyID` nests this under another reply (Reddit threading, #9); nil = top-level reply.
+    func addReply(to post: BroadcastPost, text: String, isPublic: Bool,
+                  imageBase64: String? = nil, parentReplyID: String? = nil) async {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty || imageBase64 != nil else { return }
         let reply = BroadcastReply(
             id: UUID().uuidString, postID: post.id, authorID: myID, authorName: myName,
-            text: trimmed, isPublic: isPublic, createdAt: Date(), imageBase64: imageBase64)
+            text: trimmed, isPublic: isPublic, createdAt: Date(), imageBase64: imageBase64,
+            parentReplyID: parentReplyID)
         await service.postReply(reply)
         replies = (replies.filter { $0.id != reply.id } + [reply]).sorted { $0.createdAt < $1.createdAt }
     }

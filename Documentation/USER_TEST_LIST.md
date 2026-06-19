@@ -385,6 +385,15 @@
   the last save), and the Save button faded. Save, change, Discard again — it should revert only to that
   **last saved** state, not all the way to empty.
 
+### TR3-#9 — Reddit-style nested channel replies  [Auto ✅ tree core; device-check]
+1. Open a channel post with replies → tap to expand.
+2. On any reply, tap **Reply** → an inline composer opens; post it.
+   - **Expect:** your reply appears **nested under** that comment (indented one more level, with an extra threadline rail), not flat at the bottom.
+3. Reply to a nested reply → it nests **deeper** still (pre-order: parent immediately followed by its children).
+4. On a comment with children, tap **Hide** → its whole subtree collapses to "Show N replies"; tap to re-expand.
+5. Tap the leftmost accent rail → collapses the entire thread (unchanged).
+- **Expect:** sibling replies read **oldest→newest**; indentation caps after a few levels so deep chains stay readable; replies sync nested across devices.
+
 ### TR3-INTENTS — Intents is a distinct intent marketplace (not Trade Solutions)  [Auto ✅ core; device-check]
 1. Mark a few **trade-away** days on Home → SAVE. Have a peer mark trade-away days too (or seed test profiles).
 2. Open **Intents** tab.

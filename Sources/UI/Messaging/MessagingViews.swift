@@ -800,6 +800,8 @@ struct ChannelView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var draft = ""
     @State private var expanded: Set<String> = []
+    @State private var collapsedReplies: Set<String> = []   // #9: per-comment subtree collapse
+    @State private var replyingTo: String? = nil            // #9: reply ID an inline composer targets
     @State private var respondedNote: String?
     @State private var editingPost: BroadcastPost?
     @State private var editingReply: BroadcastReply?
@@ -941,11 +943,11 @@ struct ChannelView: View {
 
             if isOpen {
                 HStack(spacing: 8) {
-                    // Reddit-style threadline — a tappable rail that collapses the thread.
+                    // Reddit-style threadline — a tappable rail that collapses the whole thread.
                     Capsule().fill(Color.accentColor.opacity(0.35)).frame(width: 2.5)
                         .contentShape(Rectangle())
                         .onTapGesture { expanded.remove(post.id) }
-                    VStack(alignment: .leading, spacing: 2) {
+                    VStack(alignment: .leading, spacing: 4) {
                         if !reps.isEmpty {
                             Button { expanded.remove(post.id) } label: {
                                 Label("Hide ^[\(reps.count) reply](inflect: true)", systemImage: "chevron.up")
@@ -953,7 +955,8 @@ struct ChannelView: View {
                             }
                             .buttonStyle(.plain).foregroundStyle(.secondary)
                         }
-                        ForEach(reps) { r in replyRow(r) }
+                        threadedReplies(post: post, reps: reps)
+                        // Top-level reply to the post (parentReplyID nil).
                         BroadcastReplyComposer(isAuthor: store.isMine(post)) { text, isPublic, image in
                             Task { await store.addReply(to: post, text: text, isPublic: isPublic, imageBase64: image) }
                         }
@@ -1018,6 +1021,54 @@ struct ChannelView: View {
             Spacer()
         }
         .padding(.leading, 46)
+    }
+
+    /// #9: the post's replies rendered as a Reddit-style nested tree — pre-order, indented per depth,
+    /// with per-comment Reply + collapse. Descendants of a collapsed comment are hidden.
+    @ViewBuilder private func threadedReplies(post: BroadcastPost, reps: [BroadcastReply]) -> some View {
+        let tree = ReplyThread.flatten(reps)
+        let hiddenByCollapse = collapsedReplies.reduce(into: Set<String>()) { acc, id in
+            acc.formUnion(ReplyThread.subtreeIDs(of: id, in: reps))
+        }
+        ForEach(tree.filter { !hiddenByCollapse.contains($0.reply.id) }) { tr in
+            threadedReplyRow(tr, post: post, reps: reps)
+        }
+    }
+
+    private func threadedReplyRow(_ tr: ThreadedReply, post: BroadcastPost, reps: [BroadcastReply]) -> some View {
+        let depth = min(tr.depth, 6)                                  // cap indentation on deep chains
+        let childCount = ReplyThread.subtreeIDs(of: tr.reply.id, in: reps).count
+        let isCollapsed = collapsedReplies.contains(tr.reply.id)
+        return HStack(alignment: .top, spacing: 5) {
+            // One threadline rail per nesting level — tap a rail to collapse this comment's subtree.
+            ForEach(0..<depth, id: \.self) { _ in
+                Capsule().fill(Color.secondary.opacity(0.25)).frame(width: 2)
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                replyRow(tr.reply)
+                HStack(spacing: 14) {
+                    Button { replyingTo = (replyingTo == tr.reply.id ? nil : tr.reply.id) } label: {
+                        Label("Reply", systemImage: "arrowshape.turn.up.left").font(.caption2.weight(.semibold))
+                    }
+                    if childCount > 0 {
+                        Button {
+                            if isCollapsed { collapsedReplies.remove(tr.reply.id) } else { collapsedReplies.insert(tr.reply.id) }
+                        } label: {
+                            Label(isCollapsed ? "Show ^[\(childCount) reply](inflect: true)" : "Hide",
+                                  systemImage: isCollapsed ? "chevron.right" : "chevron.down").font(.caption2)
+                        }
+                    }
+                    Spacer(minLength: 0)
+                }
+                .buttonStyle(.plain).foregroundStyle(.secondary).padding(.leading, 32)
+                if replyingTo == tr.reply.id {
+                    BroadcastReplyComposer(isAuthor: store.isMine(post)) { text, isPublic, image in
+                        Task { await store.addReply(to: post, text: text, isPublic: isPublic, imageBase64: image, parentReplyID: tr.reply.id) }
+                        replyingTo = nil
+                    }
+                }
+            }
+        }
     }
 
     private func replyRow(_ r: BroadcastReply) -> some View {

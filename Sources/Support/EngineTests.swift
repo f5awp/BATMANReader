@@ -1101,6 +1101,30 @@ enum TradeEngineTests {
                   "Intents: ranking + cap yields at most 20")
         }
 
+        // MARK: #9 — Reddit-style reply threading (pure pre-order tree + subtree collapse).
+        do {
+            func rep(_ id: String, _ parent: String?, _ t: Double) -> BroadcastReply {
+                BroadcastReply(id: id, postID: "P", authorID: "a", authorName: "A", text: id,
+                               isPublic: true, createdAt: Date(timeIntervalSince1970: t), parentReplyID: parent)
+            }
+            // a (root) → b (child of a) → d (child of b); c is a 2nd root after a. Siblings oldest-first.
+            let flat = [rep("c", nil, 30), rep("a", nil, 10), rep("d", "b", 25), rep("b", "a", 20)]
+            let tree = ReplyThread.flatten(flat)
+            check(tree.map(\.reply.id) == ["a", "b", "d", "c"], "#9: pre-order walk (parent then descendants), roots oldest-first")
+            check(tree.map(\.depth) == [0, 1, 2, 0], "#9: nesting depth tracks the tree level")
+
+            // Orphan (parent missing) surfaces at top level, never dropped.
+            let orphan = ReplyThread.flatten([rep("x", "ghost", 5)])
+            check(orphan.map(\.reply.id) == ["x"] && orphan.first?.depth == 0, "#9: a reply with a missing parent surfaces at top level")
+
+            // Cycle safety: a↔b mutually parent each other → terminates, each emitted once.
+            let cyclic = ReplyThread.flatten([rep("a", "b", 1), rep("b", "a", 2)])
+            check(cyclic.count == 2, "#9: mutual-parent cycle terminates (each reply once)")
+
+            // Subtree collapse: hiding a hides b and d, not c.
+            check(ReplyThread.subtreeIDs(of: "a", in: flat) == ["b", "d"], "#9: subtreeIDs returns all descendants for per-comment collapse")
+        }
+
         // MARK: E1 — channel reads top-to-bottom (oldest → newest); pinned still first.
         do {
             func post(_ id: String, at: TimeInterval, pinned: Bool? = nil) -> BroadcastPost {
