@@ -244,10 +244,10 @@ struct IntentCalendarView: View {
                 .font(.caption2.weight(.bold))
                 .foregroundStyle(BrickPalette.vacation)
                 .accessibilityLabel("Vacation")
-        } else if isOff, mode == .daysOff, layers.availability {
-            // A/P/M availability pills appear only while you're marking days-off
-            // intents — the resting calendar stays clean. #2: now gated by the
-            // "Shift availability" layer toggle.
+        } else if isOff, layers.availability {
+            // A/P/M availability pills on off days — controlled purely by the "Shift
+            // availability" layer toggle (the clock button), so it works in the general
+            // read-only view too, not just while marking days-off.
             offAvailability(dayID)
         } else {
             Color.clear.frame(height: 14)
