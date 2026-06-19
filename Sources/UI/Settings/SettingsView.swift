@@ -144,14 +144,22 @@ struct SettingsView: View {
                     // your current shifts ONCE, cleanly. Fixes accidental duplicate buildup.
                     Button(role: .destructive) {
                         Task { @MainActor in
-                            EventKitManager.shared.removeAllEvents()        // clear first (predicate-based — kills duplicates)
-                            let n = EventKitManager.shared.resyncPersonalEvents(for: ShiftStore.shared.shifts)  // re-add clean (deduped)
-                            calendarResetMessage = "Cleared the app's calendar events and re-added \(n) shift\(n == 1 ? "" : "s") cleanly. Duplicates are gone."
+                            // Removing events requires FULL (read+write) access — write-only can't
+                            // enumerate events to delete them (the likely "did nothing" cause). Prompt first.
+                            if !EventKitManager.shared.isAuthorized {
+                                _ = await EventKitManager.shared.requestPermission()
+                            }
+                            guard EventKitManager.shared.isAuthorized else {
+                                calendarResetMessage = "Full calendar access is needed to remove events. Enable it in iOS Settings → Privacy & Security → Calendars → BATMAN Watcher (Full Access), then try again."
+                                return
+                            }
+                            let removed = EventKitManager.shared.removeAllEvents()                                // clear ALL app events across every calendar
+                            let added = EventKitManager.shared.resyncPersonalEvents(for: ShiftStore.shared.shifts) // re-add clean (deduped)
+                            calendarResetMessage = "Removed \(removed) event\(removed == 1 ? "" : "s") (including duplicates) and re-added \(added) shift\(added == 1 ? "" : "s") cleanly."
                         }
                     } label: {
                         Label("Reset app calendar events", systemImage: "calendar.badge.exclamationmark")
                     }
-                    .disabled(!ekManager.isAuthorized)
                 } header: {
                     Text("Personal Calendar (Your Shifts)")
                 } footer: {

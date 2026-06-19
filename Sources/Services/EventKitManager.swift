@@ -166,11 +166,38 @@ final class EventKitManager {
         }
     }
 
-    func removeAllEvents() {
-        guard isAuthorized else { return }
-        removeAllPersonalEvents()
-        removeAllSharedEvents()
-        print("✅ EventKit: all events removed.")
+    /// Removes every calendar event the app ever wrote — scanning ALL writable calendars, not just
+    /// the one we currently track. This catches duplicates that landed in another/default calendar or
+    /// a stale "AA Schedule" copy (the reason an earlier reset "did nothing"). Returns the count removed.
+    @discardableResult
+    func removeAllEvents() -> Int {
+        authorizationStatus = EKEventStore.authorizationStatus(for: .event)   // refresh — don't fail on a stale status
+        guard isAuthorized else { return 0 }
+        let mods = ekStore.calendars(for: .event).filter { $0.allowsContentModifications }
+        guard !mods.isEmpty else { return 0 }
+        let (start, end) = scanWindow
+        let pred = ekStore.predicateForEvents(withStart: start, end: end, calendars: mods)
+        let myName = SettingsManager.shared.displayName.isEmpty
+            ? SettingsManager.shared.username : SettingsManager.shared.displayName
+        let myAvail = "\(myName) — Available"
+        var removed = 0
+        for ev in ekStore.events(matching: pred) {
+            // Mine = anything in an app-owned "AA Schedule" calendar (any copy), OR my own shared
+            // availability event. Never touch other dispatchers' events on the shared calendar.
+            let mine = ev.calendar.title == personalCalendarName
+                || (ev.calendar.title == "AA Schedule")
+                || (ev.title == myAvail && (ev.notes ?? "").contains("BATMANReader"))
+                || (ev.notes ?? "").contains("Added by BATMANReader")
+            if mine {
+                try? ekStore.remove(ev, span: .thisEvent, commit: false)
+                removed += 1
+            }
+        }
+        try? ekStore.commit()
+        personalEventIDMap = [:]
+        sharedEventIDMap = [:]
+        print("✅ EventKit: removed \(removed) app events across all calendars.")
+        return removed
     }
 
     /// Ensures every working shift has a personal calendar event, re-adding any
@@ -248,21 +275,6 @@ final class EventKitManager {
         personalEventIDMap = map
     }
 
-    private func removeAllPersonalEvents() {
-        // PREDICATE-BASED: the personal "AA Schedule" calendar is entirely app-created, so delete
-        // EVERY event in it over a wide window. This catches duplicates/orphans whose identifiers the
-        // tracked map lost — the tracked-map-only removal couldn't (the bug behind launch duplication).
-        if let cal = existingPersonalCalendar() {
-            let (start, end) = scanWindow
-            let pred = ekStore.predicateForEvents(withStart: start, end: end, calendars: [cal])
-            for ev in ekStore.events(matching: pred) {
-                try? ekStore.remove(ev, span: .thisEvent, commit: false)
-            }
-            try? ekStore.commit()
-        }
-        personalEventIDMap = [:]
-    }
-
     // MARK: - Shared calendar (availability / off days)
 
     private func addSharedAvailabilityEvents(for offDays: [Shift]) {
@@ -314,19 +326,6 @@ final class EventKitManager {
         sharedEventIDMap = map
     }
 
-    private func removeAllSharedEvents() {
-        // The shared calendar is GROUP-owned — only remove the availability events WE wrote
-        // (tagged in notes), never anyone else's. Predicate-based so it catches orphans too.
-        if let cal = sharedCalendar() {
-            let (start, end) = scanWindow
-            let pred = ekStore.predicateForEvents(withStart: start, end: end, calendars: [cal])
-            for ev in ekStore.events(matching: pred) where (ev.notes ?? "").contains("BATMANReader") {
-                try? ekStore.remove(ev, span: .thisEvent, commit: false)
-            }
-            try? ekStore.commit()
-        }
-        sharedEventIDMap = [:]
-    }
 
     // MARK: - Dedup + reset helpers
 
@@ -336,12 +335,6 @@ final class EventKitManager {
         let start = cal.date(byAdding: .year, value: -2, to: Date()) ?? Date()
         let end   = cal.date(byAdding: .year, value:  2, to: Date()) ?? Date()
         return (start, end)
-    }
-
-    /// The saved personal calendar WITHOUT creating one (used by reset so we never spawn a calendar).
-    private func existingPersonalCalendar() -> EKCalendar? {
-        guard let id = savedPersonalCalendarID else { return nil }
-        return ekStore.calendar(withIdentifier: id)
     }
 
     /// title+start key for an existing personal (timed) event, for dedup.
