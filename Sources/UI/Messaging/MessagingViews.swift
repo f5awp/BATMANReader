@@ -935,7 +935,8 @@ struct ChannelView: View {
 
             if !reps.isEmpty && !isOpen {
                 Button { expanded.insert(post.id) } label: {
-                    Label("^[\(reps.count) reply](inflect: true)", systemImage: "bubble.left.and.bubble.right.fill")
+                    // Reddit-style collapse chevron: ▸ to expand.
+                    Label("^[\(reps.count) reply](inflect: true)", systemImage: "chevron.right")
                         .font(.caption.weight(.semibold))
                 }
                 .buttonStyle(.plain).foregroundStyle(.blue).padding(.leading, 46)
