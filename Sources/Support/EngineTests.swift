@@ -937,6 +937,27 @@ enum TradeEngineTests {
                   "G2c: must-be-off outranks trade-away when a day is in both")
         }
 
+        // MARK: D5 — qual-swap packages sort UNDER clean ones for the SAME N (regardless of 🔥/
+        // bookend); usual priorities apply WITHIN each group; people-count still dominates.
+        do {
+            func pkg(_ id: String, peers: [String], fire: Int, qual: Bool) -> TradePackage {
+                let a = peers.map { PackageAssignment(workerID: $0, name: $0, giveDayIDs: ["2027-02-01"], takeDayIDs: ["2027-02-02"]) }
+                let q: QualSwapLegData? = qual ? QualSwapLegData(giveShiftDayID: "2027-02-01", giveDesk: "50",
+                        giveQual: "E", takerID: peers.first ?? "A", takerName: peers.first ?? "A", candidates: []) : nil
+                return TradePackage(id: id, methodology: .greedy, assignments: a, route: nil,
+                                    fireCount: fire, bookendTotal: 0, qualSwap: q)
+            }
+            let r1 = TradeRouter.rankPackages([pkg("qual", peers: ["A"], fire: 5, qual: true),
+                                               pkg("clean", peers: ["B"], fire: 0, qual: false)])
+            check(r1.first?.id == "clean", "D5: clean 2-way sorts above a qual-swap 2-way even with more 🔥")
+            let r2 = TradeRouter.rankPackages([pkg("qlow", peers: ["A"], fire: 1, qual: true),
+                                               pkg("qhigh", peers: ["C"], fire: 9, qual: true)])
+            check(r2.first?.id == "qhigh", "D5: within the qual group, more 🔥 sorts first (usual priorities)")
+            let r3 = TradeRouter.rankPackages([pkg("clean3", peers: ["A", "B"], fire: 9, qual: false),
+                                               pkg("qual2", peers: ["C"], fire: 0, qual: true)])
+            check(r3.first?.id == "qual2", "D5: people-count dominates — a qual 2-way precedes a clean 3-way")
+        }
+
         // MARK: Relief dispatcher — schedule unknown past the horizon (pure).
         let reliefDate = DateComponents(calendar: .current, year: 2026, month: 8, day: 7).date!
         let beforeRelief = DateComponents(calendar: .current, year: 2026, month: 8, day: 7).date!  // inclusive

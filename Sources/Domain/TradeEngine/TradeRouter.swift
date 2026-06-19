@@ -82,6 +82,8 @@ struct TradePackage: Sendable, Hashable, Identifiable {
         return Set(assignments.map(\.workerID)).count + 1
     }
     var allDayIDs: [String] { assignments.flatMap(\.dayIDs) }
+    /// D5: a package needing a qual-swap bridge sorts UNDER clean ones of the same N.
+    var needsQualSwap: Bool { qualSwap != nil }
     /// A package is CIRCULAR only with **≥3 participants** (#4) — a 2-cycle is just a 2-way swap.
     var isCircular: Bool { methodology == .circular && peopleCount >= 3 }
     /// Earliest ISO day anything moves in this package (give/take + route legs) — the global sort
@@ -407,6 +409,7 @@ enum TradeRouter {
         }
         return (exempt + keptCapped).sorted {
             if $0.peopleCount != $1.peopleCount { return $0.peopleCount < $1.peopleCount }   // N groups
+            if $0.needsQualSwap != $1.needsQualSwap { return !$0.needsQualSwap }             // D5: clean before qual, same N
             let t0 = packageTier($0), t1 = packageTier($1)
             if t0 != t1 { return t0 < t1 }
             if $0.fireCount != $1.fireCount { return $0.fireCount > $1.fireCount }
