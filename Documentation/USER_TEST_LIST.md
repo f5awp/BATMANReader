@@ -310,6 +310,37 @@
 
 ---
 
+## Round-3 — shipped this build (test these)
+
+### TR3-A8 — no-profile peers only get bookend offers  [A8 · Auto-proven; device-check]
+1. Trades → run a search/Trade Solutions involving a dispatcher who has **not** set up a profile.
+- **Expect:** that person is only offered shifts that sit on the **edge** of their time off (bookends) —
+  never a pickup that lands in the **middle** of their days off. (Split-the-weekend offers no longer appear
+  for profileless people.)
+
+### TR3-F1 — each person has their own trade color  [D1/F1 · Auto-proven; device-check]
+1. Open any 2-person swap (Trades → Just 2 → pick a person) and any 3–4 person package.
+- **Expect:** **you are always blue**; **each other person has their own consistent color** (not just
+  red). The same person shows the **same color everywhere** (two-way sheet, package cards, handoff chain).
+
+### TR3-G2a — peers show by name, not employee #  [D1/G2a · Auto-proven; device-check]
+1. Open a two-way swap with a dispatcher who has set a display name.
+- **Expect:** the title and their calendar header show their **name** (e.g. "Mitchell, Kristi"), not a bare
+  number like "660615". (Only falls back to the number if no name exists anywhere.)
+
+### TR3-D4 — "Propose to {Name}" for a single person  [D4 · Auto-proven; device-check]
+1. Trades → Just 2 → pick a date that yields a **single** counterparty package.
+- **Expect:** the button reads **"Propose to {their name}"**, not "Propose to All". With 2+ people it still
+  says **"Propose to All"**.
+
+### TR3-G2c — see the other person's full intents on the 2-calendar view  [D1/G2c · Auto-proven; device-check]
+1. Open a two-way swap; make sure the **paint-palette** (intent colors) toggle is on.
+- **Expect:** on **their** calendar you now see their full intent tints — **must-be-off**, **keep**,
+  **trade-away**, and **want-to-work** in their distinct colors (previously only their trade-away days
+  showed). A day they marked nothing stays untinted.
+
+---
+
 ### Notes for the tester
 - If something here fails, tell me the item number (e.g. "T5 ⚠️") and what you saw.
 - "Auto ✅" means the logic is unit-guarded, but **your device check is still the real proof** — the

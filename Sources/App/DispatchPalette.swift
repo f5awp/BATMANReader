@@ -93,6 +93,20 @@ enum TradeColors {
     }
 }
 
+/// G2c: a PEER's published-intent calendar tint for `day` — so the two-way view shows their
+/// FULL intent picture, not just trade-away. Precedence (strongest first): must-be-off → keep
+/// → trade-away (seeking) → want-to-work; nil if the peer marked nothing for that day.
+enum PeerIntentColor {
+    static func forDay(_ day: String, seeking: Set<String>, wantToWork: Set<String>,
+                       mustBeOff: Set<String>, keep: Set<String>) -> Color? {
+        if mustBeOff.contains(day)  { return OffIntentState.mustBeOff.brickColor }
+        if keep.contains(day)       { return WorkingIntentState.mustWork.brickColor }
+        if seeking.contains(day)    { return WorkingIntentState.dontWantToWork.brickColor }
+        if wantToWork.contains(day) { return OffIntentState.wantToWork.brickColor }
+        return nil
+    }
+}
+
 // MARK: - Intent → brick color
 
 extension WorkingIntentState {

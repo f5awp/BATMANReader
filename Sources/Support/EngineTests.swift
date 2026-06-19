@@ -922,6 +922,21 @@ enum TradeEngineTests {
         check(proposeButtonTitle(count: 0, name: "Cary") == "Propose", "D4: zero → plain 'Propose' (no name, no All)")
         check(proposeButtonTitle(count: 1, name: "") == "Propose", "D4: 1 but nameless → plain 'Propose'")
 
+        // MARK: G2c — peer's FULL intent palette on the two-way calendar (was only trade-away).
+        // Precedence: must-be-off → keep → trade-away (seeking) → want-to-work; else nil.
+        do {
+            let mbo = "2027-01-01", keep = "2027-01-02", seek = "2027-01-03", wtw = "2027-01-04", none = "2027-01-05"
+            let sk: Set<String> = [seek], ww: Set<String> = [wtw], mb: Set<String> = [mbo], kp: Set<String> = [keep]
+            check(PeerIntentColor.forDay(mbo, seeking: sk, wantToWork: ww, mustBeOff: mb, keep: kp) == OffIntentState.mustBeOff.brickColor, "G2c: must-be-off day → locked-off color")
+            check(PeerIntentColor.forDay(keep, seeking: sk, wantToWork: ww, mustBeOff: mb, keep: kp) == WorkingIntentState.mustWork.brickColor, "G2c: keep day → keep color")
+            check(PeerIntentColor.forDay(seek, seeking: sk, wantToWork: ww, mustBeOff: mb, keep: kp) == WorkingIntentState.dontWantToWork.brickColor, "G2c: trade-away day → change color")
+            check(PeerIntentColor.forDay(wtw, seeking: sk, wantToWork: ww, mustBeOff: mb, keep: kp) == OffIntentState.wantToWork.brickColor, "G2c: want-to-work day → available color")
+            check(PeerIntentColor.forDay(none, seeking: sk, wantToWork: ww, mustBeOff: mb, keep: kp) == nil, "G2c: an unmarked day has no peer-intent tint")
+            // Precedence: a day in BOTH must-be-off and seeking shows must-be-off (strongest).
+            check(PeerIntentColor.forDay(mbo, seeking: [mbo], wantToWork: [], mustBeOff: [mbo], keep: []) == OffIntentState.mustBeOff.brickColor,
+                  "G2c: must-be-off outranks trade-away when a day is in both")
+        }
+
         // MARK: Relief dispatcher — schedule unknown past the horizon (pure).
         let reliefDate = DateComponents(calendar: .current, year: 2026, month: 8, day: 7).date!
         let beforeRelief = DateComponents(calendar: .current, year: 2026, month: 8, day: 7).date!  // inclusive

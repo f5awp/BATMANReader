@@ -907,6 +907,9 @@ struct TwoWaySheet: View {
     @State private var selectedTake: Set<String> = []       // their days you'll take
     @State private var selectedGive: Set<String> = []       // your days they'll take
     @State private var theirSeeking: Set<String> = []       // days they want to trade away
+    @State private var theirWantToWork: Set<String> = []     // G2c: peer's full intent palette
+    @State private var theirMustBeOff: Set<String> = []      // G2c
+    @State private var theirKeep: Set<String> = []           // G2c
     @State private var theirStatus: String?                  // R-B: peer's published status, shown in-context
     @State private var peerDisplayName: String?              // G2a: published displayName (resolved into peerName)
     @State private var ignoreMyBlacklist = false            // active-outbound override
@@ -1078,10 +1081,11 @@ struct TwoWaySheet: View {
         return nil
     }
 
-    /// Their published intent (days they want to trade away) as a corner chip.
+    /// G2c: their FULL published intent palette as a corner chip (was only trade-away).
     private func theirIntent(_ day: String) -> Color? {
         guard showIntents else { return nil }
-        return theirSeeking.contains(day) ? BrickPalette.change : nil
+        return PeerIntentColor.forDay(day, seeking: theirSeeking, wantToWork: theirWantToWork,
+                                      mustBeOff: theirMustBeOff, keep: theirKeep)
     }
 
     /// Your own day markers (high-demand or personal milestone) and their detail text.
@@ -1237,6 +1241,9 @@ struct TwoWaySheet: View {
             ?? TradeProfile.defaultForUnpublished(workerID: candidate.workerID, name: candidate.name)   // A8: missing → Bookends Only
         let theirSeek    = theirProf.seekingDayIDs
         peerDisplayName  = theirProf.displayName   // G2a
+        theirWantToWork  = theirProf.wantToWorkDayIDs ?? []   // G2c: peer's full intent palette
+        theirMustBeOff   = theirProf.mustBeOffDayIDs ?? []
+        theirKeep        = theirProf.keepDayIDs ?? []
 
         theirSeeking = theirSeek
         let trimmedStatus = theirProf.statusBroadcast?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""

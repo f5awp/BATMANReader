@@ -27,7 +27,12 @@
 6. **Build green** (`BuildProject`) — compiles the harness + all surfaces.
 7. **`scripts/check_arch_map.sh` green.**
 8. **Update `ARCHITECTURE_MAP.md` AND `ASSUMED_PRESENT.md`** for the sub-step (symbol, what, test, status).
-9. **Commit + push** with a message stating the change, the tests, and red→green.
+9. **USER STEPS** — add to `USER_TEST_LIST.md` the exact on-device steps the user takes to *use and
+   verify* this feature (tap-by-tap: where to go, what to do, what they should see). Plain language.
+10. **EXACTING BUILD DETAIL** — record a precise technical note (in `ASSUMED_PRESENT.md` or a build-log
+    section) at the depth I actually understand it: the symbol(s), every file/call-site touched, the
+    behavior + precedence + edge cases, the data flow, and *why* it's correct. Auditable by a stranger.
+11. **Commit + push** with a message stating the change, the tests, and red→green.
 
 ## C. Honesty / reporting
 - State build-verified vs harness-proven explicitly. If a step was skipped or a test is device-only,
