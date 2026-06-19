@@ -427,6 +427,59 @@ enum TradeRouter {
         }
     }
 
+    /// B1: ALL qual-swap arrangements for the selected INTERNATIONAL give-days, computed on demand for
+    /// the "Qual Swap" button. Unlike the auto packages, this has NO `isQualBlocked` gate (show options
+    /// even if a direct trade also exists) and uses `.physicalOnly` for the off-taker willingness check
+    /// (so a profileless taker isn't filtered out by the A8 bookends default). One package per (day, taker).
+    static func qualSwapOptions(forGiveShifts giveShifts: [Shift], excluding selfID: String) async -> [TradePackage] {
+        let intlDays = giveShifts.filter { !$0.isOff && DeskRules.hasQualGatedSelection(desks: [$0.desk]) }
+        guard !intlDays.isEmpty else { return [] }
+        let (start, end) = horizon
+        let entries = await RosterStore.shared.entries(from: start, to: end)
+        var maps: [String: DayMap] = [:]
+        for e in entries { maps[e.workerID, default: [:]][e.day] = e }
+        func openProfile(_ id: String, _ name: String) -> TradeProfile {
+            TradeProfileStore.shared.profile(forWorker: id) ?? TradeProfile.defaultForUnpublished(workerID: id, name: name)
+        }
+        var result: [TradePackage] = []
+        for shift in intlDays {
+            let giveDay = shift.id
+            guard let myEntry = (maps[selfID] ?? [:])[giveDay], let dayDate = TradeMatcher.dayDate(fromISO: giveDay) else { continue }
+            var workingPairs: [(QualSwapShift, TradeProfile)] = []
+            var offEntries: [RosterEntry] = []
+            for (wid, m) in maps {
+                guard wid != selfID, let e = m[giveDay] else { continue }
+                if e.isOff { offEntries.append(e) }
+                else { workingPairs.append((QualSwapShift(workerID: wid, name: e.workerName, desk: e.desk,
+                                                          startHour: e.startHour, quals: e.quals), openProfile(wid, e.workerName))) }
+            }
+            let offTakers = offEntries.map { (id: $0.workerID, name: $0.workerName, quals: $0.quals) }
+            let sols = QualSwap.solutions(giveDesk: myEntry.desk, giveStartHour: myEntry.startHour,
+                                          giverID: selfID, workers: workingPairs, offTakers: offTakers)
+            guard !sols.isEmpty else { continue }
+            let giveQual = DeskRules.requiredQual(forDesk: myEntry.desk) ?? "D"
+            for (takerID, group) in Dictionary(grouping: sols, by: { $0.takerID }).sorted(by: { $0.key < $1.key }) {
+                guard let bMap = maps[takerID], let bEntry = bMap[giveDay] else { continue }
+                let bProfile = openProfile(takerID, bEntry.workerName)
+                let willing = group.filter { sol in
+                    TradeEligibility.canCover(coverDayID: giveDay, coverDay: dayDate, desk: sol.bridgeDesk,
+                                              startHour: myEntry.startHour, coverMap: bMap, coverQuals: bEntry.quals,
+                                              coverProfile: bProfile, options: .physicalOnly).eligible
+                }
+                guard !willing.isEmpty else { continue }
+                let candidates = willing.map {
+                    QualSwapCandidate(workerID: $0.bridgeID, name: $0.bridgeName, desk: $0.bridgeDesk, qual: $0.bridgeQual)
+                }
+                let leg = QualSwapLegData(giveShiftDayID: giveDay, giveDesk: myEntry.desk, giveQual: giveQual,
+                                          takerID: takerID, takerName: bEntry.workerName, candidates: candidates)
+                let assignment = PackageAssignment(workerID: takerID, name: bEntry.workerName, giveDayIDs: [giveDay], takeDayIDs: [])
+                result.append(TradePackage(id: "qualswap-\(giveDay)-\(takerID)", methodology: .greedy,
+                                           assignments: [assignment], route: nil, urgency: 0, qualSwap: leg))
+            }
+        }
+        return result
+    }
+
     // MARK: N-way circular routing
 
     /// Resolves 3- and 4-person circular swap loops seeded from the user's

@@ -57,8 +57,9 @@ struct FindCandidatesSection: View {
     private var filteredPackages: [TradePackage] { searchFilter.filter(packages) }
     // B1: international-desk qual-swap entry — the button glows green only when a selected desk is gated.
     @State private var showQualSwaps = false
+    @State private var qualSwapResults: [TradePackage] = []
+    @State private var loadingQual = false
     private var qualGatedSelected: Bool { DeskRules.hasQualGatedSelection(desks: selectedShifts.map(\.desk)) }
-    private var qualSwapPackages: [TradePackage] { packages.filter { $0.qualSwap != nil } }
 
     private var hasShifts: Bool { !store.upcomingWorkingShifts().isEmpty }
     private var selectedShifts: [Shift] {
@@ -95,7 +96,7 @@ struct FindCandidatesSection: View {
         }
         .sheet(isPresented: $showFilter) { MasterFilterSheet(filter: $searchFilter, people: rosterPeople) }
         .sheet(isPresented: $showQualSwaps) {
-            QualSwapDaysSheet(packages: qualSwapPackages) { pkg in
+            QualSwapDaysSheet(packages: qualSwapResults, loading: loadingQual) { pkg in
                 showQualSwaps = false
                 if let leg = pkg.qualSwap { pkgSwap = PackageSwapContext(leg: leg) }   // reuse the blast picker
             }
@@ -158,12 +159,19 @@ struct FindCandidatesSection: View {
                     .disabled(selectedIDs.isEmpty || isSearching)
 
                     // B1: gray + disabled normally; glows GREEN when a selected desk is international.
-                    Button { showQualSwaps = true } label: {
+                    // Tapping runs a DEDICATED qual-swap search for the selected international days.
+                    Button {
+                        Task {
+                            loadingQual = true; showQualSwaps = true
+                            qualSwapResults = await TradeRouter.qualSwapOptions(forGiveShifts: selectedShifts, excluding: settings.username)
+                            loadingQual = false
+                        }
+                    } label: {
                         Label("Qual Swap", systemImage: "arrow.triangle.swap")
                     }
                     .buttonStyle(.borderedProminent).controlSize(.small)
                     .tint(qualGatedSelected ? .green : .gray)
-                    .disabled(!qualGatedSelected)
+                    .disabled(!qualGatedSelected || isSearching)
                     .shadow(color: qualGatedSelected ? .green.opacity(0.6) : .clear, radius: 6)
                     .accessibilityLabel("Qual swap for international desks")
 
@@ -1445,6 +1453,7 @@ struct PackageSwapContext: Identifiable {
 /// Swipe between days; each lists the qual-swap options for that day; "Broadcast" opens the blast picker.
 struct QualSwapDaysSheet: View {
     let packages: [TradePackage]
+    var loading: Bool = false
     let onBroadcast: (TradePackage) -> Void
     @Environment(\.dismiss) private var dismiss
 
@@ -1456,9 +1465,11 @@ struct QualSwapDaysSheet: View {
     var body: some View {
         NavigationStack {
             Group {
-                if byDay.isEmpty {
+                if loading {
+                    ProgressView("Finding qual swaps…").frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if byDay.isEmpty {
                     ContentUnavailableView("No qual swaps found", systemImage: "arrow.triangle.swap",
-                        description: Text("Tap Find first — qual-swap options for your international days appear here, one page per day."))
+                        description: Text("No off dispatcher could take these international shifts with a desk swap. Try other days."))
                 } else {
                     TabView {
                         ForEach(byDay, id: \.day) { group in
