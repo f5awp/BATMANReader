@@ -883,20 +883,16 @@ enum TradeEngineTests {
                   "A8: an Open profile still accepts the split (proves the default is what changes behavior)")
         }
 
-        // MARK: D1/F1 — ONE stable per-worker calendar color, used by every trade surface
-        // (fixes the two-way sheet that hardcoded blue/red). Deterministic, mine = blue, peer ≠ blue.
+        // MARK: D1/F1 — POSITIONAL trade colors: you = blue, then seat-by-seat red → orange → green.
         do {
-            let me = "me-001"
-            check(TradeColors.forWorker(me, myID: me) == BrickPalette.mineScheme, "D1: my own color is mineScheme (blue)")
-            check(TradeColors.forWorker("660615", myID: me) != BrickPalette.mineScheme, "D1: a peer is NEVER the mine blue")
-            check(TradeColors.forWorker("660615", myID: me) == TradeColors.forWorker("660615", myID: me),
-                  "D1: same worker → same color every call (stable, not randomized)")
-            // Deterministic index in range, independent of String.hashValue randomization.
-            let n = BrickPalette.traderThemes.count
-            check((0..<n).contains(TradeColors.stableIndex("660615", count: n)), "D1: stableIndex is within the palette range")
-            check(TradeColors.stableIndex("abc", count: n) == TradeColors.stableIndex("abc", count: n),
-                  "D1: stableIndex is deterministic across calls")
-            check(TradeColors.stableIndex("x", count: 0) == 0, "D1: stableIndex guards empty palette (no crash)")
+            let me = "me", p1 = "A", p2 = "B", p3 = "C"
+            let order = [p1, p2, p3]   // the non-me participants in seat order
+            check(TradeColors.color(forParticipant: me, myID: me, orderedPeers: order) == BrickPalette.mineScheme, "F1: you are always blue")
+            check(TradeColors.color(forParticipant: p1, myID: me, orderedPeers: order) == BrickPalette.traderThemes[0], "F1: 2nd person = seat-1 color (red)")
+            check(TradeColors.color(forParticipant: p2, myID: me, orderedPeers: order) == BrickPalette.traderThemes[1], "F1: 3rd person = seat-2 color (orange)")
+            check(TradeColors.color(forParticipant: p3, myID: me, orderedPeers: order) == BrickPalette.traderThemes[2], "F1: 4th person = seat-3 color (green)")
+            check(BrickPalette.traderThemes[0] == BrickPalette.peerScheme, "F1: seat-1 (2nd person) is red")
+            check(BrickPalette.traderThemes.count >= 3, "F1: palette has ≥ red/orange/green")
         }
 
         // MARK: G2a — peer name resolution (the IMG-42 "660615" bug). Prefer a real

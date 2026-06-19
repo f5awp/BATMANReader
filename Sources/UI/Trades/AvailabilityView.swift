@@ -920,7 +920,7 @@ struct TwoWaySheet: View {
 
     private let youColor  = BrickPalette.mineScheme
     // F1/D1: the peer reads in their STABLE per-worker color (was hardcoded red).
-    private var themColor: Color { TradeColors.forWorker(candidate.workerID, myID: SettingsManager.shared.username) }
+    private var themColor: Color { TradeColors.color(forParticipant: candidate.workerID, myID: SettingsManager.shared.username, orderedPeers: [candidate.workerID]) }
     // G2a: the peer's human name — published displayName → roster name → employee # (fixes "660615").
     private var peerName: String { TradeNames.resolved(displayName: peerDisplayName, rosterName: candidate.name, workerID: candidate.workerID) }
 

@@ -62,34 +62,28 @@ enum BrickPalette {
     static let mineScheme = Color(red: 0.13, green: 0.45, blue: 0.92)    // your schedule blue
     static let peerScheme = Color(red: 0.84, green: 0.25, blue: 0.28)    // their schedule red
     static let loopTrade  = Color(red: 0.48, green: 0.31, blue: 0.84)    // violet
-    // Distinct per-trader calendar themes (you are always `mineScheme` blue). Each
-    // person's calendar reads in their own color: border = trades away, fill = takes.
-    // Hues chosen to stay distinguishable (no teal/green, for colorblindness).
+    // POSITIONAL per-seat trade colors (you are always `mineScheme` blue). Seat order, per the
+    // user spec: 2nd person red, 3rd orange, 4th green, then violet/magenta for any extras.
     static let traderThemes: [Color] = [
-        peerScheme,                                    // red
-        loopTrade,                                     // violet
-        Color(red: 0.90, green: 0.52, blue: 0.10),     // orange
-        Color(red: 0.80, green: 0.20, blue: 0.52),     // magenta
-        Color(red: 0.60, green: 0.42, blue: 0.12),     // amber-brown
+        peerScheme,                                    // seat 1 (2nd person) — red
+        Color(red: 0.90, green: 0.52, blue: 0.10),     // seat 2 (3rd person) — orange
+        Color(red: 0.20, green: 0.62, blue: 0.34),     // seat 3 (4th person) — green
+        loopTrade,                                     // seat 4 — violet
+        Color(red: 0.80, green: 0.20, blue: 0.52),     // seat 5 — magenta
     ]
     // Day-marker circles, used identically on every calendar.
     static let highImpact = Color(red: 0.86, green: 0.65, blue: 0.12)    // gold — high-demand date
     static let personalDay = milestone                                  // pink — personal milestone
 }
 
-/// D1/F1: THE single stable per-worker calendar color, used by EVERY trade surface so the
-/// same person reads the same color everywhere. You are always `mineScheme` (blue); each peer
-/// gets a deterministic color from `traderThemes` keyed on their workerID — fixes the two-way
-/// sheet that hardcoded blue/red. Deterministic (UTF8 byte sum, NOT the randomized
-/// `String.hashValue`, which would change the color every launch).
+/// F1: POSITIONAL trade colors, used by every trade surface. You are always `mineScheme` (blue);
+/// each peer takes a SEAT color by their order in the trade — seat 1 (2nd person) = red, 2 = orange,
+/// 3 = green, … `orderedPeers` is the list of non-me participants in seat order.
 enum TradeColors {
-    static func stableIndex(_ workerID: String, count: Int) -> Int {
-        guard count > 0 else { return 0 }
-        return workerID.utf8.reduce(0) { $0 &+ Int($1) } % count
-    }
-    static func forWorker(_ workerID: String, myID: String) -> Color {
-        if workerID == myID { return BrickPalette.mineScheme }
-        return BrickPalette.traderThemes[stableIndex(workerID, count: BrickPalette.traderThemes.count)]
+    static func color(forParticipant id: String, myID: String, orderedPeers: [String]) -> Color {
+        if id == myID { return BrickPalette.mineScheme }
+        let idx = orderedPeers.firstIndex(of: id) ?? 0
+        return BrickPalette.traderThemes[idx % BrickPalette.traderThemes.count]
     }
 }
 
