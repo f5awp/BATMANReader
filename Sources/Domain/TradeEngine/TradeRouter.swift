@@ -815,10 +815,30 @@ enum TradeRouter {
             guard let day = TradeMatcher.dayDate(fromISO: entry.day) else { return true }
             return TradeProfile.isPastRelief(day: day, reliefThrough: reliefThrough(workerID))
         }
+        // A1 seed/expansion promise (hoisted so the DFS can order EVERY node best-first, not just seeds).
+        func seedUrgency(_ dayID: String) -> Int {
+            let reason = DayIntentStore.shared.note(forDay: dayID)?.reason?.urgency ?? 0
+            switch DayIntentStore.shared.topology(forDay: dayID) {
+            case .personalMilestone: return reason + 3
+            case .highDemand:        return reason + 2
+            case .standard:          return reason
+            }
+        }
+        func daysUntil(_ dayID: String) -> Int {
+            guard let d = TradeMatcher.dayDate(fromISO: dayID) else { return 0 }
+            return max(0, Int(d.timeIntervalSince(start) / 86400))
+        }
+        /// Promise of `current` giving `entry` next — soonness + qual friction (+ urgency for self's
+        /// own days). Used to order the DFS expansion so the cap keeps the best COMPLETE paths.
+        func givePromise(_ entry: RosterEntry, by giverID: String) -> Double {
+            seedScore(urgency: giverID == selfID ? seedUrgency(entry.day) : 0,
+                      daysUntil: daysUntil(entry.day),
+                      qualGatedDesk: DeskRules.hasQualGatedSelection(desks: [entry.desk]))
+        }
 
         // DFS: path of leg tuples. Each step, the current node gives one of THEIR
         // working days to a next node who can cover it. Close when the last node's
-        // gift is covered by SELF.
+        // gift is covered by SELF. A1: at EVERY node, the give-day candidates are tried best-first.
         func extend(path: [NWayLeg], visited: Set<String>, current: String, currentMap: DayMap) {
             if Task.isCancelled { return }                   // A1: cooperatively cancellable (Lucky re-filter)
             if routes.count > maxRoutes { return }           // hard mid-search cap (60 baseline / 100 Lucky)
@@ -828,7 +848,8 @@ enum TradeRouter {
             // visited.count (self + others), so `>= 3` = self + ≥2 others; a 2-cycle is a 2-way swap,
             // handled by twoWayExplore/packages, never emitted here as a fake "circular."
             if depth >= 3 {
-                for entry in currentMap.values where !entry.isOff {
+                for entry in currentMap.values.filter({ !$0.isOff })
+                    .sorted(by: { givePromise($0, by: current) > givePromise($1, by: current) }) {   // A1: best-first
                     guard entry.day >= TradeMatcher.isoDay(start) else { continue }
                     guard !keepDays(current).contains(entry.day) else { continue }   // never give a Keep day
                     guard !giveBlocked(current, entry) else { continue }             // relief: not a real shift
@@ -857,8 +878,9 @@ enum TradeRouter {
             }
             guard depth < maxDepth else { return }
 
-            // Otherwise, current gives one of their working days to a fresh node.
-            for entry in currentMap.values where !entry.isOff {
+            // Otherwise, current gives one of their working days to a fresh node — A1: best-first.
+            for entry in currentMap.values.filter({ !$0.isOff })
+                .sorted(by: { givePromise($0, by: current) > givePromise($1, by: current) }) {
                 if keepDays(current).contains(entry.day) { continue }   // never give a Keep day
                 if giveBlocked(current, entry) { continue }             // relief: not a real shift
                 // Prefer days the current giver actually wants to give (intent). The Intents engine
@@ -882,19 +904,7 @@ enum TradeRouter {
         // Seed: self gives each seeking day to a first coverer. High-value dates
         // (high-demand / personal milestone) are protected from auto give-away
         // unless What If? mode is on. A1: explore the most URGENT/soonest seeds FIRST so the best
-        // loops are found before the route cap bites.
-        func seedUrgency(_ dayID: String) -> Int {
-            let reason = DayIntentStore.shared.note(forDay: dayID)?.reason?.urgency ?? 0
-            switch DayIntentStore.shared.topology(forDay: dayID) {
-            case .personalMilestone: return reason + 3
-            case .highDemand:        return reason + 2
-            case .standard:          return reason
-            }
-        }
-        func daysUntil(_ dayID: String) -> Int {
-            guard let d = TradeMatcher.dayDate(fromISO: dayID) else { return 0 }
-            return max(0, Int(d.timeIntervalSince(start) / 86400))
-        }
+        // loops are found before the route cap bites. (seedUrgency/daysUntil hoisted above extend.)
         let seedOrder = bestFirstSeeds(giveDays.map { s in
             (dayID: s.id, score: seedScore(urgency: seedUrgency(s.id), daysUntil: daysUntil(s.id),
                                            qualGatedDesk: DeskRules.hasQualGatedSelection(desks: [s.desk])))
