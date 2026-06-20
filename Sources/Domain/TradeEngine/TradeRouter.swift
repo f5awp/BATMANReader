@@ -427,10 +427,8 @@ enum TradeRouter {
             }
             return p
         }
-        // Record the TradeScore, rank, then apply the VARIABLE score floor (narrow baseline / wide
-        // Lucky) under a safety ceiling — same mechanism as Intents (min-cost + n-way both gated).
-        let ranked = Self.rankPackages(scored.map { $0.scored() })
-        return Array(scoreFloored(ranked, band: qualityBand(generation)).prefix(Self.intentResultCap))
+        // Rank, then the shared variable score-floor + safety ceiling (same gate as every match type).
+        return capped(Self.rankPackages(scored), generation: generation)
     }
 
     // MARK: - Intents marketplace (DISTINCT from packages — intent-for-intent, intent-first ranking)
@@ -609,10 +607,8 @@ enum TradeRouter {
             }
         }
 
-        // Record the TradeScore, intent-first rank, then apply the VARIABLE score floor (narrow band
-        // baseline / wide band Lucky) under a safety ceiling.
-        let ranked = rankIntentPackages(result.map { $0.scored() })
-        return Array(scoreFloored(ranked, band: qualityBand(generation)).prefix(Self.intentResultCap))
+        // Intent-first rank, then the shared variable score-floor + safety ceiling (every match type).
+        return capped(rankIntentPackages(result), generation: generation)
     }
     /// Safety ceiling — neither feed ever shows more than this, even if the floor passes a huge set.
     static let intentResultCap = 60
@@ -632,6 +628,14 @@ enum TradeRouter {
     /// The band for a generation scope: baseline (`.fast`) is narrow; Lucky is wide.
     static func qualityBand(_ generation: SearchFilter) -> Double {
         generation == .fast ? qualityBandBaseline : qualityBandLucky
+    }
+
+    /// The SINGLE final gate for any ranked package result set — used by EVERY match type so the
+    /// variable score-floor + safety ceiling are applied identically everywhere. Records the
+    /// TradeScore first (so `qualityScore` is populated), then floors, then caps.
+    static func capped(_ ranked: [TradePackage], generation: SearchFilter) -> [TradePackage] {
+        let scored = ranked.map { $0.scored() }
+        return Array(scoreFloored(scored, band: qualityBand(generation)).prefix(intentResultCap))
     }
 
     /// U4 priority tier (lower = higher priority): 0 = 🔥+bookends, 1 = 🔥-only, 2 = bookends-only.
