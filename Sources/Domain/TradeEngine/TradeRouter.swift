@@ -694,6 +694,17 @@ enum TradeRouter {
 
     // MARK: N-way circular routing
 
+    /// A1 best-first: order the give-day seeds so the most promising are explored FIRST — under the
+    /// route cap, the best loops surface instead of whatever the dictionary happened to yield first.
+    /// Score = urgency (desc), then sooner ISO day (give-day IDs are "yyyy-MM-dd" → chronological).
+    /// PURE → harness-tested.
+    static func bestFirstSeeds(_ seeds: [(dayID: String, urgency: Int)]) -> [String] {
+        seeds.sorted { a, b in
+            if a.urgency != b.urgency { return a.urgency > b.urgency }
+            return a.dayID < b.dayID
+        }.map(\.dayID)
+    }
+
     /// Resolves 3- and 4-person circular swap loops seeded from the user's
     /// give-away days. A→B→C→A: each person gives one shift and receives one, so
     /// everyone nets the same hours. Bounded by `maxDepth` participants.
@@ -816,8 +827,19 @@ enum TradeRouter {
 
         // Seed: self gives each seeking day to a first coverer. High-value dates
         // (high-demand / personal milestone) are protected from auto give-away
-        // unless What If? mode is on.
-        for s in giveDays {
+        // unless What If? mode is on. A1: explore the most URGENT/soonest seeds FIRST so the best
+        // loops are found before the route cap bites.
+        func seedUrgency(_ dayID: String) -> Int {
+            let reason = DayIntentStore.shared.note(forDay: dayID)?.reason?.urgency ?? 0
+            switch DayIntentStore.shared.topology(forDay: dayID) {
+            case .personalMilestone: return reason + 3
+            case .highDemand:        return reason + 2
+            case .standard:          return reason
+            }
+        }
+        let seedOrder = bestFirstSeeds(giveDays.map { (dayID: $0.id, urgency: seedUrgency($0.id)) })
+        let orderedGiveDays = seedOrder.compactMap { id in giveDays.first { $0.id == id } }
+        for s in orderedGiveDays {
             if constraints.enforceTopology, DayIntentStore.shared.topology(forDay: s.id) != .standard { continue }
             guard let myEntry = selfMap[s.id] else { continue }
             if giveBlocked(selfID, myEntry) { continue }   // relief: my own post-horizon shift isn't real

@@ -1127,6 +1127,13 @@ enum TradeEngineTests {
             var sHi = pkg("bbb", people: 2, fire: 1); sHi.acceptanceScore = 0
             check(TradeRouter.rankIntentPackages([sHi, sLo]).first?.id == "aaa",
                   "TradeScore: acceptanceScore does NOT affect ranking (ties fall to id, not score)")
+
+            // A1 best-first seeding: most-urgent first, then soonest day (give-day IDs sort chronologically).
+            check(TradeRouter.bestFirstSeeds([("2026-07-10", 0), ("2026-07-04", 3), ("2026-07-02", 0)])
+                  == ["2026-07-04", "2026-07-02", "2026-07-10"],
+                  "A1: best-first seeds order by urgency desc, then sooner date")
+            check(TradeRouter.bestFirstSeeds([("2026-07-09", 2), ("2026-07-03", 2)]) == ["2026-07-03", "2026-07-09"],
+                  "A1: equal urgency → the sooner day seeds first")
         }
 
         // MARK: #9 — Reddit-style reply threading (pure pre-order tree + subtree collapse).
