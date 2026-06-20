@@ -369,6 +369,11 @@ enum TradeScore {
                wRecv = 1.0, wTime = 0.8, wQual = 1.2, wHours = 1.0, wEcb = 1.5,
                wPerson = 1.0   // H2: weight on the receiver's learned acceptance prior
 
+    /// How much the (probabilistic) TradeScore contributes to a package's QUALITY score that drives
+    /// the score-floor cap. Deliberately TINY for now — TradeScore is promoted to the gate but stays
+    /// "mostly silent" so it barely moves which trades surface; raise this when the model is ready.
+    static let qualityBlendWeight = 0.05
+
     static func legLogit(_ f: LegFeatures) -> Double {
         w0
         + wBook * (f.bookend ? 1 : 0)

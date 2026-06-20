@@ -84,6 +84,18 @@ struct TradePackage: Sendable, Hashable, Identifiable {
         self.partnerPrior = partnerPrior; self.acceptanceScore = acceptanceScore
     }
 
+    /// A single package QUALITY scalar driving the score-floor cap. DETERMINISTIC and dominated by the
+    /// visible signals (mutual intent ≫ bookends ≈ fewer-people > urgency); the probabilistic
+    /// `acceptanceScore` rides in at a TINY weight (`qualityBlendWeight`) so TradeScore stays mostly
+    /// silent for now. Interpretable: ~3 points ≈ one extra 🔥.
+    var qualityScore: Double {
+        Double(fireCount) * 3
+        + Double(bookendTotal) * 1
+        + Double(max(0, 5 - peopleCount))      // fewer people better: 2→3, 3→2, 4→1
+        + Double(urgency) * 0.5
+        + acceptanceScore * TradeScore.qualityBlendWeight   // mostly silent now; tunable later
+    }
+
     /// Number of legs (days moved) — the model's leg count for the acceptance score.
     var legCount: Int {
         if let route { return route.legs.count }
@@ -415,8 +427,10 @@ enum TradeRouter {
             }
             return p
         }
-        // Record the TradeScore on each (dev-only instrumentation; not a ranking input), then rank.
-        return Self.rankPackages(scored.map { $0.scored() })
+        // Record the TradeScore, rank, then apply the VARIABLE score floor (narrow baseline / wide
+        // Lucky) under a safety ceiling — same mechanism as Intents (min-cost + n-way both gated).
+        let ranked = Self.rankPackages(scored.map { $0.scored() })
+        return Array(scoreFloored(ranked, band: qualityBand(generation)).prefix(Self.intentResultCap))
     }
 
     // MARK: - Intents marketplace (DISTINCT from packages — intent-for-intent, intent-first ranking)
@@ -595,12 +609,30 @@ enum TradeRouter {
             }
         }
 
-        // Record the TradeScore (dev-only instrumentation; not a ranking input), then intent-first
-        // rank, capped to the top 20.
-        return Array(rankIntentPackages(result.map { $0.scored() }).prefix(Self.intentResultCap))
+        // Record the TradeScore, intent-first rank, then apply the VARIABLE score floor (narrow band
+        // baseline / wide band Lucky) under a safety ceiling.
+        let ranked = rankIntentPackages(result.map { $0.scored() })
+        return Array(scoreFloored(ranked, band: qualityBand(generation)).prefix(Self.intentResultCap))
     }
-    /// Max Intents results surfaced (highest-scoring first). Keeps the feed tight + fast.
-    static let intentResultCap = 20
+    /// Safety ceiling — neither feed ever shows more than this, even if the floor passes a huge set.
+    static let intentResultCap = 60
+
+    // Score-floor bands: keep every package within `band` quality of the BEST. Baseline = narrow (only
+    // top-tier); Lucky = wide (allow weaker matches). Interpretable in 🔥-units (3 pts ≈ one 🔥).
+    static let qualityBandBaseline = 3.0   // ~within one 🔥 of the best
+    static let qualityBandLucky    = 9.0   // ~within three 🔥 of the best
+
+    /// VARIABLE score cap: keep every package whose quality is within `band` of the best one — so a
+    /// large set of high-quality packages all survive ("keep going"), while a narrow band trims the
+    /// weak tail. PURE → harness-tested. Empty in → empty out.
+    static func scoreFloored(_ packages: [TradePackage], band: Double) -> [TradePackage] {
+        guard let best = packages.map(\.qualityScore).max() else { return packages }
+        return packages.filter { $0.qualityScore >= best - band }
+    }
+    /// The band for a generation scope: baseline (`.fast`) is narrow; Lucky is wide.
+    static func qualityBand(_ generation: SearchFilter) -> Double {
+        generation == .fast ? qualityBandBaseline : qualityBandLucky
+    }
 
     /// U4 priority tier (lower = higher priority): 0 = 🔥+bookends, 1 = 🔥-only, 2 = bookends-only.
     static func packageTier(_ p: TradePackage) -> Int {

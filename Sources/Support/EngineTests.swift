@@ -1109,11 +1109,12 @@ enum TradeEngineTests {
             var pb = pkg("high", people: 2, fire: 2); pb.partnerPrior = 0.5
             check(TradeRouter.rankIntentPackages([pa, pb]).first?.id == "high", "H2: all else equal, the likelier-to-accept partner ranks first")
 
-            // Cap: intentSolutions surfaces only the top-N highest-scoring (unprofiled/low matches trimmed).
-            check(TradeRouter.intentResultCap == 20, "Intents: results capped at the top 20")
-            let many = (0..<50).map { pkg("p\($0)", people: 2, fire: $0 % 5) }
-            check(Array(TradeRouter.rankIntentPackages(many).prefix(TradeRouter.intentResultCap)).count == 20,
-                  "Intents: ranking + cap yields at most 20")
+            // Safety ceiling: intentSolutions never shows more than intentResultCap (the score floor
+            // does the real curation; this is just a runaway guard).
+            check(TradeRouter.intentResultCap == 60, "Intents: safety ceiling is 60")
+            let many = (0..<70).map { pkg("p\($0)", people: 2, fire: $0 % 5) }
+            check(Array(TradeRouter.rankIntentPackages(many).prefix(TradeRouter.intentResultCap)).count == 60,
+                  "Intents: safety ceiling caps the list at 60")
 
             // TradeScore instrumentation: COMPUTED + monotone, but NOT a ranking input (collects, doesn't decide).
             check(TradeScore.packageScore(legCount: 2, fireCount: 2, bookendTotal: 2, partnerPrior: 0)
@@ -1144,6 +1145,27 @@ enum TradeEngineTests {
             check(TradeRouter.seedScore(urgency: 2, daysUntil: 5, qualGatedDesk: false)
                   > TradeRouter.seedScore(urgency: 2, daysUntil: 5, qualGatedDesk: true),
                   "A1: a qual-gated desk lowers the seed score (TradeScore qual friction)")
+
+            // Score-floor cap: VARIABLE (keeps everything within `band` of the best), self-scaling,
+            // baseline narrow / Lucky wide. And TradeScore stays MOSTLY SILENT in the quality score.
+            func qpkg(_ id: String, fire: Int) -> TradePackage {
+                var p = TradePackage(id: id, methodology: .greedy,
+                                     assignments: [PackageAssignment(workerID: "w", name: "n", giveDayIDs: ["d"], takeDayIDs: ["e"])],
+                                     route: nil)
+                p.fireCount = fire; return p
+            }
+            let qset = [qpkg("a", fire: 3), qpkg("b", fire: 2), qpkg("c", fire: 0)]  // qualityScore = 12, 9, 3
+            check(Set(TradeRouter.scoreFloored(qset, band: 2).map(\.id)) == ["a"],
+                  "Score-floor: a NARROW band (2) keeps only the top-tier package")
+            check(Set(TradeRouter.scoreFloored(qset, band: 9).map(\.id)) == ["a", "b", "c"],
+                  "Score-floor: a WIDE (Lucky) band (9) keeps the weaker matches too")
+            check(TradeRouter.scoreFloored([], band: 3).isEmpty, "Score-floor: empty in → empty out")
+            check(TradeRouter.qualityBand(.fast) < TradeRouter.qualityBand(SearchFilter(maxPeople: 4)),
+                  "Score-floor: baseline band is narrower than Lucky's")
+            // TradeScore weight in the quality score is tiny — a huge acceptanceScore swing barely moves it.
+            var q0 = qpkg("z", fire: 1); var q1 = qpkg("z", fire: 1); q1.acceptanceScore = -10
+            check(abs(q0.qualityScore - q1.qualityScore) < 1.0,
+                  "Score-floor: TradeScore stays MOSTLY SILENT (tiny qualityBlendWeight)")
         }
 
         // MARK: #9 — Reddit-style reply threading (pure pre-order tree + subtree collapse).
