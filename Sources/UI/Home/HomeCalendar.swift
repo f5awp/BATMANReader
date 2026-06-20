@@ -686,6 +686,21 @@ struct TradeSettingsSheet: View {
 
     @ViewBuilder private var tradeSettings: some View {
         Section {
+            Picker("Max people in a trade", selection: Binding(
+                get: { settings.normalMaxPeople },
+                set: { settings.normalMaxPeople = $0 })) {
+                Text("Just pairs (2)").tag(2)
+                Text("Up to 3").tag(3)
+                Text("Unbound (4)").tag(4)
+            }
+            .pickerStyle(.menu)
+        } header: {
+            Text("Trade search")
+        } footer: {
+            Text("How many people the normal trade search will involve. The best, smallest trades always rank first — larger ones only appear when they're clearly worth it. Higher = more options, a bit slower.")
+        }
+
+        Section {
             Picker("Accepting", selection: openness) {
                 ForEach(TradeOpenness.allCases, id: \.self) { Text($0.label).tag($0) }
             }

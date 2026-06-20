@@ -155,7 +155,9 @@ struct TradeByIntentsFeed: View {
     /// 2-person results aren't hidden by a stale engine/people selection.
     private func reloadFast() async {
         searchFilter = .normal
-        await reload(generation: .fast)
+        // Step 4: normal feed searches up to the user's N-max toggle (default 3) — the floor +
+        // N-penalty keep small trades on top. (Reverses the old 2-way-only U-PERF gate.)
+        await reload(generation: SearchFilter(engine: .both, maxPeople: SettingsManager.shared.normalMaxPeople))
     }
 
     /// `generation` bounds the engine work: `.fast` (2-person, background) or the user's Lucky

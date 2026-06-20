@@ -343,7 +343,9 @@ struct FindCandidatesSection: View {
     /// Find: fast 2-person generation, with any Lucky filter cleared so the results show.
     private func searchFast() async {
         searchFilter = .normal
-        await search(generation: .fast)
+        // Step 4: Find searches up to the user's N-max toggle (default 3); floor + N-penalty keep
+        // small trades on top.
+        await search(generation: SearchFilter(engine: .both, maxPeople: SettingsManager.shared.normalMaxPeople))
     }
 
     /// `generation` bounds the engine work: `.fast` (2-person, the Find default) or the user's Lucky

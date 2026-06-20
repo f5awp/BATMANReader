@@ -155,6 +155,11 @@ final class SettingsManager {
     var minWeeklyHours: Int? {
         didSet { defaults.set(minWeeklyHours, forKey: Keys.minWeeklyHours) }
     }
+    /// Max people in a trade the NORMAL feed will search for (2 = pairs only, 3, or 4 = unbound).
+    /// The score-floor + N-penalty keep small trades on top regardless; this caps the search depth.
+    var normalMaxPeople: Int {
+        didSet { defaults.set(normalMaxPeople, forKey: Keys.normalMaxPeople) }
+    }
     /// When on, the user takes any qualifying pickup regardless of soft prefs.
     var isMercenaryMode: Bool {
         didSet {
@@ -245,6 +250,7 @@ final class SettingsManager {
         useCloudKit              = defaults.bool(forKey: Keys.useCloudKit)
         maxWeeklyHours           = defaults.object(forKey: Keys.maxWeeklyHours) as? Int
         minWeeklyHours           = defaults.object(forKey: Keys.minWeeklyHours) as? Int
+        normalMaxPeople          = (defaults.object(forKey: Keys.normalMaxPeople) as? Int) ?? 3   // default: pairs + 3-way
         isMercenaryMode          = defaults.bool(forKey: Keys.isMercenaryMode)
         statusBroadcast          = defaults.string(forKey: Keys.statusBroadcast) ?? ""
         statusUpdatedAt          = defaults.object(forKey: Keys.statusUpdatedAt) as? Date
@@ -276,6 +282,7 @@ final class SettingsManager {
         static let opennessOverrides = "batman.opennessOverrides"
         static let useCloudKit   = "batman.useCloudKit"
         static let maxWeeklyHours = "batman.maxWeeklyHours"
+        static let normalMaxPeople = "batman.normalMaxPeople"
         static let minWeeklyHours = "batman.minWeeklyHours"
         static let isMercenaryMode = "batman.isMercenaryMode"
         static let statusBroadcast = "batman.statusBroadcast"
