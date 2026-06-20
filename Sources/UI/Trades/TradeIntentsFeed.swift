@@ -540,6 +540,12 @@ struct PackageCard: View {
                 VStack(alignment: .leading, spacing: 1) {
                     Text(headline).font(.headline)
                     Text(subtitle).font(.dsCardMeta).foregroundStyle(.secondary)
+                    // DEV-ONLY: TradeScore acceptance estimate. Hidden from the userbase; never in copy;
+                    // does NOT affect ranking. Visible only in developer mode.
+                    if DevAccess.shared.unlocked {
+                        Text(String(format: "TradeScore: %.0f%% · log %.2f", exp(package.acceptanceScore) * 100, package.acceptanceScore))
+                            .font(.dsBadge).foregroundStyle(.purple)
+                    }
                 }
                 Spacer()
                 VStack(alignment: .trailing, spacing: 4) {

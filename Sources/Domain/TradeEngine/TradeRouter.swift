@@ -68,17 +68,34 @@ struct TradePackage: Sendable, Hashable, Identifiable {
     // H2: avg of the counterparties' learned acceptance priors (logit). A late ranking tiebreaker so,
     // all else equal, partners who historically accept float up. 0 = neutral / no history.
     var partnerPrior: Double = 0
+    // TradeScore instrumentation: the model's package acceptance log-prob. COMPUTED + recorded for
+    // dev-mode display + future model-fitting — NEVER a ranking input (does not affect any trade).
+    var acceptanceScore: Double = 0
 
     // EXPLICIT init — freezes the construction signature so adding the fields above doesn't
     // churn the memberwise-init symbol (stale-incremental-link fix). New fields are defaulted.
     init(id: String, methodology: TradeMethodology, assignments: [PackageAssignment],
          route: NWayRoute?, urgency: Int = 0, isOptimal: Bool = false,
          fireCount: Int = 0, bookendTotal: Int = 0, qualSwap: QualSwapLegData? = nil,
-         partnerPrior: Double = 0) {
+         partnerPrior: Double = 0, acceptanceScore: Double = 0) {
         self.id = id; self.methodology = methodology; self.assignments = assignments
         self.route = route; self.urgency = urgency; self.isOptimal = isOptimal
         self.fireCount = fireCount; self.bookendTotal = bookendTotal; self.qualSwap = qualSwap
-        self.partnerPrior = partnerPrior
+        self.partnerPrior = partnerPrior; self.acceptanceScore = acceptanceScore
+    }
+
+    /// Number of legs (days moved) — the model's leg count for the acceptance score.
+    var legCount: Int {
+        if let route { return route.legs.count }
+        return assignments.reduce(0) { $0 + $1.giveDayIDs.count + $1.takeDayIDs.count }
+    }
+    /// Fills `acceptanceScore` from the package's own signals via the real TradeScore model.
+    /// Pure-ish helper so every build site records the score consistently.
+    func scored() -> TradePackage {
+        var p = self
+        p.acceptanceScore = TradeScore.packageScore(legCount: legCount, fireCount: fireCount,
+                                                    bookendTotal: bookendTotal, partnerPrior: partnerPrior)
+        return p
     }
     // TOTAL distinct people INCLUDING you (SPEC S-ENG-5): You↔Cary ⇒ 2. The route
     // lists each participant once (incl. self); assignments list only the others, so + you.
@@ -397,7 +414,8 @@ enum TradeRouter {
             }
             return p
         }
-        return Self.rankPackages(scored)
+        // Record the TradeScore on each (dev-only instrumentation; not a ranking input), then rank.
+        return Self.rankPackages(scored.map { $0.scored() })
     }
 
     // MARK: - Intents marketplace (DISTINCT from packages — intent-for-intent, intent-first ranking)
@@ -575,8 +593,9 @@ enum TradeRouter {
             }
         }
 
-        // Intent-first ranked, capped to the top 20 — never show an endless tail of weak matches.
-        return Array(rankIntentPackages(result).prefix(Self.intentResultCap))
+        // Record the TradeScore (dev-only instrumentation; not a ranking input), then intent-first
+        // rank, capped to the top 20.
+        return Array(rankIntentPackages(result.map { $0.scored() }).prefix(Self.intentResultCap))
     }
     /// Max Intents results surfaced (highest-scoring first). Keeps the feed tight + fast.
     static let intentResultCap = 20

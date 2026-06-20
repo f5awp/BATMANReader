@@ -392,6 +392,21 @@ enum TradeScore {
     /// can only add ≤ 0). Prune mid-DFS when this drops below log(threshold) — never drops a valid route.
     static func upperBoundLogProb(partial legs: [LegFeatures]) -> Double { packageLogProb(legs) }
 
+    /// A package-level acceptance log-prob from its summary signals, built on the REAL model
+    /// (`legLogit`→`legProb`→`packageLogProb`). DEV-ONLY instrumentation: this is COMPUTED and recorded
+    /// but is NOT a ranking input — it never changes which trades surface. `exp(result)` = P(executes).
+    static func packageScore(legCount: Int, fireCount: Int, bookendTotal: Int,
+                             partnerPrior: Double, ecb: Double = 0) -> Double {
+        guard legCount > 0 else { return 0 }
+        let feats = (0..<legCount).map { i in
+            LegFeatures(bookend: i < bookendTotal, split: i >= bookendTotal,
+                        mutualFire: i < fireCount, giverWants: i < fireCount, receiverWants: i < fireCount,
+                        timeValue: 0.5, needsQualBridge: false, hoursStrain: 0,
+                        ecbValue: ecb, personPrior: partnerPrior)
+        }
+        return packageLogProb(feats)
+    }
+
     /// G3: desirability (log-joint-acceptance) of a circular route from its per-leg bookend/🔥
     /// flags. A non-bookend leg is treated as a SPLIT (penalized), so split-the-weekend loops
     /// score below clean ones. Empty route → 0 (log 1).

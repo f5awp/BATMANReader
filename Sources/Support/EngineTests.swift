@@ -1114,6 +1114,19 @@ enum TradeEngineTests {
             let many = (0..<50).map { pkg("p\($0)", people: 2, fire: $0 % 5) }
             check(Array(TradeRouter.rankIntentPackages(many).prefix(TradeRouter.intentResultCap)).count == 20,
                   "Intents: ranking + cap yields at most 20")
+
+            // TradeScore instrumentation: COMPUTED + monotone, but NOT a ranking input (collects, doesn't decide).
+            check(TradeScore.packageScore(legCount: 2, fireCount: 2, bookendTotal: 2, partnerPrior: 0)
+                  > TradeScore.packageScore(legCount: 2, fireCount: 0, bookendTotal: 0, partnerPrior: 0),
+                  "TradeScore: more 🔥/bookends → higher acceptance log-prob")
+            check(TradeScore.packageScore(legCount: 0, fireCount: 0, bookendTotal: 0, partnerPrior: 0) == 0,
+                  "TradeScore: empty package → 0 (log 1)")
+            // Two packages identical except acceptanceScore must tie to id order — proving the score
+            // never changes the ranking (it appears in NEITHER comparator).
+            var sLo = pkg("aaa", people: 2, fire: 1); sLo.acceptanceScore = -9
+            var sHi = pkg("bbb", people: 2, fire: 1); sHi.acceptanceScore = 0
+            check(TradeRouter.rankIntentPackages([sHi, sLo]).first?.id == "aaa",
+                  "TradeScore: acceptanceScore does NOT affect ranking (ties fall to id, not score)")
         }
 
         // MARK: #9 — Reddit-style reply threading (pure pre-order tree + subtree collapse).
