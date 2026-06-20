@@ -92,7 +92,7 @@ struct ContentView: View {
         .fullScreenCover(isPresented: $showInbox) { InboxView() }
         .fullScreenCover(isPresented: $showChannel) { ChannelView() }
         .sheet(isPresented: $showChangelog) {
-            ChangeLogView(entry: ChangeLog.current) {
+            WelcomeView {
                 settings.lastSeenChangelogBuild = AppInfo.build   // mark seen on dismiss
             }
         }

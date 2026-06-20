@@ -560,55 +560,200 @@ enum AppInfo {
     static var version: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "" }
 }
 
-/// One release's notes for the startup "What's New" sheet (Z2).
-struct ChangeLogEntry: Sendable {
-    let title: String
-    let added: [String]
-    let fixed: [String]
-    let changed: [String]
-    let improved: [String]
-    let toTest: [String]   // short, curated tester checklist
-}
-
 enum ChangeLog {
-    /// Show the sheet once per build the user hasn't seen yet.
+    /// Show the welcome/changelog once per build the user hasn't seen yet (Z2). The CONTENT now lives
+    /// in `AppGuide` (purpose + mechanisms + versionHistory) — a single source the Welcome flow renders —
+    /// so there is no separate "current release notes" copy that could drift out of sync.
     static func shouldShow(currentBuild: String, lastSeen: String) -> Bool {
         !currentBuild.isEmpty && currentBuild != lastSeen
     }
+}
 
-    /// The latest release notes (hand-authored per release).
-    static let current = ChangeLogEntry(
-        title: "What's New",
-        added: [
-            "Qual swaps — automatically suggested in every search when a desk needs a qual the taker lacks (with a blast picker).",
-            "“Just 2” tab — pick a day, see only direct two-person swaps, filter by dispatcher.",
-            "Relief Dispatcher mode — hide your placeholder shifts past your real schedule date.",
-            "Emoji reactions on posts, replies, and 1:1 chats.",
-            "“Perfect Match” push when a trade hits a day you're after.",
-            "Team-wide trade metrics on Home.",
-            "Email a trade to the dispatch DL (prefilled Outlook draft).",
-            "Attach a photo to a channel post.",
-        ],
-        fixed: [
-            "Vacation days no longer read as working shifts (and auto-mark Must-Be-Off).",
-            "Relief placeholder shifts are hidden everywhere — calendar, trading, and your schedule.",
-        ],
-        changed: [
-            "“Search” is now “Trade Solutions” — every result is a clean package card.",
-            "Intents is one sorted list (fewest people → 🔥 → bookends).",
-            "Calendar event titles are just the shift + desk (e.g. “AM 82”).",
-        ],
-        improved: [
-            "One unified matching engine behind Search, Intents, and ECB — consistent, more accurate.",
-            "Faster launch (test scaffolding removed from the shipped app).",
-        ],
-        toTest: [
-            "Mark a few intents on Home, then open Trade Solutions and propose one.",
-            "Try a card with the purple “Q” (qual swap) and send the blast.",
-            "Turn on Relief Dispatcher in Trade Settings + set a date.",
-            "React to a channel post and attach a photo.",
-            "Email a trade to the dispatch DL from a trade thread.",
-        ])
+// MARK: - Welcome / app guide (startup) — purpose, mechanisms, version history
+
+/// One "how it works" section — an engineer-level explanation of a subsystem.
+struct MechanismSection: Sendable, Identifiable {
+    let title: String
+    let symbol: String        // SF Symbol
+    let summary: String       // one-line plain-language gist
+    let details: [String]     // the real machinery, named
+    var id: String { title }
+}
+
+/// One shipped release, for the version history (showcases the work done).
+struct ReleaseNote: Sendable, Identifiable {
+    let version: String       // e.g. "Build 3"
+    let headline: String
+    let points: [String]
+    var id: String { version }
+}
+
+/// All the static copy behind the Welcome flow: the purpose pitch, the engineer-level
+/// mechanisms tour, and the version history. Pure data so it's testable + lives in a compiled file.
+enum AppGuide {
+    static let appName  = "BATMAN Watcher"
+    static let tagline  = "Schedule reading + shift trading for AA dispatchers — matched, scored, and synced."
+
+    /// The "why this exists" pitch, shown on the welcome page.
+    static let purpose: [String] = [
+        "BATMAN Watcher reads the dispatch master schedule for you — your shifts, days off, vacation, and qualifications — with no file to import and nothing to maintain by hand.",
+        "Then it does the hard part. Shift trading is a constraint-satisfaction and matching problem: every candidate swap has to clear hard contractual gates (qualification, 8-hour rest, weekly-hour caps, must-be-off) before it's even legal, and the space of multi-person and circular trades is combinatorial. The app models all of it explicitly — it enumerates legal two-way, multi-person, and circular-loop trades across the entire roster, then ranks them by a probabilistic acceptance model so the deals most likely to actually close float to the top.",
+        "The design intent is a single, auditable engine: one eligibility predicate every path shares, one scoring function behind every feed, and pure/testable cores so the matching can never quietly drift. Everything — trades, the channel, statuses, metrics — syncs across the team through CloudKit, so the whole shop works from one board.",
+    ]
+
+    /// Feature pillars (quick "what it does" grid on the welcome page).
+    static let pillars: [(symbol: String, title: String, blurb: String)] = [
+        ("calendar", "Auto schedule", "Your roster, vacation, and quals — read from the master, kept current automatically."),
+        ("arrow.left.arrow.right", "Real trades", "Two-person, multi-person, and circular swaps that pass every hard rule."),
+        ("gauge.with.dots.needle.67percent", "Acceptance scoring", "Every trade graded by how likely both sides accept — best on top."),
+        ("person.2.badge.gearshape", "Qual swaps", "A qualified bridge desk-swaps so an unqualified taker can still cover."),
+        ("star.circle", "ECB one-way", "Give a shift away for ECB with a fair, queue-ordered claim."),
+        ("bubble.left.and.bubble.right", "Channel + chat", "Broadcast what you're trading, thread replies, 1:1 chat with photos."),
+    ]
+
+    /// The engineer-level "under the hood" tour.
+    static let mechanisms: [MechanismSection] = [
+        MechanismSection(
+            title: "Schedule ingestion & data model",
+            symbol: "doc.text.magnifyingglass",
+            summary: "The master CSV becomes a queryable, per-device SwiftData roster.",
+            details: [
+                "A day-row-spine parser (ScheduleParser) reads the grid-format dispatch master: it locates the day spine, then walks each worker column, reconstructing per-day shifts (start hour, desk, qualifications) and bounding every worker to a rolling 15-month window. A known quirk — a dropped column separator on certain rows — is handled explicitly. Vacation (L|V) rows resolve to true days off, never phantom shifts, and auto-stamp a Must-Be-Off intent + 'vacation' note (which you can override).",
+                "The parsed roster persists locally in SwiftData via a background @ModelActor (RosterStore), configured cloudKitDatabase=.none so it is never mirrored — the store is per-device and queried by date/worker predicates. Only the master CSV itself is shared, as one record on the CloudKit public database, version-stamped so a device re-imports only when the master actually changes. A corrupt store self-heals: it wipes the on-disk store + WAL/SHM sidecars and rebuilds rather than bricking launch.",
+                "Your personal schedule, shift reminders, widgets, and Siri intents are all derived from your row in the master — set your Employee ID once and everything follows; nothing is maintained by hand.",
+            ]),
+        MechanismSection(
+            title: "Intents, profiles & the candidate universe",
+            symbol: "person.text.rectangle",
+            summary: "What you mark, what you publish, and who is eligible to match.",
+            details: [
+                "Per-day intent lives in DayIntentStore as four disjoint sets: seekingDayIDs (trade-away), keepDayIDs (never give), mustBeOffDayIDs (never take), and wantToWorkDayIDs (off-day you'd pick up). These drive both the legality gates (Keep/Must-Be-Off are hard) and the scoring (intent raises a leg's accept probability).",
+                "Your TradeProfile publishes openness (Bookends-Only / All / None), per-shift-type and per-region/desk blacklists, qual-swap preferences, weekly-hour cap, and relief horizon. It rides a single JSON payload to CloudKit, so adding fields needs no schema change.",
+                "The candidate universe is computed by MatchUniverse.candidates: EVERY roster worker is a candidate, annotated with willingness — willing (published, open), unknown (no profile yet → still included, ranked lower), or declined (openness=None → excluded unless What-If). A peer with no profile defaults to Bookends-Only via one factory (defaultForUnpublished), so a profileless person is never offered a split-the-weekend pickup.",
+            ]),
+        MechanismSection(
+            title: "The matching engine — three layers",
+            symbol: "square.stack.3d.up",
+            summary: "Eligibility predicate → two-way exploration → N-way circular DFS.",
+            details: [
+                "Layer 1 — Eligibility (TradeEligibility.canCover): the SINGLE shared predicate every path delegates to. It enforces all HARD gates — desk qualification (DeskRules.qualified), 8-hour inter-shift rest, the Sun–Sat weekly-hour cap, Must-Be-Off, the relief-dispatcher horizon (isPastRelief), and bookend anchoring (isAnchored, the no-split-the-weekend rule). Two option sets, .full and .physicalOnly, let callers include or exclude the soft/preference layer. Because every matcher runs this exact code, the contractual rules can never diverge between feeds.",
+                "Layer 2 — Two-way exploration (TradeMatcher.twoWayExplore): for a given peer, it constructs the reciprocal balanced set — the days I could cover for them and they for me — gated by BOTH parties' real profiles, and tags each leg as wanted (mutual intent, 🔥) and bookend vs split. Peer schedules are preloaded once, so there is no per-peer re-fetch.",
+                "Layer 3 — N-way circular routing (nWayRoutes): a bounded depth-first search for loops A→B→C→A where each participant gives one shift and receives one, netting equal hours. Loops close only at depth ≥ 3 (a 2-cycle is just a two-way swap). The DFS is best-first at EVERY node (candidates ordered by givePromise — urgency + soonness + qual friction), cooperatively cancellable (Task.isCancelled, so a re-search supersedes rather than races a stale one), and bounded by a maxRoutes backstop (500) — the acceptance floor, not the cap, is what actually curates the results.",
+            ]),
+        MechanismSection(
+            title: "Optimal & min-cost reciprocal matching",
+            symbol: "point.3.connected.trianglepath.dotted",
+            summary: "Provably-fewest-people covers via branch-and-bound and min-cost flow.",
+            details: [
+                "When no single peer can reciprocally cover all your give-days, OptimalMatcher.minPeopleReciprocal searches for the provably fewest counterparties that can — a branch-and-bound over peer subsets, pruned by an admissible bound so it doesn't explore dominated combinations. A greedy balanced cover is the fallback when an exact optimum isn't reached in budget.",
+                "A min-cost flow engine (MinCostFlow) underlies the assignment of give-days to coverers, so when several arrangements have the same people-count, the one with the best total cost (urgency-weighted, fewest splits) is chosen rather than an arbitrary first match.",
+                "Reciprocity is always balanced: you give N and receive N back, every leg passing Layer 1 — the app never proposes a one-sided giveaway as a 'swap' (one-way giveaways are the separate ECB path).",
+            ]),
+        MechanismSection(
+            title: "Acceptance scoring model (packageLogProb)",
+            symbol: "function",
+            summary: "Each trade scores as the product of its per-leg accept probabilities.",
+            details: [
+                "Every handoff (leg) is reduced to a LegFeatures vector from live data: intentLevel ∈ {0,1,2} (want-to-take + want-to-trade), bookend vs split, timeValue = exp(−0.05 · daysUntil) (soonness decay), a qual-bridge friction flag, an ECB term, and a small learned per-person acceptance prior.",
+                "A leg's log-odds is a weighted linear model: legLogit = 1.5·intentLevel + (bookend ? +0.8 : −(2.5 − 1.1·intentLevel)) + 0.8·timeValue − 1.2·(needs-qual-bridge) + 1.5·ecbValue + 0.2·personPrior. Note the split penalty is intent-scaled — a fully-mutual leg (intentLevel 2) almost cancels the split cost, so a wanted split can still surface while a no-intent split is heavily punished. The logistic σ(legLogit) gives the leg's accept probability.",
+                "A package's score is the product of its legs in log-space: packageLogProb = Σ ln σ(legLogitᵢ) + max(0, N−2)·ln(0.85). That last N-penalty (0.85 per extra person beyond two) guarantees that, all else equal, a smaller clean trade outranks a larger one — e.g. an all-mutual 3-person book sorts below an all-mutual 2-person split.",
+                "The per-person prior is learned, not hand-set: PersonPrior.logOdds(accepted, declined) turns a partner's historical accept/decline record into a logit, computed once per search from all responses (acceptancePriorMap) and looked up O(1) per leg. It ships at a deliberately low weight (0.2) — match priorities dominate, individual history only breaks ties.",
+            ]),
+        MechanismSection(
+            title: "Curation — absolute floors, not top-N",
+            symbol: "line.3.horizontal.decrease.circle",
+            summary: "Results are score-ordered and cut at a probability floor.",
+            details: [
+                "Instead of an arbitrary 'top 60', finalize() score-orders by packageLogProb and keeps everything above an ABSOLUTE acceptance floor: 0.32 combined-accept for the normal feed, a wider 0.07 under 'I'm Feeling Lucky'. A no-intent split-the-weekend trade simply scores below the floor and never appears.",
+                "An empty-feed fallback shows the top few by score if nothing clears the floor (so you always get the best available), and a safety ceiling caps the absolute maximum. The branch-and-bound and DFS also prune against an admissible upper bound on packageLogProb, so partial paths that can't beat the floor are abandoned early.",
+                "The same scoring + floor gate runs behind Trade Solutions, Intents, and ECB — one curation rule, not three.",
+            ]),
+        MechanismSection(
+            title: "Intents marketplace (intent-first)",
+            symbol: "flame",
+            summary: "A distinct engine that ranks by mutual intent, not just availability.",
+            details: [
+                "Intents (intentSolutions) is a separate engine from Trade Solutions (packages). It seeds from any day someone actually MARKED — yours OR a peer's trade-away — so a peer's marked day you'd happily take seeds a deal even when you marked no give. assembleIntentDeal then builds the best balanced two-person deal maximizing mutual-marked legs.",
+                "Ranking is intent-first: most mutual 🔥 (both sides marked), then fewest people, then bookends/soonness. Unprofiled peers can still join via preferences (Bookends-Only default), but a pairing where NEITHER side marked an intent is excluded by construction — that's what makes it a marketplace rather than a plain availability search.",
+                "Under 'I'm Feeling Lucky', the marketplace also runs circular loops that require only ≥1 marked seed leg (allowPrefMiddles), with fireCount = the real count of marked legs so all-intent loops rank highest without hard-coding it.",
+            ]),
+        MechanismSection(
+            title: "Qual swaps (3-party bridge)",
+            symbol: "person.2.badge.gearshape",
+            summary: "Slide a qualified person aside so an unqualified taker can cover.",
+            details: [
+                "When a give-day's desk needs a qualification no available off-taker holds (DeskRules.isQualBlocked), QualSwap.solutions assembles a 3-party bridge: a qualified working dispatcher C slides onto your desk, freeing C's desk for off-taker B to take. The bridge C is NOT counted in the trade's people-count — it's an enabling leg, not a participant in your N.",
+                "It surfaces automatically as a purple-Q card in any search where it unblocks a give-day, and Propose opens a blast picker so multiple eligible bridges are asked at once; acceptances fill up to a cap, then the taker chooses which bridge's freed desk to take (Q5 desk-choice). A settled bridge can later be merged into its clean base trade so the two requests become one.",
+                "There's also a dedicated multi-select Qual-Swap button that enumerates ALL bridge arrangements for chosen international give-days on demand, independent of whether a direct trade also exists.",
+            ]),
+        MechanismSection(
+            title: "ECB one-way give-aways",
+            symbol: "star.circle",
+            summary: "Hand a shift off for ECB credit, claimed fairly in queue order.",
+            details: [
+                "When you want a shift covered rather than swapped, broadcast it with an ECB value in 0.5 steps (5–25; a 1.5× OT shift = 13.5). The value is carried losslessly everywhere — request, offer, accept, receipt, history.",
+                "Interested dispatchers accept per shift and are ordered into a fair queue (each sees their position); the same eligibility gates apply via canCover(.physicalOnly). The recipient confirms receipt; the official ECB form is filed outside the app — BATMAN Watcher coordinates the agreement, ARIS/WorkNet records the change.",
+            ]),
+        MechanismSection(
+            title: "Sync, conflict-resolution & push",
+            symbol: "icloud",
+            summary: "CloudKit public/private DBs, last-write-wins merges, targeted subscriptions.",
+            details: [
+                "Profiles, the channel, trade requests/responses, and team metrics live in the CloudKit public database. Each record stores the WHOLE model as a JSON payload, plus a few flat, queryable-indexed fields (toID, fromID, candidateIDs, perfectMatch, hasQualSwap) used only for server-side filtering — so the data model evolves without schema churn while filtered fetches stay cheap.",
+                "Private notes use the private database with a last-write-wins merge (LWW, by updatedAt clock) across your own devices; status broadcasts sync the same way. A FetchMerge.keepCacheOnEmpty guard ensures a transient query error (which returns an empty set) can never wipe a populated local cache — the root cause of an earlier data-loss class.",
+                "Push uses targeted CKQuerySubscriptions: an ordinary incoming request (perfectMatch==0), a stronger 'perfect match' alert (perfectMatch==1), a qual-swap bridge blast (candidateIDs CONTAINS me), and a qual-swap response (hasQualSwap==1, fires on record update) — each scoped by predicate so you're pinged only for what's actually yours.",
+            ]),
+        MechanismSection(
+            title: "Performance & architecture",
+            symbol: "bolt",
+            summary: "Parse-once/query-many; cheap by default, heavy search only on demand.",
+            details: [
+                "The matching is parse-once/query-many: the roster is parsed and indexed once, then every search is in-memory map lookups, not re-parsing. The background feed runs ONLY the fast two-person pass — the expensive 3+/circular DFS, min-cost optimization, and qual-swap assembly run once, on demand, behind 'I'm Feeling Lucky → Generate', so they never burn cycles in the background.",
+                "Each search builds one shared MatchContext: the roster window, per-worker day-maps, the candidate universe, and the acceptance-prior map are loaded a SINGLE time and threaded through packaging, intent assembly, and the N-way DFS — collapsing what used to be 2–4 redundant SwiftData fetches and a per-leg responses scan into one pass.",
+                "Behavior-preserving refactors are guarded: pure cores (scoring, ranking, eligibility, parsing) have a unit harness with adversarial 'teeth' tests, and an architecture-map guard script blocks drift between the code and its documented contracts.",
+            ]),
+    ]
+
+    /// Curated version history — milestones, technical, to show the scope of work.
+    static let versionHistory: [ReleaseNote] = [
+        ReleaseNote(
+            version: "Build 3 — Scoring engine & marketplace",
+            headline: "A probabilistic acceptance model unifies every feed; the marketplace and deep search become first-class.",
+            points: [
+                "Unified acceptance scoring (TradeScore.packageLogProb): replaced the old count/quality-band heuristics with a per-leg logistic model → log-product package score with an intent-scaled split penalty and a 0.85-per-extra-person N-penalty. One scoring function now drives Trade Solutions, Intents, AND ECB.",
+                "Absolute floor curation replaced top-N caps: finalize() keeps everything above a probability floor (0.32 normal / 0.07 Lucky) with an empty-feed fallback and safety ceiling — so result volume reflects real match quality, not an arbitrary number.",
+                "Per-leg grading from LIVE data (legFeatures): want-to-take/-trade intent, isAnchored bookend detection, exp-decay soonness, qual-bridge friction, and a learned PersonPrior.logOdds acceptance prior (low-weight tiebreaker, computed once per search).",
+                "Intents split off into its own intent-first marketplace engine (intentSolutions/assembleIntentDeal) — seeds from either side's marked day, ranks by mutual 🔥, and supports preference-joined circular loops under Lucky.",
+                "'I'm Feeling Lucky' now GATES the heavy work: the 3+/circular DFS, min-cost optimization, and qual-swap assembly run once on Generate, with best-first seeding at every DFS node and cooperative cancellation (no stale-result races).",
+                "'Max people in a trade' toggle (pairs / ≤3 / unbound) surfaced on the Intents and Trade Solutions pages; the two-way-only gate was removed so progressive-N is curated by the floor.",
+                "Qual-swap ranking: clean packages sort before qual-swap ones at equal N, while a qual-swap can still outrank a larger clean trade (N dominates).",
+                "1:1 chat photo attachments (rides the message JSON payload, no schema change).",
+                "Performance: per-search MatchContext loads the roster window, day-maps, candidate universe, and acceptance priors ONCE and threads them through every stage — eliminating 2–4 redundant SwiftData fetches and the per-leg responses scan per search.",
+                "CloudKit production schema deployed (candidateIDs/perfectMatch/hasQualSwap indexed on TradeRequest; MetricEvent + PrivateState types) — activating bridge discovery, perfect-match & qual-swap push, team metrics, and private-note sync.",
+            ]),
+        ReleaseNote(
+            version: "Build 2 — Correctness, legibility & resilience",
+            headline: "The matching universe, trade cards, and channel hardened into something accurate and readable.",
+            points: [
+                "Match universe fix (MatchUniverse.candidates): the whole roster is now eligible — unknown-profile peers included (ranked lower), not just the ~handful of opted-in profiles. Profileless peers default to Bookends-Only via one factory, killing split-the-weekend offers at the source.",
+                "Eligibility consolidation: every matcher path (two-way, ECB, candidate scan, n-way) now delegates to the single TradeEligibility.canCover predicate — the last duplicated gate implementations were retired, proven by a gate-matrix regression test.",
+                "Bookend/split correctness (NWayRoute.bookendCount + isAnchored): circular loops count real per-receiver bookends, so split-heavy loops demote below clean ones; 2-cycles are no longer mislabeled 'circular'.",
+                "Per-worker deterministic trade colors and real-name resolution (TradeNames) everywhere; one clean people-count label per card; earliest-date + bookend sort tiebreaks.",
+                "Channel: Reddit-style nested replies (pre-order threaded tree with collapse), single-reaction-per-user on posts/replies/chat, photo posts, oldest→newest ordering.",
+                "Resilience: FetchMerge.keepCacheOnEmpty guard so a transient CloudKit query error can never wipe cached posts/trades/feedback; import sanity audit (ImportAudit) flags nameless/duplicate/missing-self rows.",
+                "Global metrics (MetricEvent event log) and cross-device status/private-note sync via last-write-wins.",
+            ]),
+        ReleaseNote(
+            version: "Build 1 — Foundation",
+            headline: "Read the schedule, model intent, and generate the first legal trades.",
+            points: [
+                "Automatic schedule from the shared master (day-row-spine ScheduleParser → SwiftData RosterStore), with vacation (L|V) handling, self-healing store recovery, and version-stamped re-import.",
+                "Intent model (DayIntentStore): trade-away / keep / must-be-off / want-to-work as disjoint sets, with bulk paint brushes, note stamping, and a save-or-discard editing flow.",
+                "The three-layer matching engine: shared eligibility predicate → two-way reciprocal exploration → bounded N-way circular DFS; plus OptimalMatcher/MinCostFlow for fewest-people covers.",
+                "ECB one-way give-aways with a fair per-shift claim queue; qual-swap 3-party bridge assembly.",
+                "Trade inbox (accept / counter / decline) with 1:1 chat, a broadcast channel, reminders, Home-Screen widgets, and Siri/Shortcuts intents.",
+            ]),
+    ]
 }
 
 /// Outlook/email trade announcement to the dispatch DL (G1). Pure body/URL builders so

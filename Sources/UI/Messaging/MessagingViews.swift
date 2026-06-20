@@ -432,6 +432,8 @@ struct ThreadView: View {
     @State private var otherProfile: TradeProfile?
     @State private var editingMessage: TradeResponse?
     @State private var editMsgDraft = ""
+    @State private var pickerItem: PhotosPickerItem?   // #28: photo attach on 1:1 chat
+    @State private var pendingImage: UIImage?
     @Environment(\.dismiss) private var dismiss
 
     init(request: TradeRequest) { self.request = request }
@@ -533,6 +535,11 @@ struct ThreadView: View {
                                     }.buttonStyle(.borderless)
                                 }
                             }
+                            if !r.isDeleted, let b64 = r.imageBase64, let ui = PostImage.decode(b64) {
+                                Image(uiImage: ui).resizable().scaledToFit()
+                                    .frame(maxHeight: 180).clipShape(RoundedRectangle(cornerRadius: 8))
+                                    .padding(.leading, 34)
+                            }
                             if !r.isDeleted {
                                 ReactionChips(reactions: r.reactions ?? []) { e in Task { await store.react(to: r, emoji: e) } }
                                     .padding(.leading, 34)
@@ -629,10 +636,35 @@ struct ThreadView: View {
         }
         // Chat is always available — talk it out regardless of accept/decline state.
         .safeAreaInset(edge: .bottom) {
-            SlackComposer(placeholder: "Message \(isIncoming ? request.fromName : request.toName)",
-                          text: $chatDraft, showFormatBar: false) {
-                let text = chatDraft; chatDraft = ""
-                Task { await store.postMessage(to: request, text: text) }
+            VStack(spacing: 0) {
+                HStack(spacing: 8) {
+                    PhotosPicker(selection: $pickerItem, matching: .images) {
+                        Label("Photo", systemImage: "photo").font(.caption)
+                    }
+                    if let img = pendingImage {
+                        Image(uiImage: img).resizable().scaledToFill()
+                            .frame(width: 32, height: 32).clipShape(RoundedRectangle(cornerRadius: 6))
+                        Button { pendingImage = nil; pickerItem = nil } label: {
+                            Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                        }
+                    }
+                    Spacer()
+                }
+                .padding(.horizontal, 12).padding(.top, 4)
+                .onChange(of: pickerItem) { _, item in
+                    guard let item else { return }
+                    Task { if let data = try? await item.loadTransferable(type: Data.self) { pendingImage = UIImage(data: data) } }
+                }
+                SlackComposer(placeholder: "Message \(isIncoming ? request.fromName : request.toName)",
+                              text: $chatDraft, showFormatBar: false,
+                              canSendWhenEmpty: pendingImage != nil) {
+                    let text = chatDraft; chatDraft = ""
+                    let img = pendingImage; pendingImage = nil; pickerItem = nil
+                    Task {
+                        let b64 = img.flatMap { PostImage.encode($0) }
+                        await store.postMessage(to: request, text: text, imageBase64: b64)
+                    }
+                }
             }
         }
         .task {

@@ -362,16 +362,18 @@ struct TradeResponse: Sendable, Codable, Identifiable, Hashable {
     var editedAt: Date? = nil       // chat-message edit marker (B4). Optional ⇒ old records decode.
     var deleted: Bool? = nil        // soft-delete tombstone for a chat message (B4).
     var reactions: [Reaction]? = nil // emoji reactions on a 1:1 chat message (B6).
+    var imageBase64: String? = nil   // attached photo on a 1:1 chat message (downscaled JPEG, base64) — #28.
 
     // EXPLICIT init — freezes the construction signature (stale-incremental-link fix).
     init(id: String, requestID: String, responderID: String, responderName: String,
          status: String, note: String, createdAt: Date, offerID: String? = nil,
          acceptedDayIDs: [String]? = nil, editedAt: Date? = nil, deleted: Bool? = nil,
-         reactions: [Reaction]? = nil) {
+         reactions: [Reaction]? = nil, imageBase64: String? = nil) {
         self.id = id; self.requestID = requestID; self.responderID = responderID
         self.responderName = responderName; self.status = status; self.note = note
         self.createdAt = createdAt; self.offerID = offerID; self.acceptedDayIDs = acceptedDayIDs
         self.editedAt = editedAt; self.deleted = deleted; self.reactions = reactions
+        self.imageBase64 = imageBase64
     }
 
     var statusValue: TradeRequestStatus { TradeRequestStatus(rawValue: status) ?? .pending }
@@ -690,7 +692,8 @@ final class MessagingStore {
             responderName: response.responderName, status: response.status, note: response.note,
             createdAt: response.createdAt, offerID: response.offerID, acceptedDayIDs: response.acceptedDayIDs,
             editedAt: response.editedAt, deleted: response.deleted,
-            reactions: Reaction.setSingle(response.reactions ?? [], emoji: emoji, userID: myID, userName: myName))
+            reactions: Reaction.setSingle(response.reactions ?? [], emoji: emoji, userID: myID, userName: myName),
+            imageBase64: response.imageBase64)
         await service.sendResponse(updated)   // upsert
         responses = responses.map { $0.id == response.id ? updated : $0 }
     }
@@ -842,6 +845,22 @@ final class MessagingStore {
         return PersonPrior.logOdds(accepted: accepted, declined: declined)
     }
 
+    /// H2 (bulk): ONE pass over `responses` → every responder's acceptance prior (logit). Built once
+    /// per search and threaded through scoring, so the per-leg prior is an O(1) dictionary lookup
+    /// instead of re-scanning ALL responses per leg per package (the `legFeatures` × packages hot path).
+    /// Workers with no history are simply absent → the caller defaults them to a neutral 0. (U-PERF.)
+    func acceptancePriorMap() -> [String: Double] {
+        var tally: [String: (acc: Int, dec: Int)] = [:]
+        for r in responses {
+            switch r.statusValue {
+            case .accepted: tally[r.responderID, default: (0, 0)].acc += 1
+            case .declined: tally[r.responderID, default: (0, 0)].dec += 1
+            default:        break
+            }
+        }
+        return tally.mapValues { PersonPrior.logOdds(accepted: $0.acc, declined: $0.dec) }
+    }
+
     /// The clean active base a finalized qual-swap `bridge` can merge into (nil = none / not mergeable).
     func mergeBase(for bridge: TradeRequest) -> TradeRequest? {
         guard bridge.qualSwap?.status == .finalized else { return nil }   // only a settled bridge merges
@@ -855,12 +874,13 @@ final class MessagingStore {
         await updateQualSwapLeg(request, leg)
     }
 
-    func respond(to request: TradeRequest, status: TradeRequestStatus, note: String) async {
+    func respond(to request: TradeRequest, status: TradeRequestStatus, note: String,
+                 imageBase64: String? = nil) async {
         let resp = TradeResponse(
             id: UUID().uuidString, requestID: request.id,
             responderID: myID, responderName: myName,
             status: status.rawValue, note: note, createdAt: Date(),
-            offerID: request.offerID)
+            offerID: request.offerID, imageBase64: imageBase64)
         await service.sendResponse(resp)
         responses = (responses.filter { $0.id != resp.id } + [resp]).sorted { $0.createdAt < $1.createdAt }
     }
@@ -892,7 +912,7 @@ final class MessagingStore {
         let u = TradeResponse(id: r.id, requestID: r.requestID, responderID: r.responderID,
                               responderName: r.responderName, status: r.status, note: trimmed,
                               createdAt: r.createdAt, offerID: r.offerID, acceptedDayIDs: r.acceptedDayIDs,
-                              editedAt: Date(), deleted: r.deleted)
+                              editedAt: Date(), deleted: r.deleted, imageBase64: r.imageBase64)
         await service.sendResponse(u)
         responses = (responses.filter { $0.id != u.id } + [u]).sorted { $0.createdAt < $1.createdAt }
     }
@@ -907,10 +927,10 @@ final class MessagingStore {
         responses = (responses.filter { $0.id != u.id } + [u]).sorted { $0.createdAt < $1.createdAt }
     }
 
-    func postMessage(to request: TradeRequest, text: String) async {
+    func postMessage(to request: TradeRequest, text: String, imageBase64: String? = nil) async {
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !t.isEmpty else { return }
-        await respond(to: request, status: .message, note: t)
+        guard !t.isEmpty || imageBase64 != nil else { return }   // allow image-only chat messages
+        await respond(to: request, status: .message, note: t, imageBase64: imageBase64)
     }
 
     var incoming: [TradeRequest] { requests.filter { $0.toID == myID } }

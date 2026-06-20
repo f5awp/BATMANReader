@@ -4,34 +4,29 @@
 
 import SwiftUI
 
-/// Startup "What's New" sheet (Z2): one page of Added / Fixed / Changed / Improved + a short
-/// tester checklist. Shown once per new build; dismiss records the build as seen.
-struct ChangeLogView: View {
+// MARK: - Welcome (startup) — purpose + engineer-level tour + version history
+
+/// The startup welcome: a hero pitch, what-it-does pillars, "What's New" for this build, and links
+/// into the deep "How it works" tour and the version history. Shown on launch; reopenable from Settings.
+struct WelcomeView: View {
     @Environment(\.dismiss) private var dismiss
-    let entry: ChangeLogEntry
     var onDismiss: () -> Void = {}
+
+    private let columns = [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)]
 
     var body: some View {
         NavigationStack {
-            List {
-                section("✨ Added", entry.added, .green)
-                section("🐞 Fixed", entry.fixed, .orange)
-                section("🔧 Changed", entry.changed, .blue)
-                section("🚀 Improved", entry.improved, .purple)
-                if !entry.toTest.isEmpty {
-                    Section {
-                        ForEach(entry.toTest, id: \.self) { item in
-                            Label(item, systemImage: "checkmark.circle")
-                                .font(.subheadline)
-                        }
-                    } header: {
-                        Text("Please test")
-                    } footer: {
-                        Text("A few things to try so we catch anything before it ships wide.")
-                    }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
+                    hero
+                    purpose
+                    pillars
+                    whatsNew
+                    deepLinks
                 }
+                .padding(20)
             }
-            .navigationTitle(entry.title)
+            .navigationTitle("Welcome")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
@@ -41,17 +36,152 @@ struct ChangeLogView: View {
         }
     }
 
-    @ViewBuilder private func section(_ title: String, _ items: [String], _ tint: Color) -> some View {
-        if !items.isEmpty {
-            Section(title) {
-                ForEach(items, id: \.self) { item in
+    private var hero: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Image(systemName: "moon.stars.fill")
+                .font(.system(size: 40, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 76, height: 76)
+                .background(
+                    LinearGradient(colors: [.indigo, .blue], startPoint: .topLeading, endPoint: .bottomTrailing),
+                    in: RoundedRectangle(cornerRadius: 18))
+            Text("Welcome to \(AppGuide.appName)").font(.title.bold())
+            Text(AppGuide.tagline).font(.headline).foregroundStyle(.secondary)
+            if !AppInfo.version.isEmpty {
+                Text("Version \(AppInfo.version) (build \(AppInfo.build))")
+                    .font(.caption).foregroundStyle(.tertiary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var purpose: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            ForEach(AppGuide.purpose, id: \.self) { p in
+                Text(p).font(.subheadline).foregroundStyle(.primary)
+            }
+        }
+    }
+
+    private var pillars: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("What it does").font(.headline)
+            LazyVGrid(columns: columns, spacing: 12) {
+                ForEach(AppGuide.pillars, id: \.title) { pillar in
+                    VStack(alignment: .leading, spacing: 6) {
+                        Image(systemName: pillar.symbol).font(.title3).foregroundStyle(.blue)
+                        Text(pillar.title).font(.subheadline.weight(.semibold))
+                        Text(pillar.blurb).font(.caption).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 96, alignment: .topLeading)
+                    .padding(12)
+                    .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14))
+                }
+            }
+        }
+    }
+
+    private var whatsNew: some View {
+        // SINGLE SOURCE: the "what's new" preview reads the latest entry of AppGuide.versionHistory —
+        // the same data the Version-history page renders — so the changelog can never drift between a
+        // simplistic copy and the detailed one. The full, build-by-build history is one tap below.
+        VStack(alignment: .leading, spacing: 10) {
+            if let current = AppGuide.versionHistory.first {
+                Text(current.version).font(.headline)
+                Text(current.headline).font(.subheadline).foregroundStyle(.secondary)
+                ForEach(current.points.prefix(4), id: \.self) { item in
                     HStack(alignment: .top, spacing: 8) {
-                        Circle().fill(tint).frame(width: 6, height: 6).padding(.top, 6)
+                        Image(systemName: "sparkles").font(.caption).foregroundStyle(.green).padding(.top, 2)
                         Text(item).font(.subheadline)
                     }
                 }
             }
         }
+    }
+
+    private var deepLinks: some View {
+        VStack(spacing: 0) {
+            NavigationLink {
+                MechanismsView()
+            } label: {
+                rowLabel("How it works — under the hood", "Every system, explained at engineer depth", "gearshape.2.fill", .indigo)
+            }
+            Divider().padding(.leading, 52)
+            NavigationLink {
+                VersionHistoryView()
+            } label: {
+                rowLabel("Version history", "The full arc of work, build by build", "clock.arrow.circlepath", .teal)
+            }
+        }
+        .padding(.vertical, 4)
+        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14))
+    }
+
+    private func rowLabel(_ title: String, _ subtitle: String, _ symbol: String, _ tint: Color) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: symbol).font(.title3).foregroundStyle(tint).frame(width: 28)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
+                Text(subtitle).font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+            Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
+        }
+        .padding(.horizontal, 12).padding(.vertical, 12)
+        .contentShape(Rectangle())
+    }
+}
+
+/// The engineer-level "how it works" tour — one expandable section per subsystem.
+struct MechanismsView: View {
+    var body: some View {
+        List {
+            Section {
+                Text("How \(AppGuide.appName) works under the hood — the real algorithms and data flow, named.")
+                    .font(.subheadline).foregroundStyle(.secondary)
+            }
+            ForEach(AppGuide.mechanisms) { m in
+                Section {
+                    ForEach(m.details, id: \.self) { d in
+                        HStack(alignment: .top, spacing: 8) {
+                            Image(systemName: "chevron.forward").font(.caption2).foregroundStyle(.tertiary).padding(.top, 4)
+                            Text(d).font(.subheadline)
+                        }
+                    }
+                } header: {
+                    Label(m.title, systemImage: m.symbol)
+                } footer: {
+                    Text(m.summary)
+                }
+            }
+        }
+        .navigationTitle("How it works")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+/// The curated version history — milestones build by build, to show the scope of work.
+struct VersionHistoryView: View {
+    var body: some View {
+        List {
+            ForEach(AppGuide.versionHistory) { rel in
+                Section {
+                    ForEach(rel.points, id: \.self) { p in
+                        HStack(alignment: .top, spacing: 8) {
+                            Circle().fill(Color.blue).frame(width: 6, height: 6).padding(.top, 6)
+                            Text(p).font(.subheadline)
+                        }
+                    }
+                } header: {
+                    Text(rel.version)
+                } footer: {
+                    Text(rel.headline)
+                }
+            }
+        }
+        .navigationTitle("Version history")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }
 

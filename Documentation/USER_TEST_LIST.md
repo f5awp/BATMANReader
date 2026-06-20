@@ -439,6 +439,70 @@
 
 ---
 
+## Session (2026-06-20)
+
+### TR-CHAT-IMG — attach a photo to a 1:1 trade chat  [#28 · build-verified; device-check]
+1. Open any trade **thread** (inbox → a request). At the bottom composer, tap **Photo** and pick an image.
+   - **Expect:** a small **preview thumbnail** appears above the message box with an **✕** to remove it.
+2. Optionally type a caption, then tap **send** (paperplane).
+   - **Expect:** your chat bubble shows the **image inline** (rounded, ≤180pt tall). The other person sees
+     it too (it rides the message sync — no schema deploy needed).
+3. Send a photo with **no caption** (image only).
+   - **Expect:** send is **enabled** with just an image attached; the image posts on its own.
+4. **Edit** a text caption on an image message (pencil), and **react** to it.
+   - **Expect:** the image **stays** after an edit/react. **Delete** the message → it becomes **[Deleted]**
+     and the image is gone (tombstone).
+- **Break it:** a very large photo should still post (it's downscaled); confirm channel posts/replies
+  images (T43) still work unchanged.
+
+### TR-PERF — search returns the same results, faster (MatchContext)  [U-PERF · Auto ✅ refactor; device-check]
+1. Open **Intents** and **Trade Solutions**, run searches as usual (mark days + SAVE / Find).
+   - **Expect:** the **same cards in the same order** as before — this was a pure speed refactor (one
+     roster load + one acceptance-prior scan per search instead of several). Nothing about *which* trades
+     appear or their ranking should change.
+2. With the **Max people** toggle on **Up to 3 / Unbound**, do several SAVE/Find cycles in a row.
+   - **Expect:** each feels **responsive** — no growing lag from repeated searches.
+- **Break it:** if any result set looks *different* from before this build (missing/extra/reordered
+  cards), tell me — the refactor is supposed to be invisible.
+
+## Post-CloudKit-deploy verification (the 5 deploys are now live in Production)
+
+> These only work end-to-end now that the schema is deployed. Best tested on a **TestFlight/Release**
+> build (Production CloudKit), ideally with **two accounts/devices**.
+
+### DEP1 — Qual-swap bridge discovery (`candidateIDs`)  [#20 · device-check]
+1. As a **taker**, send a qual-swap request that blasts bridges (T38 → Propose).
+2. On a **bridge's** device (one of the blasted candidates, who is neither sender nor recipient):
+   - **Expect:** the request **appears in their inbox** and they get the blast — proving the
+     `candidateIDs CONTAINS me` query works in Production.
+
+### DEP2 — Perfect-match push (`perfectMatch`)  [#21 · device-check]
+1. Have someone send you a trade that exactly matches a day you marked (a perfect match).
+   - **Expect:** you get the **stronger "perfect match" push** (not the ordinary incoming-request one).
+2. Send an **ordinary** (non-perfect) request to confirm it still pushes the normal alert.
+
+### DEP3 — Qual-swap response push (`hasQualSwap`)  [#30/#31 · device-check; was T41]
+1. As the **taker** on a qual-swap request, have a **bridge accept**.
+   - **Expect:** you get a **"qual-swap response came in"** push (fires on record update).
+
+### DEP4 — Team-wide metrics (`MetricEvent`)  [#29/#18 · device-check; was T40]
+1. With a couple of accounts doing searches/proposals/cleared trades, open **Home**.
+   - **Expect:** **"PAFCA Successful Trades"** / team totals reflect **everyone's** activity for the
+     period — not just your device. Offline/empty → falls back to your local numbers.
+
+### DEP5 — Private notes sync (`PrivateState`)  [#14/#6 · 2-device check; was T25]
+1. **iCloud Trade Sync ON**, signed into the same Apple ID on two devices. Type **Private notes** on A.
+2. Open the app on B.
+   - **Expect:** B shows the same notes (last edit wins); never visible to anyone else.
+
+### DEP6 — Data no longer vanishes (P0-wipe root)  [P0-wipe · device-check]
+1. Use the app normally on a Production build — post in a channel, send trades, leave feedback.
+2. Force-quit and relaunch a few times; pull-to-refresh.
+   - **Expect:** posts/trades/feedback **persist** — the empty-fetch wipe is gone now that the queried
+     fields exist in Production (and the `FetchMerge` guard backs it up).
+
+---
+
 ### Notes for the tester
 - If something here fails, tell me the item number (e.g. "T5 ⚠️") and what you saw.
 - "Auto ✅" means the logic is unit-guarded, but **your device check is still the real proof** — the

@@ -119,6 +119,54 @@ enum TradeRouter {
         return (today, end)
     }
 
+    // MARK: - Shared search context (built once per pass)
+
+    /// The derived world for ONE matching pass — built once and reused across packaging, intent
+    /// assembly, and the N-way DFS instead of each re-fetching the roster, rebuilding the day-maps,
+    /// re-deriving the candidate universe, and re-scanning all responses for acceptance priors.
+    /// Behavior-identical to building these inline (same rows, same formulas); just not repeated.
+    /// (U-PERF — collapses the previously 4×-duplicated load/build block.)
+    @MainActor
+    private struct MatchContext {
+        let start: Date
+        let end: Date
+        let selfID: String
+        let maps: [String: DayMap]                                 // worker → (ISO day → entry)
+        let rosterMeta: [String: (name: String, quals: [String])]
+        let profilesByID: [String: TradeProfile]
+        let universe: [MatchCandidate]
+        let priors: [String: Double]                               // worker → acceptance log-odds
+
+        /// My own schedule entries in the window (the preload `twoWayExplore` reuses).
+        var mineEntries: [RosterEntry] { Array((maps[selfID] ?? [:]).values) }
+        /// worker → quals, for the per-leg qual-bridge feature.
+        var qualsDict: [String: [String]] { rosterMeta.mapValues { $0.quals } }
+
+        /// A8: a roster peer with no published profile defaults to Bookends-Only, never invisible.
+        func profile(for id: String, name: String) -> TradeProfile {
+            profilesByID[id] ?? TradeProfile.defaultForUnpublished(workerID: id, name: name)
+        }
+
+        static func build(selfID: String) async -> MatchContext {
+            let (start, end) = horizon
+            let allEntries = await RosterStore.shared.entries(from: start, to: end)
+            var maps: [String: DayMap] = [:]
+            var rosterMeta: [String: (name: String, quals: [String])] = [:]
+            for e in allEntries {
+                maps[e.workerID, default: [:]][e.day] = e
+                if rosterMeta[e.workerID] == nil { rosterMeta[e.workerID] = (e.workerName, e.quals) }
+            }
+            let profilesByID = TradeProfileStore.shared.others
+            let universe = MatchUniverse.candidates(
+                roster: rosterMeta.map { (id: $0.key, name: $0.value.name, quals: $0.value.quals) },
+                profiles: profilesByID, selfID: selfID)
+            let priors = MessagingStore.shared.acceptancePriorMap()
+            return MatchContext(start: start, end: end, selfID: selfID, maps: maps,
+                                rosterMeta: rosterMeta, profilesByID: profilesByID,
+                                universe: universe, priors: priors)
+        }
+    }
+
     // MARK: Greedy recipient minimization
 
 
@@ -163,7 +211,8 @@ enum TradeRouter {
         func urgency(of dayIDs: [String]) -> Int { dayIDs.map(dayUrgency).max() ?? 0 }
         func urgencyWeight(_ dayIDs: [String]) -> Int { dayIDs.map(dayUrgency).reduce(0, +) }
 
-        let (start, end) = horizon
+        let ctx = await MatchContext.build(selfID: selfID)
+        let (start, end) = (ctx.start, ctx.end)
         let mySeeking = DayIntentStore.shared.seekingDayIDs
         let myProfile = TradeProfileStore.shared.myProfile()
 
@@ -178,24 +227,13 @@ enum TradeRouter {
                                     shiftType: type, region: region, isBookend: leg.bookend)
         }
 
-        // R-A: the candidate UNIVERSE is the whole roster, not just opted-in profiles. Load every
-        // worker's schedule in the window ONCE, derive the universe (unknown-profile peers included),
-        // and reuse the loaded schedules in twoWayExplore (no per-peer re-fetch).
-        let allEntries = await RosterStore.shared.entries(from: start, to: end)
-        var maps: [String: [String: RosterEntry]] = [:]
-        var rosterMeta: [String: (name: String, quals: [String])] = [:]
-        for e in allEntries {
-            maps[e.workerID, default: [:]][e.day] = e
-            if rosterMeta[e.workerID] == nil { rosterMeta[e.workerID] = (e.workerName, e.quals) }
-        }
-        let profilesByID = TradeProfileStore.shared.others
-        let universe = MatchUniverse.candidates(
-            roster: rosterMeta.map { (id: $0.key, name: $0.value.name, quals: $0.value.quals) },
-            profiles: profilesByID, selfID: selfID)
-        func profileFor(_ id: String, _ name: String) -> TradeProfile {
-            profilesByID[id] ?? TradeProfile.defaultForUnpublished(workerID: id, name: name)   // A8: missing → Bookends Only
-        }
-        let mineEntries = Array((maps[selfID] ?? [:]).values)
+        // R-A: the candidate UNIVERSE is the whole roster, not just opted-in profiles. The shared
+        // `ctx` already loaded every worker's window schedule ONCE, built the day-maps, and derived
+        // the universe (unknown-profile peers included); twoWayExplore reuses those (no per-peer re-fetch).
+        let maps = ctx.maps
+        let universe = ctx.universe
+        func profileFor(_ id: String, _ name: String) -> TradeProfile { ctx.profile(for: id, name: name) }
+        let mineEntries = ctx.mineEntries
 
         // Per-peer reciprocal capacity via two-way exploration, gated by BOTH parties' real rules.
         struct PeerSwap { let id: String; let name: String; let canTake: [String]; let givesBack: [String] }
@@ -313,7 +351,8 @@ enum TradeRouter {
         //    fast background pass. `maxDepth` is bounded to the requested people cap.
         if generation.maxPeople >= 3, generation.engine != .minCost {
             let loops = await nWayRoutes(seedShifts: giveShifts, maxDepth: generation.maxPeople,
-                                         excluding: selfID, maxRoutes: 500)   // high safety backstop; the floor curates
+                                         excluding: selfID, maxRoutes: 500,   // high safety backstop; the floor curates
+                                         preloadedMaps: maps)                 // U-PERF: reuse the loaded window
             for loop in loops.prefix(targetCount * 2) {
                 var gv: [String: [String]] = [:]   // peer → my days they cover
                 var tk: [String: [String]] = [:]   // peer → their days I cover
@@ -405,10 +444,12 @@ enum TradeRouter {
         }
         // Rank, then the shared variable score-floor + safety ceiling (same gate as every match type).
         // Step 2/3/5: real packageLogProb per package → score-order + floor + ceiling.
-        let qualsDict = rosterMeta.mapValues { $0.quals }
+        let qualsDict = ctx.qualsDict
+        let priors = ctx.priors   // U-PERF: built once in ctx (one responses scan, not per-leg)
         let rescored = scored.map { p -> TradePackage in
             var q = p
-            q.acceptanceScore = packageLogProb(for: p, selfID: selfID, maps: maps, quals: qualsDict, start: start)
+            q.acceptanceScore = packageLogProb(for: p, selfID: selfID, maps: maps, quals: qualsDict,
+                                               priors: priors, start: start)
             return q
         }
         return finalize(rescored, lucky: lucky)
@@ -469,7 +510,8 @@ enum TradeRouter {
     /// heavy 3+/circular work to Lucky → Generate, exactly like `packages` (U-PERF).
     static func intentSolutions(excluding selfID: String, generation: SearchFilter = .fast,
                                 lucky: Bool = false) async -> [TradePackage] {
-        let (start, end) = horizon
+        let ctx = await MatchContext.build(selfID: selfID)
+        let (start, end) = (ctx.start, ctx.end)
         let mySeeking = DayIntentStore.shared.seekingDayIDs
         let myProfile = TradeProfileStore.shared.myProfile()
 
@@ -491,22 +533,15 @@ enum TradeRouter {
         }
         func urgency(of dayIDs: [String]) -> Int { dayIDs.map(dayUrgency).max() ?? 0 }
 
-        // Candidate universe = the whole roster (unknown-profile peers included), loaded once.
-        let allEntries = await RosterStore.shared.entries(from: start, to: end)
-        var maps: [String: [String: RosterEntry]] = [:]
-        var rosterMeta: [String: (name: String, quals: [String])] = [:]
-        for e in allEntries {
-            maps[e.workerID, default: [:]][e.day] = e
-            if rosterMeta[e.workerID] == nil { rosterMeta[e.workerID] = (e.workerName, e.quals) }
-        }
-        let profilesByID = TradeProfileStore.shared.others
-        let universe = MatchUniverse.candidates(
-            roster: rosterMeta.map { (id: $0.key, name: $0.value.name, quals: $0.value.quals) },
-            profiles: profilesByID, selfID: selfID)
-        func profileFor(_ id: String, _ name: String) -> TradeProfile {
-            profilesByID[id] ?? TradeProfile.defaultForUnpublished(workerID: id, name: name)
-        }
-        let mineEntries = Array((maps[selfID] ?? [:]).values)
+        // Candidate universe = the whole roster (unknown-profile peers included). Sourced from the
+        // shared `ctx` (roster loaded once, maps + universe + priors built once).
+        let maps = ctx.maps
+        let rosterMeta = ctx.rosterMeta
+        let profilesByID = ctx.profilesByID
+        let universe = ctx.universe
+        func profileFor(_ id: String, _ name: String) -> TradeProfile { ctx.profile(for: id, name: name) }
+        let mineEntries = ctx.mineEntries
+        let priors = ctx.priors   // U-PERF: one responses scan for all prior lookups
 
         // Set-contiguity: a `.bookends` party must keep CONTIGUOUS breaks across the WHOLE set of days
         // they pick up — not just each leg in isolation. Mirrors `packages`' contiguityOK.
@@ -551,7 +586,7 @@ enum TradeRouter {
                                    route: nil, urgency: urgency(of: deal.gives + deal.takes),
                                    isOptimal: deal.mutualMarked == deal.gives.count + deal.takes.count)
             pkg.fireCount = deal.mutualMarked
-            pkg.partnerPrior = MessagingStore.shared.partnerAcceptanceLogOdds(cand.workerID)   // H2
+            pkg.partnerPrior = priors[cand.workerID] ?? 0   // H2 (O(1) from the prebuilt map)
             result.append(pkg)
         }
 
@@ -562,7 +597,8 @@ enum TradeRouter {
             let giveShifts = await selfSeekingShifts(myID: selfID, start: start, end: end)
             let loops = await nWayRoutes(seedShifts: giveShifts, maxDepth: generation.maxPeople,
                                          excluding: selfID, allowPrefMiddles: true,
-                                         maxRoutes: 500)   // high safety backstop; the floor curates
+                                         maxRoutes: 500,        // high safety backstop; the floor curates
+                                         preloadedMaps: maps)   // U-PERF: reuse ctx's window
             func legMarked(_ leg: NWayLeg) -> Bool {
                 leg.fromID == selfID ? mySeeking.contains(leg.dayID)
                     : (profilesByID[leg.fromID]?.seekingDayIDs.contains(leg.dayID) ?? false)
@@ -585,7 +621,7 @@ enum TradeRouter {
                 // H2: average the other participants' acceptance priors.
                 let others = participants
                 if !others.isEmpty {
-                    pkg.partnerPrior = others.map { MessagingStore.shared.partnerAcceptanceLogOdds($0) }.reduce(0, +) / Double(others.count)
+                    pkg.partnerPrior = others.map { priors[$0] ?? 0 }.reduce(0, +) / Double(others.count)
                 }
                 result.append(pkg)
             }
@@ -595,7 +631,8 @@ enum TradeRouter {
         let qualsDict = rosterMeta.mapValues { $0.quals }
         let scored = result.map { p -> TradePackage in
             var q = p
-            q.acceptanceScore = packageLogProb(for: p, selfID: selfID, maps: maps, quals: qualsDict, start: start)
+            q.acceptanceScore = packageLogProb(for: p, selfID: selfID, maps: maps, quals: qualsDict,
+                                               priors: priors, start: start)
             return q
         }
         return finalize(scored, lucky: lucky)
@@ -609,7 +646,8 @@ enum TradeRouter {
     /// real intent (want-to-take / want-to-trade), bookend (anchored for the receiver), soonness, qual
     /// friction, and the receiver's tiny acceptance prior. Pure-ish (reads the shared stores).
     private static func legFeatures(giverID: String, receiverID: String, day: String, desk: String,
-                            receiverQuals: [String], maps: [String: DayMap], selfID: String, start: Date) -> LegFeatures {
+                            receiverQuals: [String], maps: [String: DayMap], priors: [String: Double],
+                            selfID: String, start: Date) -> LegFeatures {
         func seeking(_ id: String) -> Set<String> {
             id == selfID ? DayIntentStore.shared.seekingDayIDs
                          : (TradeProfileStore.shared.profile(forWorker: id)?.seekingDayIDs ?? [])
@@ -629,14 +667,15 @@ enum TradeRouter {
             bookend: bookend,
             timeValue: exp(-0.05 * Double(daysUntil)),
             needsQualBridge: !DeskRules.qualified(quals: receiverQuals, forDesk: desk),
-            personPrior: MessagingStore.shared.partnerAcceptanceLogOdds(receiverID))
+            personPrior: priors[receiverID] ?? 0)   // O(1) lookup; absent → neutral (U-PERF)
     }
 
     /// The package's REAL acceptance log-prob: build per-leg features for every handoff and multiply
     /// (with the N-penalty folded in by `TradeScore.packageLogProb`). Circular reads `route.legs`;
     /// a reciprocal package synthesizes legs (you→them for gives, them→you for takes).
     private static func packageLogProb(for pkg: TradePackage, selfID: String,
-                               maps: [String: DayMap], quals: [String: [String]], start: Date) -> Double {
+                               maps: [String: DayMap], quals: [String: [String]],
+                               priors: [String: Double], start: Date) -> Double {
         var legs: [(g: String, r: String, day: String, desk: String)] = []
         if let route = pkg.route {
             for l in route.legs { legs.append((l.fromID, l.toID, l.dayID, l.desk)) }
@@ -648,7 +687,8 @@ enum TradeRouter {
         }
         guard !legs.isEmpty else { return 0 }
         let feats = legs.map { legFeatures(giverID: $0.g, receiverID: $0.r, day: $0.day, desk: $0.desk,
-                                           receiverQuals: quals[$0.r] ?? [], maps: maps, selfID: selfID, start: start) }
+                                           receiverQuals: quals[$0.r] ?? [], maps: maps, priors: priors,
+                                           selfID: selfID, start: start) }
         return TradeScore.packageLogProb(feats)
     }
 
@@ -797,17 +837,23 @@ enum TradeRouter {
                            excluding selfID: String,
                            constraints: MatchConstraints = .standard,
                            allowPrefMiddles: Bool = false,
-                           maxRoutes: Int = 60) async -> [NWayRoute] {
+                           maxRoutes: Int = 60,
+                           preloadedMaps: [String: [String: RosterEntry]]? = nil) async -> [NWayRoute] {
         let giveDays = seedShifts.filter { !$0.isOff }
         guard !giveDays.isEmpty else { return [] }
 
         let (start, end) = horizon
-        let entries = await RosterStore.shared.entries(from: start, to: end)
-        var maps: [String: DayMap] = [:]
-        var names: [String: String] = [:]
-        for e in entries {
-            maps[e.workerID, default: [:]][e.day] = e
-            names[e.workerID] = e.workerName
+        // U-PERF: the feed callers already loaded the whole roster window — reuse their maps instead
+        // of a second SwiftData fetch of the same data. Falls back to a fetch when called standalone.
+        let maps: [String: DayMap]
+        if let preloadedMaps {
+            maps = preloadedMaps
+        } else {
+            var built: [String: DayMap] = [:]
+            for e in await RosterStore.shared.entries(from: start, to: end) {
+                built[e.workerID, default: [:]][e.day] = e
+            }
+            maps = built
         }
         guard let selfMap = maps[selfID] else { return [] }
         let myProfile = TradeProfileStore.shared.myProfile()

@@ -141,9 +141,12 @@ struct SlackComposer: View {
     let placeholder: String
     @Binding var text: String
     var showFormatBar = true
+    var canSendWhenEmpty = false   // allow send with no text (e.g. an image is attached)
     let onSend: () -> Void
 
-    private var isEmpty: Bool { text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    private var isEmpty: Bool {
+        text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !canSendWhenEmpty
+    }
 
     var body: some View {
         VStack(spacing: 6) {

@@ -22,6 +22,7 @@ struct SettingsView: View {
     @State private var checkingCloudKit = false
     @State private var showHelp = false
     @State private var showTesterGuide = false
+    @State private var showWelcome = false
     private var dev = DevAccess.shared
     @Environment(\.dismiss) private var dismiss
 
@@ -31,6 +32,9 @@ struct SettingsView: View {
 
                 // ── Help ─────────────────────────────────────────────
                 Section {
+                    Button { showWelcome = true } label: {
+                        Label("Welcome & how it works", systemImage: "sparkles")
+                    }
                     Button { showHelp = true } label: {
                         Label("How to use BATMAN Watcher", systemImage: "questionmark.circle")
                     }
@@ -405,6 +409,7 @@ struct SettingsView: View {
                     Button("Done") { dismiss() }
                 }
             }
+            .sheet(isPresented: $showWelcome) { WelcomeView() }
             .sheet(isPresented: $showHelp) { HelpView() }
             .sheet(isPresented: $showTesterGuide) { TesterGuideView() }
             .alert("Password saved", isPresented: $showPasswordSaved) {
