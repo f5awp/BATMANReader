@@ -1128,12 +1128,22 @@ enum TradeEngineTests {
             check(TradeRouter.rankIntentPackages([sHi, sLo]).first?.id == "aaa",
                   "TradeScore: acceptanceScore does NOT affect ranking (ties fall to id, not score)")
 
-            // A1 best-first seeding: most-urgent first, then soonest day (give-day IDs sort chronologically).
-            check(TradeRouter.bestFirstSeeds([("2026-07-10", 0), ("2026-07-04", 3), ("2026-07-02", 0)])
+            // A1 best-first seeding: highest score first, then soonest day (give-day IDs sort chronologically).
+            check(TradeRouter.bestFirstSeeds([("2026-07-10", 0.5), ("2026-07-04", 3.5), ("2026-07-02", 0.5)])
                   == ["2026-07-04", "2026-07-02", "2026-07-10"],
-                  "A1: best-first seeds order by urgency desc, then sooner date")
-            check(TradeRouter.bestFirstSeeds([("2026-07-09", 2), ("2026-07-03", 2)]) == ["2026-07-03", "2026-07-09"],
-                  "A1: equal urgency → the sooner day seeds first")
+                  "A1: best-first seeds order by score desc, then sooner date")
+            check(TradeRouter.bestFirstSeeds([("2026-07-09", 2.0), ("2026-07-03", 2.0)]) == ["2026-07-03", "2026-07-09"],
+                  "A1: equal score → the sooner day seeds first")
+            // A1 seedScore folds urgency (dominant) + TradeScore (timeValue/qual friction refine ties).
+            check(TradeRouter.seedScore(urgency: 3, daysUntil: 0, qualGatedDesk: false)
+                  > TradeRouter.seedScore(urgency: 0, daysUntil: 0, qualGatedDesk: false),
+                  "A1: higher urgency → higher seed score (urgency dominates)")
+            check(TradeRouter.seedScore(urgency: 2, daysUntil: 1, qualGatedDesk: false)
+                  > TradeRouter.seedScore(urgency: 2, daysUntil: 30, qualGatedDesk: false),
+                  "A1: same urgency, sooner day → higher seed score (TradeScore timeValue)")
+            check(TradeRouter.seedScore(urgency: 2, daysUntil: 5, qualGatedDesk: false)
+                  > TradeRouter.seedScore(urgency: 2, daysUntil: 5, qualGatedDesk: true),
+                  "A1: a qual-gated desk lowers the seed score (TradeScore qual friction)")
         }
 
         // MARK: #9 — Reddit-style reply threading (pure pre-order tree + subtree collapse).

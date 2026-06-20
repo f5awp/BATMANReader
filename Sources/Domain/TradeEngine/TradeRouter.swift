@@ -324,7 +324,8 @@ enum TradeRouter {
         //    the caller widened the scope (Lucky/Generate with N-Way/Both and ≥3 people), never in the
         //    fast background pass. `maxDepth` is bounded to the requested people cap.
         if generation.maxPeople >= 3, generation.engine != .minCost {
-            let loops = await nWayRoutes(seedShifts: giveShifts, maxDepth: generation.maxPeople, excluding: selfID)
+            let loops = await nWayRoutes(seedShifts: giveShifts, maxDepth: generation.maxPeople,
+                                         excluding: selfID, maxRoutes: generation == .fast ? 60 : 100)   // Lucky widens 60→100
             for loop in loops.prefix(targetCount * 2) {
                 var gv: [String: [String]] = [:]   // peer → my days they cover
                 var tk: [String: [String]] = [:]   // peer → their days I cover
@@ -564,7 +565,8 @@ enum TradeRouter {
         if generation.maxPeople >= 3, generation.engine != .minCost {
             let giveShifts = await selfSeekingShifts(myID: selfID, start: start, end: end)
             let loops = await nWayRoutes(seedShifts: giveShifts, maxDepth: generation.maxPeople,
-                                         excluding: selfID, allowPrefMiddles: true)
+                                         excluding: selfID, allowPrefMiddles: true,
+                                         maxRoutes: generation == .fast ? 60 : 100)   // Lucky widens 60→100
             func legMarked(_ leg: NWayLeg) -> Bool {
                 leg.fromID == selfID ? mySeeking.contains(leg.dayID)
                     : (profilesByID[leg.fromID]?.seekingDayIDs.contains(leg.dayID) ?? false)
@@ -696,13 +698,24 @@ enum TradeRouter {
 
     /// A1 best-first: order the give-day seeds so the most promising are explored FIRST — under the
     /// route cap, the best loops surface instead of whatever the dictionary happened to yield first.
-    /// Score = urgency (desc), then sooner ISO day (give-day IDs are "yyyy-MM-dd" → chronological).
-    /// PURE → harness-tested.
-    static func bestFirstSeeds(_ seeds: [(dayID: String, urgency: Int)]) -> [String] {
+    /// `score` folds urgency + the TradeScore acceptance estimate (see `seedScore`); higher seeds
+    /// first, ties broken by sooner ISO day (give-day IDs are "yyyy-MM-dd" → chronological). PURE.
+    static func bestFirstSeeds(_ seeds: [(dayID: String, score: Double)]) -> [String] {
         seeds.sorted { a, b in
-            if a.urgency != b.urgency { return a.urgency > b.urgency }
+            if a.score != b.score { return a.score > b.score }
             return a.dayID < b.dayID
         }.map(\.dayID)
+    }
+
+    /// A1: a give-day's seed promise = urgency (dominant) + the TradeScore acceptance estimate of a
+    /// representative leg (so soonness + qual-bridge friction refine within an urgency tier). The
+    /// receiver is unknown at seed time, so only the giver-side/day-level features are used.
+    static func seedScore(urgency: Int, daysUntil: Int, qualGatedDesk: Bool) -> Double {
+        let timeValue = exp(-0.05 * Double(max(0, daysUntil)))   // sooner → higher, in (0,1]
+        let f = LegFeatures(bookend: false, split: false, mutualFire: false, giverWants: true,
+                            receiverWants: false, timeValue: timeValue,
+                            needsQualBridge: qualGatedDesk, hoursStrain: 0)
+        return Double(urgency) + TradeScore.legProb(f)   // urgency dominates; legProb refines ties
     }
 
     /// Resolves 3- and 4-person circular swap loops seeded from the user's
@@ -712,10 +725,14 @@ enum TradeRouter {
     /// their PREFERENCES (availability/bookend) rather than requiring each to have marked the day. The
     /// loop still starts from a marked seed (≥1 intent leg); ranking by the real marked-leg count then
     /// floats all-intent loops to the top — without hard-coding an all-marked requirement.
+    /// `maxRoutes` is the hard mid-search cap: the BASELINE search stops at 60; "I'm Feeling Lucky"
+    /// raises it to 100 (the user opted in + narrowed the criteria, so it may take its time). With
+    /// best-first seeding, the routes kept under the cap are the most promising ones. (A1.)
     static func nWayRoutes(seedShifts: [Shift], maxDepth: Int = 4,
                            excluding selfID: String,
                            constraints: MatchConstraints = .standard,
-                           allowPrefMiddles: Bool = false) async -> [NWayRoute] {
+                           allowPrefMiddles: Bool = false,
+                           maxRoutes: Int = 60) async -> [NWayRoute] {
         let giveDays = seedShifts.filter { !$0.isOff }
         guard !giveDays.isEmpty else { return [] }
 
@@ -767,7 +784,7 @@ enum TradeRouter {
         // working days to a next node who can cover it. Close when the last node's
         // gift is covered by SELF.
         func extend(path: [NWayLeg], visited: Set<String>, current: String, currentMap: DayMap) {
-            if routes.count > 60 { return }                 // global safety cap
+            if routes.count > maxRoutes { return }           // hard mid-search cap (60 baseline / 100 Lucky)
             let depth = visited.count
 
             // Try to close the loop back to self — needs ≥3 participants total (#4). `depth` is
@@ -837,7 +854,14 @@ enum TradeRouter {
             case .standard:          return reason
             }
         }
-        let seedOrder = bestFirstSeeds(giveDays.map { (dayID: $0.id, urgency: seedUrgency($0.id)) })
+        func daysUntil(_ dayID: String) -> Int {
+            guard let d = TradeMatcher.dayDate(fromISO: dayID) else { return 0 }
+            return max(0, Int(d.timeIntervalSince(start) / 86400))
+        }
+        let seedOrder = bestFirstSeeds(giveDays.map { s in
+            (dayID: s.id, score: seedScore(urgency: seedUrgency(s.id), daysUntil: daysUntil(s.id),
+                                           qualGatedDesk: DeskRules.hasQualGatedSelection(desks: [s.desk])))
+        })
         let orderedGiveDays = seedOrder.compactMap { id in giveDays.first { $0.id == id } }
         for s in orderedGiveDays {
             if constraints.enforceTopology, DayIntentStore.shared.topology(forDay: s.id) != .standard { continue }
