@@ -394,6 +394,17 @@
 5. Tap the leftmost accent rail → collapses the entire thread (unchanged).
 - **Expect:** sibling replies read **oldest→newest**; indentation caps after a few levels so deep chains stay readable; replies sync nested across devices.
 
+### TR3-SCORING — unified packageLogProb scoring + N-max toggle  [Auto ✅ model; device-check]
+1. **Trade Settings → "Max people in a trade"** (new picker): set **Just pairs / Up to 3 / Unbound**.
+2. Mark trade-away days + SAVE; open **Intents** and **Trade Solutions**.
+   - **Expect:** results **score-ordered** — the smallest, most-wanted, clean (bookend) trades on top. A trade where **both** parties marked the day (mutual) outranks one only you marked.
+   - **Expect:** **split-the-weekend** trades (someone's break fragmented, no intent) are gone from the normal feed; a *mutual-intent* split can still appear.
+   - **Expect:** with the toggle on **Up to 3 / Unbound**, occasional good 3/4-person trades appear **below** the 2-person ones (never above an equal-quality pair).
+3. **I'm Feeling Lucky → Generate:** more (weaker) trades appear — the floor widens (0.07 vs 0.32).
+4. **Dev mode** (optional): a card shows `TradeScore: NN%` — the package's combined acceptance estimate.
+- **Tune-me:** if the normal feed feels **too sparse**, the floor (0.32) is too high; **too noisy**, too low. If 3/4-person never appear, raise the toggle. Tell me and I'll adjust the constants.
+- **Watch perf:** SAVE/Find should still feel responsive with the toggle on Unbound (report if janky).
+
 ### TR3-INTENTS — Intents is a distinct intent marketplace (not Trade Solutions)  [Auto ✅ core; device-check]
 1. Mark a few **trade-away** days on Home → SAVE. Have a peer mark trade-away days too (or seed test profiles).
 2. Open **Intents** tab.
