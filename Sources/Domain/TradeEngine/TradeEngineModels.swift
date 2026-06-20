@@ -571,6 +571,14 @@ enum ChangeLog {
 
 // MARK: - Welcome / app guide (startup) — purpose, mechanisms, version history
 
+/// One welcome-page "how it works" topic — operator-facing prose (no jargon).
+struct WelcomeTopic: Sendable, Identifiable {
+    let title: String
+    let symbol: String   // SF Symbol
+    let body: String
+    var id: String { title }
+}
+
 /// One "how it works" section — an engineer-level explanation of a subsystem.
 struct MechanismSection: Sendable, Identifiable {
     let title: String
@@ -598,7 +606,7 @@ enum AppGuide {
     static let purpose: [String] = [
         "BATMAN Watcher reads the dispatch master schedule for you — your shifts, days off, vacation, and qualifications — with no file to import and nothing to maintain by hand.",
         "Then it does the hard part. You mark the days you want to give away, and it searches the entire roster for trades that would actually work — checking each one against the real rules (desk qualification, the 8-hour rest gap) and each person's own preferences before it ever shows up. It looks at straight two-person swaps, larger multi-person packages, and full circular trades where everyone covers someone else — then puts the ones most likely to get a yes at the top.",
-        "It's built to be consistent and trustworthy: the same rules and the same ranking sit behind every search, so what you see is always playing by the book. And everything — your trades, the channel, statuses, and team stats — syncs across the shop through iCloud, so everyone is working from the same board.",
+        "It's built to be consistent and trustworthy: the same rules and the same ranking sit behind every search. And everything — your trades, the channel, statuses, and team stats — syncs across the shop through iCloud, so everyone is working from the same board.",
     ]
 
     /// Feature pillars (quick "what it does" grid on the welcome page).
@@ -609,6 +617,64 @@ enum AppGuide {
         ("person.2.badge.gearshape", "Qual swaps", "A qualified bridge desk-swaps so an unqualified taker can still cover."),
         ("star.circle", "ECB one-way", "Give a shift away for ECB with a fair, queue-ordered claim."),
         ("bubble.left.and.bubble.right", "Channel + chat", "Broadcast what you're trading, thread replies, 1:1 chat with photos."),
+    ]
+
+    /// Welcome-page methodology — operator-facing (detailed, but no math jargon). Renders as a
+    /// "How it works" walkthrough right on the welcome popup.
+    static let methodology: [WelcomeTopic] = [
+        WelcomeTopic(
+            title: "Intents — telling the app what you want",
+            symbol: "hand.raised.fill",
+            body: "On Home you mark days with four intents: Trade away (a working day you'd give up), Want to work (a day off you'd pick up), Keep (a working day you won't trade), and Must be off (a day off you won't take). These marks are the heart of matching — the app pairs your Trade-away days with other people's Want-to-work days, and your Want-to-work days with their Trade-away days. Keep and Must-be-off are hard limits it will never cross."),
+        WelcomeTopic(
+            title: "How matches are found",
+            symbol: "arrow.triangle.swap",
+            body: "Open Intents (or pick days in Trade Solutions) and the app scans the entire roster, building every legal trade it can — two-person swaps first, then multi-person packages, then circular loops where everyone covers someone else and nobody loses hours. Every leg is checked against the hard rules (desk qualification, the 8-hour rest gap) and both people's preferences before it's ever shown."),
+        WelcomeTopic(
+            title: "Prioritization — the best matches rise to the top",
+            symbol: "list.number",
+            body: "Matches are ranked, not piled. A deal where BOTH of you marked the day — a mutual 🔥 match — sits at the very top. After that the app prefers trades that keep everyone's days off together (bookends) over ones that split a weekend, fewer people over more, and sooner dates over later. The trades most likely to get a yes are the ones you see first."),
+        WelcomeTopic(
+            title: "The score behind the sort",
+            symbol: "gauge.with.dots.needle.67percent",
+            body: "Every possible trade gets an acceptance score — one number estimating how likely everyone says yes. It rewards mutual intent and clean bookends, lightly favors sooner and same-desk trades, and pushes down weekend splits and trades that need an extra person. Anything too unlikely is filtered out, so the feed stays honest instead of padded with deals nobody would take."),
+        WelcomeTopic(
+            title: "Blacklisting & preferences",
+            symbol: "nosign",
+            body: "You're never offered something you ruled out. In Trade Settings you set your openness (bookends-only or open to all) and blacklist shift types, regions, desks, weekdays, or specific qual-swap desks. A Must-be-off day is never offered to you; a Keep day is never given away. Anyone who hasn't set up a profile is treated conservatively — bookends-only — so you won't get split-the-weekend offers from people who haven't opted in."),
+        WelcomeTopic(
+            title: "Proposing — straight to their inbox",
+            symbol: "paperplane.fill",
+            body: "Found a trade you like? Tap Propose and it goes directly to the other person's in-app inbox. They Accept, Counter, or Decline, and you can chat (with photos) right on the trade. You get a push the moment a request arrives — and a stronger 'perfect match' alert when a trade lands exactly on a day you were after."),
+        WelcomeTopic(
+            title: "ECB — automatic first-come, first-served",
+            symbol: "star.circle.fill",
+            body: "When you just want a shift covered with no swap back, post it for ECB (in 0.5 steps, 5–25). Everyone who can legally work it claims it, and the app automatically orders claimants into a fair queue — first come, first served — and shows each person their place in line. You confirm once the credit lands; the official ECB form is filed outside the app."),
+        WelcomeTopic(
+            title: "Built into your iPhone",
+            symbol: "apple.logo",
+            body: "Your schedule flows to Apple Calendar, Home-Screen widgets show your next shift and trade requests, and you can ask Siri or run Shortcuts ('turn on shift alerts', 'tomorrow's alarm time'). Everything syncs across your devices and the whole shop through iCloud — set your Employee ID once and it follows you."),
+    ]
+
+    /// The scoring table shown on the welcome page — what raises or lowers a match's rank, in plain terms.
+    static let scoringSignals: [(signal: String, meaning: String, effect: String)] = [
+        ("🔥 Mutual intent", "Both of you marked the day", "Top priority"),
+        ("One-sided intent", "Only one side marked it", "Strong"),
+        ("Bookend", "Pickup sits on the edge of days off", "Boosts"),
+        ("Split", "Pickup breaks up a weekend", "Penalized*"),
+        ("Sooner date", "The trade is coming up", "Small boost"),
+        ("Qual bridge needed", "A 3rd person must desk-swap", "Small penalty"),
+        ("Fewer people", "2-person vs 3–4 person", "Preferred"),
+        ("Past acceptance", "Partner usually says yes", "Tiebreak only"),
+    ]
+
+    /// The trade types the engine can build, for the welcome-page table.
+    static let matchTypes: [(type: String, detail: String)] = [
+        ("Two-person swap", "You ↔ one person, day-for-day"),
+        ("Multi-person package", "Several people each cover part"),
+        ("Circular trade", "A→B→C→A — everyone nets even hours"),
+        ("Qual swap", "A qualified bridge frees a desk for the taker"),
+        ("ECB one-way", "Give a shift for ECB, claimed first-come"),
     ]
 
     /// The engineer-level "under the hood" tour.

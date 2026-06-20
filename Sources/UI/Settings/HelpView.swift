@@ -21,6 +21,8 @@ struct WelcomeView: View {
                     hero
                     purpose
                     pillars
+                    methodology
+                    scoringTable
                     whatsNew
                     deepLinks
                 }
@@ -80,6 +82,80 @@ struct WelcomeView: View {
                 }
             }
         }
+    }
+
+    /// Operator-facing "how it works" walkthrough — Intents, matching, scoring, blacklisting,
+    /// proposing, ECB, and Apple integration, in plain terms.
+    private var methodology: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("How it works").font(.headline)
+            ForEach(AppGuide.methodology) { topic in
+                HStack(alignment: .top, spacing: 12) {
+                    Image(systemName: topic.symbol).font(.title3).foregroundStyle(.blue)
+                        .frame(width: 28)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(topic.title).font(.subheadline.weight(.semibold))
+                        Text(topic.body).font(.caption).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Two compact tables: the trade types the engine builds, and what raises/lowers a match's rank.
+    private var scoringTable: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("How scoring & matches work").font(.headline)
+
+            // Trade types
+            VStack(alignment: .leading, spacing: 0) {
+                tableHeader("Trade type", "What it is")
+                ForEach(Array(AppGuide.matchTypes.enumerated()), id: \.offset) { i, row in
+                    tableRow(row.type, row.detail, shaded: i.isMultiple(of: 2))
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(.quaternary))
+
+            // Scoring signals
+            VStack(alignment: .leading, spacing: 0) {
+                tableHeader("Signal", "Effect on rank")
+                ForEach(Array(AppGuide.scoringSignals.enumerated()), id: \.offset) { i, row in
+                    tableRow(row.signal, row.effect, sub: row.meaning, shaded: i.isMultiple(of: 2))
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(.quaternary))
+
+            Text("*A split (breaking up a weekend) is forgiven when BOTH people marked the day — a wanted split can still appear; a no-intent split is filtered out.")
+                .font(.caption2).foregroundStyle(.tertiary)
+        }
+    }
+
+    private func tableHeader(_ a: String, _ b: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Text(a).font(.caption.bold()).frame(maxWidth: .infinity, alignment: .leading)
+            Text(b).font(.caption.bold()).frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 12).padding(.vertical, 8)
+        .background(Color(.secondarySystemBackground))
+    }
+
+    private func tableRow(_ a: String, _ b: String, sub: String? = nil, shaded: Bool) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(a).font(.caption).fixedSize(horizontal: false, vertical: true)
+                if let sub {
+                    Text(sub).font(.caption2).foregroundStyle(.tertiary).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Text(b).font(.caption.weight(.semibold)).foregroundStyle(.primary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 12).padding(.vertical, 8)
+        .background(shaded ? Color(.secondarySystemBackground).opacity(0.4) : .clear)
     }
 
     private var whatsNew: some View {
