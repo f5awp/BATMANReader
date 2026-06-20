@@ -783,8 +783,8 @@ enum AppGuide {
     /// Curated version history — milestones, technical, to show the scope of work.
     static let versionHistory: [ReleaseNote] = [
         ReleaseNote(
-            version: "Build 3 — Scoring engine & marketplace",
-            headline: "A probabilistic acceptance model unifies every feed; the marketplace and deep search become first-class.",
+            version: "Build 4 — Scoring engine, marketplace & beta polish",
+            headline: "The first TestFlight beta: an acceptance model unifies every feed, the Intents marketplace and deep search become first-class, and the Trades tab gets faster and clearer.",
             points: [
                 "Unified acceptance scoring (TradeScore.packageLogProb): replaced the old count/quality-band heuristics with a per-leg logistic model → log-product package score with an intent-scaled split penalty and a 0.85-per-extra-person N-penalty. One scoring function now drives Trade Solutions, Intents, AND ECB.",
                 "Absolute floor curation replaced top-N caps: finalize() keeps everything above a probability floor (0.32 normal / 0.07 Lucky) with an empty-feed fallback and safety ceiling — so result volume reflects real match quality, not an arbitrary number.",
