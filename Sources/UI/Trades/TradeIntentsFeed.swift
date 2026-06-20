@@ -41,7 +41,10 @@ struct TradeByIntentsFeed: View {
                         .padding(.horizontal).padding(.top, 8)
                 }
 
-                if !loading { luckyBar }
+                if !loading {
+                    MaxPeoplePicker().padding(.horizontal).padding(.top, 4)
+                    luckyBar
+                }
 
                 if loading {
                     ProgressView("Finding intent matches…")
@@ -100,6 +103,7 @@ struct TradeByIntentsFeed: View {
         // MatchInputsSignature, which re-ran the heavy search on every keystroke). Background
         // reruns stay FAST (2-person) — the heavy 3+/N-Way search only runs via Lucky → Generate.
         .onChange(of: DayIntentStore.shared.intentsRevision) { _, _ in runSearch { await reloadFast() } }
+        .onChange(of: SettingsManager.shared.normalMaxPeople) { _, _ in runSearch { await reloadFast() } }
         .onDisappear { searchTask?.cancel() }   // A1: leaving cancels any in-flight Lucky search
         .alert("Package sent", isPresented: Binding(
             get: { sentMessage != nil }, set: { if !$0 { sentMessage = nil } })) {
@@ -204,6 +208,24 @@ struct TradeByIntentsFeed: View {
 }
 
 // MARK: - Feed key (explains the chips, flame, and quality pills)
+
+/// Compact "max people in a trade" control shown on the Intents + Trade Solutions feeds (was in
+/// Trade Settings). Writes `SettingsManager.normalMaxPeople`; the feed observes it and re-runs.
+struct MaxPeoplePicker: View {
+    private var settings = SettingsManager.shared
+    var body: some View {
+        HStack(spacing: 8) {
+            Label("Trade size", systemImage: "person.3.fill").font(.caption).foregroundStyle(.secondary)
+            Picker("Trade size", selection: Binding(
+                get: { settings.normalMaxPeople }, set: { settings.normalMaxPeople = $0 })) {
+                Text("Pairs").tag(2)
+                Text("≤ 3").tag(3)
+                Text("≤ 4").tag(4)
+            }
+            .pickerStyle(.segmented).labelsHidden()
+        }
+    }
+}
 
 /// A2: the "I'm Feeling Lucky" Master Filter sheet — engine, max-people, force-include person.
 /// Choices are shown as chips on the feed; the results are filtered by `SearchFilter.filter`.

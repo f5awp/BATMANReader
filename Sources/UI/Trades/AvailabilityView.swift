@@ -202,6 +202,7 @@ struct FindCandidatesSection: View {
 
                 // #4: lucky bar ABOVE the calendar so it's always visible at the top of Trade
                 // Solutions — when the calendar is expanded it would otherwise push this off-screen.
+                MaxPeoplePicker().padding(.horizontal)
                 luckyBar
 
                 if calendarExpanded {
@@ -218,6 +219,7 @@ struct FindCandidatesSection: View {
                 // C1: re-run on an explicit SAVE (intents revision), not on every edit. Background
                 // reruns stay FAST (2-person); the heavy 3+/N-Way search runs only via Lucky → Generate.
                 .onChange(of: DayIntentStore.shared.intentsRevision) { _, _ in if hasSearched { runSearch { await searchFast() } } }
+                .onChange(of: SettingsManager.shared.normalMaxPeople) { _, _ in if hasSearched { runSearch { await searchFast() } } }
             }
         }
         .padding(.horizontal).padding(.vertical, 8)
