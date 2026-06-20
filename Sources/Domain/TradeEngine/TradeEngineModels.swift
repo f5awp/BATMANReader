@@ -338,16 +338,15 @@ struct MatchInputsSignature: Hashable {
 /// `hoursStrain`, `ecbValue` are in [0,1]. All inputs are pre-normalized so the score is
 /// deterministic (no data-dependent normalization) and harness-testable.
 struct LegFeatures {
-    var bookend: Bool          // covering this day keeps the RECEIVER's time off contiguous (+)
-    var split: Bool            // it fragments the receiver's off-stretch (−, the G3 problem)
-    var mutualFire: Bool       // both parties want this day (+)
-    var giverWants: Bool       // giver marked the day trade-away (+)
-    var receiverWants: Bool    // receiver marked want-to-work (+)
+    var wantToTake: Bool       // receiver marked want-to-work this day (they want to TAKE it)
+    var wantToTrade: Bool      // giver marked the day trade-away (they want to TRADE it away)
+    var bookend: Bool          // covering this day anchors the receiver's break; else it SPLITS it
     var timeValue: Double      // sooner = higher, e.g. exp(−λ·daysUntil) ∈ [0,1] (+)
     var needsQualBridge: Bool  // leg requires a qual swap (−)
-    var hoursStrain: Double    // pushes receiver over/under weekly target, [0,1] (−)
     var ecbValue: Double = 0   // ECB points offered, normalized [0,1] (+; ECB legs only)
-    var personPrior: Double = 0 // H2: receiver's acceptance bias in LOGIT space (+ = historically says yes)
+    var personPrior: Double = 0 // H2: receiver's acceptance bias in LOGIT space (tiny weight)
+    /// 0 (neither wants), 1 (one side), 2 (dual = both want — "mutual").
+    var intentLevel: Int { (wantToTake ? 1 : 0) + (wantToTrade ? 1 : 0) }
 }
 
 /// H2: a partner's acceptance PRIOR as a logit offset, learned from their accept/decline history.
@@ -365,37 +364,40 @@ enum PersonPrior {
 /// pruning bound). Per-leg `p = σ(weighted features)`; the σ bounds it to (0,1) intrinsically.
 /// Hand-tuned weights now; later fit from inbox accept/decline data (logistic regression).
 enum TradeScore {
-    // Weights = the DESIGNED match priorities (not data-fit). Split (−2.5) is the heaviest penalty;
-    // mutual intent (2.0) the strongest positive. Removed during the matching cleanup: the base offset,
-    // `giverWants` (near-useless from the RECEIVER's view — mutualFire already covers both-want), and
-    // `hoursStrain` (the weekly-hours target is OPTIONAL, so it shouldn't penalize anyone). `personPrior`
-    // is kept but tiny (0.2) so individual history barely counts.
-    static let wBook = 1.5, wSplit = 2.5, wFire = 2.0,
-               wRecv = 1.0, wTime = 0.8, wQual = 1.2, wEcb = 1.5,
-               wPerson = 0.2
+    // Weights = the DESIGNED match priorities. WANTS dominate (want-to-take + want-to-trade, 1.5
+    // each → dual = 3.0). Bookend is a flat +0.8. The SPLIT penalty SHRINKS as intent grows
+    // (`splitBase − splitRelief·intentLevel` → none 2.5, single 1.4, dual 0.3) so a split barely dents
+    // a dual trade but wrecks a no-intent one. `qual` friction −1.2; `personPrior` tiny (0.2).
+    static let wWant = 1.5, wBook = 0.8, wTime = 0.8, wQual = 1.2, wEcb = 1.5, wPerson = 0.2
+    static let splitBase = 2.5, splitRelief = 1.1
+    /// Per-extra-person multiplier on the package score (each participant beyond 2 scales it by this),
+    /// so smaller trades dominate — `allDual+book(N+1) < allDual+split(N)`. (U-PERF N-penalty.)
+    static let nPenalty = 0.85
 
-    /// How much the (probabilistic) TradeScore contributes to a package's QUALITY score that drives
-    /// the score-floor cap. Deliberately TINY for now — TradeScore is promoted to the gate but stays
-    /// "mostly silent" so it barely moves which trades surface; raise this when the model is ready.
+    /// How much the probabilistic score contributes to the deterministic `qualityScore` band (legacy,
+    /// near-silent). The packageLogProb floor below is the real gate now.
     static let qualityBlendWeight = 0.05
 
     static func legLogit(_ f: LegFeatures) -> Double {
-        wBook * (f.bookend ? 1 : 0)
-        - wSplit * (f.split ? 1 : 0)
-        + wFire * (f.mutualFire ? 1 : 0)
-        + wRecv * (f.receiverWants ? 1 : 0)
-        + wTime * f.timeValue
-        - wQual * (f.needsQualBridge ? 1 : 0)
-        + wEcb * f.ecbValue
-        + wPerson * f.personPrior   // H2: tiny nudge toward partners who historically accept (0.2)
-        // removed during matching cleanup: base offset, giverWants, hoursStrain (optional target)
+        let want = wWant * Double(f.intentLevel)
+        let splitPen = splitBase - splitRelief * Double(f.intentLevel)   // intent shrinks the split hit
+        let structural = f.bookend ? wBook : -splitPen
+        return want + structural
+             + wTime * f.timeValue
+             - wQual * (f.needsQualBridge ? 1 : 0)
+             + wEcb * f.ecbValue
+             + wPerson * f.personPrior
     }
     /// Probability the receiver accepts this leg, in (0,1).
     static func legProb(_ f: LegFeatures) -> Double { 1.0 / (1.0 + exp(-legLogit(f))) }
-    /// Joint probability the whole package executes (all parties accept) = ∏ legProb.
-    static func packageProb(_ legs: [LegFeatures]) -> Double { legs.map(legProb).reduce(1.0, *) }
-    /// log of the joint probability = Σ log legProb (each term ≤ 0). The ranking/threshold signal.
-    static func packageLogProb(_ legs: [LegFeatures]) -> Double { legs.map { log(legProb($0)) }.reduce(0.0, +) }
+    /// Joint probability the whole package executes (all parties accept) = ∏ legProb, with the
+    /// N-penalty folded in (each person beyond 2 scales it down).
+    static func packageProb(_ legs: [LegFeatures]) -> Double { exp(packageLogProb(legs)) }
+    /// log of the joint probability + N-penalty = Σ log legProb + (N−2)·log(nPenalty). The ranking +
+    /// floor signal. (Still an admissible upper bound for a partial route — both terms only subtract.)
+    static func packageLogProb(_ legs: [LegFeatures]) -> Double {
+        legs.map { log(legProb($0)) }.reduce(0.0, +) + Double(max(0, legs.count - 2)) * log(nPenalty)
+    }
     /// Admissible upper bound on a partial route's final log-prob: the running sum (remaining legs
     /// can only add ≤ 0). Prune mid-DFS when this drops below log(threshold) — never drops a valid route.
     static func upperBoundLogProb(partial legs: [LegFeatures]) -> Double { packageLogProb(legs) }
@@ -407,21 +409,18 @@ enum TradeScore {
                              partnerPrior: Double, ecb: Double = 0) -> Double {
         guard legCount > 0 else { return 0 }
         let feats = (0..<legCount).map { i in
-            LegFeatures(bookend: i < bookendTotal, split: i >= bookendTotal,
-                        mutualFire: i < fireCount, giverWants: i < fireCount, receiverWants: i < fireCount,
-                        timeValue: 0.5, needsQualBridge: false, hoursStrain: 0,
-                        ecbValue: ecb, personPrior: partnerPrior)
+            LegFeatures(wantToTake: i < fireCount, wantToTrade: i < fireCount, bookend: i < bookendTotal,
+                        timeValue: 0.5, needsQualBridge: false, ecbValue: ecb, personPrior: partnerPrior)
         }
         return packageLogProb(feats)
     }
 
     /// G3: desirability (log-joint-acceptance) of a circular route from its per-leg bookend/🔥
-    /// flags. A non-bookend leg is treated as a SPLIT (penalized), so split-the-weekend loops
-    /// score below clean ones. Empty route → 0 (log 1).
+    /// flags. A non-bookend leg is a SPLIT, and a 🔥 leg is treated as DUAL intent (both want it).
+    /// Empty route → 0 (log 1).
     static func routeDesirability(legBookends: [Bool], legFires: [Bool]) -> Double {
         let feats = zip(legBookends, legFires).map { b, f in
-            LegFeatures(bookend: b, split: !b, mutualFire: f, giverWants: false,
-                        receiverWants: f, timeValue: 0.5, needsQualBridge: false, hoursStrain: 0)
+            LegFeatures(wantToTake: f, wantToTrade: f, bookend: b, timeValue: 0.5, needsQualBridge: false)
         }
         return packageLogProb(feats)
     }

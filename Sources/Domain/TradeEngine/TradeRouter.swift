@@ -748,9 +748,8 @@ enum TradeRouter {
     /// receiver is unknown at seed time, so only the giver-side/day-level features are used.
     static func seedScore(urgency: Int, daysUntil: Int, qualGatedDesk: Bool) -> Double {
         let timeValue = exp(-0.05 * Double(max(0, daysUntil)))   // sooner → higher, in (0,1]
-        let f = LegFeatures(bookend: false, split: false, mutualFire: false, giverWants: true,
-                            receiverWants: false, timeValue: timeValue,
-                            needsQualBridge: qualGatedDesk, hoursStrain: 0)
+        let f = LegFeatures(wantToTake: false, wantToTrade: true, bookend: false,
+                            timeValue: timeValue, needsQualBridge: qualGatedDesk)
         return Double(urgency) + TradeScore.legProb(f)   // urgency dominates; legProb refines ties
     }
 

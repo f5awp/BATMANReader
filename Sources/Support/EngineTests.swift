@@ -981,29 +981,36 @@ enum TradeEngineTests {
         // MARK: H1 — unified acceptance-likelihood score (log-joint). legProb is a sigmoid of
         // weighted features; package = product (weakest-link); pruning bound is admissible.
         do {
-            let base = LegFeatures(bookend: false, split: false, mutualFire: false, giverWants: false,
-                                   receiverWants: false, timeValue: 0, needsQualBridge: false, hoursStrain: 0)
-            var book = base; book.bookend = true
-            var split = base; split.split = true
-            var fire = base; fire.mutualFire = true
-            check(TradeScore.legProb(book) > TradeScore.legProb(base), "H1: a bookend leg is more likely accepted")
-            check(TradeScore.legProb(split) < TradeScore.legProb(base), "H1: a split leg is less likely accepted")
-            check(TradeScore.legProb(fire) > TradeScore.legProb(base), "H1: a mutual-🔥 leg is more likely accepted")
-            check((0...1).contains(TradeScore.legProb(base)), "H1: legProb is a probability in [0,1]")
-            // package = product of leg probs; logProb = sum of logs.
-            let legs = [book, fire, split]
-            let prod = TradeScore.packageProb(legs)
-            let viaLog = exp(TradeScore.packageLogProb(legs))
-            check(abs(prod - viaLog) < 1e-9, "H1: packageLogProb == log of the product (consistent)")
-            // weakest-link: one bad (split) leg tanks the joint probability below all-good.
-            check(TradeScore.packageProb([book, fire]) > TradeScore.packageProb([book, fire, split]),
-                  "H1: a split leg drags the whole package's joint probability down")
-            // admissible prune bound: adding legs never RAISES the log-prob (each log p ≤ 0).
-            check(TradeScore.packageLogProb([book]) >= TradeScore.packageLogProb([book, fire]) - 1e-12,
-                  "H1: partial-route log-prob is an admissible upper bound (monotone non-increasing)")
+            func leg(_ book: Bool, take: Bool, trade: Bool) -> LegFeatures {
+                LegFeatures(wantToTake: take, wantToTrade: trade, bookend: book, timeValue: 0, needsQualBridge: false)
+            }
+            let dualBook = leg(true, take:true, trade:true), dualSplit = leg(false, take:true, trade:true)
+            let singleBook = leg(true, take:true, trade:false), singleSplit = leg(false, take:true, trade:false)
+            let noBook = leg(true, take:false, trade:false), noSplit = leg(false, take:false, trade:false)
+            // Intent tiers: dual > single > none (same bookend).
+            check(TradeScore.legProb(dualBook) > TradeScore.legProb(singleBook), "H1: dual want > single want")
+            check(TradeScore.legProb(singleBook) > TradeScore.legProb(noBook), "H1: single want > no intent")
+            // Bookend beats split within a tier.
+            check(TradeScore.legProb(dualBook) > TradeScore.legProb(dualSplit), "H1: bookend > split (same intent)")
+            // DUAL intent OVERRIDES a split: dual+split outranks no-intent+bookend.
+            check(TradeScore.legProb(dualSplit) > TradeScore.legProb(noBook), "H1: dual intent overrides a split (dual+split > no-intent bookend)")
+            // But a SINGLE want does NOT beat a clean no-intent trade.
+            check(TradeScore.legProb(noBook) > TradeScore.legProb(singleSplit), "H1: no-intent bookend > single+split (single doesn't override)")
+            check((0...1).contains(TradeScore.legProb(noSplit)), "H1: legProb is a probability in [0,1]")
+            // package = product; weakest-link.
+            check(TradeScore.packageProb([dualBook, noSplit]) < TradeScore.packageProb([dualBook, dualBook]),
+                  "H1: one weak leg drags the package down (weakest-link)")
+            check(abs(TradeScore.packageProb([dualBook, dualSplit]) - exp(TradeScore.packageLogProb([dualBook, dualSplit]))) < 1e-9,
+                  "H1: packageProb == exp(packageLogProb)")
+            // N-penalty: a bigger all-perfect package scores BELOW a smaller imperfect one.
+            check(TradeScore.packageLogProb(Array(repeating: dualBook, count: 3)) < TradeScore.packageLogProb(Array(repeating: dualSplit, count: 2)),
+                  "H1/N-penalty: all-dual+book(3) < all-dual+split(2)")
+            // admissible bound: adding legs never RAISES the log-prob.
+            check(TradeScore.packageLogProb([dualBook]) >= TradeScore.packageLogProb([dualBook, dualBook]) - 1e-12,
+                  "H1: partial-route log-prob is an admissible upper bound")
             // ECB lever: more points offered → higher acceptance.
-            var ecbLo = base; ecbLo.ecbValue = 0.1
-            var ecbHi = base; ecbHi.ecbValue = 0.9
+            var ecbLo = noBook; ecbLo.ecbValue = 0.1
+            var ecbHi = noBook; ecbHi.ecbValue = 0.9
             check(TradeScore.legProb(ecbHi) > TradeScore.legProb(ecbLo), "H1: more ECB offered → higher acceptance")
         }
 
@@ -1099,8 +1106,7 @@ enum TradeEngineTests {
             check(PersonPrior.logOdds(accepted: 5, declined: 0) > 0, "H2: a history of accepting → positive prior")
             check(PersonPrior.logOdds(accepted: 0, declined: 5) < 0, "H2: a history of declining → negative prior")
             check(PersonPrior.logOdds(accepted: 1000, declined: 0) <= 2.0001, "H2: prior is clamped (thin/extreme record can't dominate)")
-            var fHi = LegFeatures(bookend: false, split: false, mutualFire: false, giverWants: false,
-                                  receiverWants: false, timeValue: 0.5, needsQualBridge: false, hoursStrain: 0)
+            var fHi = LegFeatures(wantToTake: false, wantToTrade: false, bookend: true, timeValue: 0.5, needsQualBridge: false)
             var fLo = fHi; fHi.personPrior = 1.5; fLo.personPrior = -1.5
             check(TradeScore.legProb(fHi) > TradeScore.legProb(fLo), "H2: a higher person-prior raises the leg's acceptance probability")
 
