@@ -240,6 +240,8 @@ enum TradeRouter {
         var peerSwaps: [PeerSwap] = []
         var plansByPeer: [String: TwoWayPlan] = [:]   // retained for U4 fire/bookend scoring
         for cand in universe.sorted(by: { $0.workerID < $1.workerID }) {
+            if Task.isCancelled { return [] }   // U-PERF: cancellable mid-scan (Cancel button / supersede)
+            await Task.yield()                  // hand the main run loop a turn so the UI never freezes
             let profile = profileFor(cand.workerID, cand.name)
             let plan = await TradeMatcher.twoWayExplore(
                 withWorker: cand.workerID, name: cand.name,
@@ -559,6 +561,8 @@ enum TradeRouter {
         // an unprofiled peer joining via PREFERENCES (bookend-only by default, A8). Low-intent deals
         // simply score lower and fall off the top-20 cap.
         for cand in universe.sorted(by: { $0.workerID < $1.workerID }) {
+            if Task.isCancelled { return [] }   // U-PERF: cancellable mid-scan (Cancel button / supersede)
+            await Task.yield()                  // hand the main run loop a turn so the UI never freezes
             let profile = profileFor(cand.workerID, cand.name)
             let plan = await TradeMatcher.twoWayExplore(
                 withWorker: cand.workerID, name: cand.name,

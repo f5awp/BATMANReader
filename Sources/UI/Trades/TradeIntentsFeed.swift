@@ -4,6 +4,47 @@
 
 import SwiftUI
 
+// MARK: - Feed result cache (keeps each Trades tab loaded across tab switches)
+
+/// Per-tab snapshot so moving between Intents / Trade Solutions / ECB doesn't destroy results or
+/// re-run the engine when nothing changed. A feed restores its snapshot on appear and recomputes only
+/// when its input SIGNATURE (intents revision + max-people + What-If + selected days) differs. The
+/// `switch segment` in TradesView tears each feed down on every tab change, so without this the
+/// (main-actor, heavy) search re-runs every return. (U-PERF.)
+@MainActor @Observable
+final class TradeFeedCache {
+    static let shared = TradeFeedCache()
+    private init() {}
+
+    struct Snapshot {
+        var signature: Int
+        var selectedIDs: Set<String> = []
+        var packages: [TradePackage] = []
+        var candidates: [PlanCandidate] = []
+        var rosterPeople: [(id: String, name: String)] = []
+        var hasSearched: Bool = false
+    }
+    private var snaps: [String: Snapshot] = [:]
+    func snapshot(_ key: String) -> Snapshot? { snaps[key] }
+    func save(_ key: String, _ snap: Snapshot) { snaps[key] = snap }
+
+    /// Full distinct roster (minus self), names resolved — loaded ONCE per session for the
+    /// "Look up a dispatcher" dropdown (moved from the former Just 2 tab) so it isn't re-fetched
+    /// on every tab return.
+    var allDispatchers: [(id: String, name: String)] = []
+
+    /// A stable hash of the inputs that change a feed's results. Days are optional (Intents seeds from
+    /// marked intent, not a day picker).
+    static func signature(selectedIDs: Set<String> = [], whatIf: Bool) -> Int {
+        var h = Hasher()
+        h.combine(DayIntentStore.shared.intentsRevision)
+        h.combine(SettingsManager.shared.normalMaxPeople)
+        h.combine(whatIf)
+        for id in selectedIDs.sorted() { h.combine(id) }
+        return h.finalize()
+    }
+}
+
 // MARK: - Feed
 
 struct TradeByIntentsFeed: View {
@@ -47,8 +88,14 @@ struct TradeByIntentsFeed: View {
                 }
 
                 if loading {
-                    ProgressView("Finding intent matches…")
-                        .frame(maxWidth: .infinity).padding(.top, 30)
+                    VStack(spacing: 14) {
+                        ProgressView("Finding intent matches…")
+                        Button(role: .cancel) { searchTask?.cancel(); loading = false } label: {
+                            Label("Cancel", systemImage: "xmark.circle")
+                        }
+                        .buttonStyle(.bordered).controlSize(.small)
+                    }
+                    .frame(maxWidth: .infinity).padding(.top, 30)
                 } else if displayed.isEmpty {
                     ContentUnavailableView("No Intent Matches",
                         systemImage: "sparkles",
@@ -97,7 +144,16 @@ struct TradeByIntentsFeed: View {
                               onGenerate: { f in runSearch { await reload(generation: f, lucky: true) } },
                               onReset: { runSearch { await reloadFast() } })
         }
-        .task { await reloadFast() }
+        .task {
+            // U-PERF: restore the last results instantly if nothing changed; otherwise run a
+            // CANCELLABLE fast search (so the spinner shows a working Cancel and the engine yields).
+            if let snap = TradeFeedCache.shared.snapshot(Self.cacheKey),
+               snap.signature == TradeFeedCache.signature(whatIf: whatIf) {
+                packages = snap.packages; rosterPeople = snap.rosterPeople; loading = false
+            } else {
+                runSearch { await reloadFast() }
+            }
+        }
         .onChange(of: whatIf) { _, _ in runSearch { await reloadFast() } }
         // C1: recompute on an explicit SAVE (intents revision) — NOT on every edit (was
         // MatchInputsSignature, which re-ran the heavy search on every keystroke). Background
@@ -162,7 +218,14 @@ struct TradeByIntentsFeed: View {
         // Step 4: normal feed searches up to the user's N-max toggle (default 3) — the floor +
         // N-penalty keep small trades on top. (Reverses the old 2-way-only U-PERF gate.)
         await reload(generation: SearchFilter(engine: .both, maxPeople: SettingsManager.shared.normalMaxPeople))
+        // U-PERF: cache the fast results so a tab switch restores them without re-running the engine.
+        if Task.isCancelled { return }
+        TradeFeedCache.shared.save(Self.cacheKey, .init(
+            signature: TradeFeedCache.signature(whatIf: whatIf),
+            packages: packages, rosterPeople: rosterPeople, hasSearched: true))
     }
+
+    private static let cacheKey = "intents"
 
     /// `generation` bounds the engine work: `.fast` (2-person, background) or the user's Lucky
     /// criteria (heavy 3+/N-Way, one-time). The display still filters via `searchFilter`.

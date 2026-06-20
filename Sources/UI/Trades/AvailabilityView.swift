@@ -54,6 +54,7 @@ struct FindCandidatesSection: View {
     @State private var searchFilter = SearchFilter()
     @State private var showFilter = false
     @State private var rosterPeople: [(id: String, name: String)] = []
+    @State private var allDispatchers: [(id: String, name: String)] = []   // D2: full-roster lookup (was Just 2)
     @State private var searchTask: Task<Void, Never>?   // A1: cancellable Lucky search
     private var filteredPackages: [TradePackage] { searchFilter.filter(packages) }
     // B1: international-desk qual-swap entry — the button glows green only when a selected desk is gated.
@@ -101,6 +102,19 @@ struct FindCandidatesSection: View {
                               onReset: { if !selectedIDs.isEmpty { runSearch { await searchFast() } } })
         }
         .onDisappear { searchTask?.cancel() }   // A1: leaving cancels any in-flight Lucky search
+        .task {
+            if allDispatchers.isEmpty { await loadAllDispatchers() }
+            // U-PERF: restore prior results on tab return; only re-search if intents/settings changed
+            // while away (and we'd already searched). Keeps Trade Solutions loaded across tab switches.
+            guard let snap = TradeFeedCache.shared.snapshot(Self.cacheKey) else { return }
+            selectedIDs = snap.selectedIDs; packages = snap.packages
+            candidates = snap.candidates; rosterPeople = snap.rosterPeople; hasSearched = snap.hasSearched
+            if snap.hasSearched { calendarExpanded = false }
+            if snap.hasSearched, !selectedIDs.isEmpty,
+               snap.signature != TradeFeedCache.signature(selectedIDs: selectedIDs, whatIf: whatIf) {
+                runSearch { await searchFast() }
+            }
+        }
         .sheet(isPresented: $showQualSwaps) {
             QualSwapDaysSheet(packages: qualSwapResults, loading: loadingQual, selectedShifts: selectedShifts) { selectedPkgs in
                 showQualSwaps = false
@@ -205,6 +219,26 @@ struct FindCandidatesSection: View {
                 MaxPeoplePicker().padding(.horizontal)
                 luckyBar
 
+                // D2: look up ANY dispatcher's schedule + trades (moved here from the former Just 2 tab).
+                Menu {
+                    ForEach(allDispatchers, id: \.id) { p in
+                        Button(p.name) {
+                            twoWayCandidate = PlanCandidate(workerID: p.id, name: p.name, quals: [],
+                                                            coveredShiftIDs: [], bookendShiftIDs: [], week: [])
+                        }
+                    }
+                } label: {
+                    HStack {
+                        Image(systemName: "magnifyingglass.circle")
+                        Text("Look up a dispatcher (\(allDispatchers.count))")
+                        Spacer(); Image(systemName: "chevron.down").font(.caption2)
+                    }
+                    .font(.caption).padding(.horizontal, 10).padding(.vertical, 6)
+                    .background(.bar, in: Capsule())
+                }
+                .disabled(allDispatchers.isEmpty)
+                .padding(.horizontal)
+
                 if calendarExpanded {
                     ShiftSelectCalendar(shifts: store.shifts, selection: $selectedIDs)
                         .transition(.move(edge: .top).combined(with: .opacity))
@@ -229,7 +263,14 @@ struct FindCandidatesSection: View {
     @ViewBuilder
     private var content: some View {
         if isSearching {
-            ProgressView("Searching roster…").frame(maxWidth: .infinity, maxHeight: .infinity)
+            VStack(spacing: 14) {
+                ProgressView("Searching roster…")
+                Button(role: .cancel) { searchTask?.cancel(); isSearching = false } label: {
+                    Label("Cancel", systemImage: "xmark.circle")
+                }
+                .buttonStyle(.bordered).controlSize(.small)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if !hasSearched {
             ContentUnavailableView("Pick Shifts to Trade", systemImage: "person.2.badge.gearshape",
                 description: Text("Tap the days you want to give away, then Find."))
@@ -240,7 +281,7 @@ struct FindCandidatesSection: View {
             ContentUnavailableView("No Package", systemImage: "shippingbox",
                 description: Text(candidates.isEmpty
                     ? "No one is off, desk-qualified, and rested for these shifts. Try other days or What If? mode."
-                    : "No single package covers all your selected days. Use the “Just 2” tab to explore one-person swaps for a single day."))
+                    : "No single package covers all your selected days. Set Trade size to “Pairs” for two-person-only swaps, or look up a specific dispatcher above."))
         } else {
             // Packages only (U5): every solution is a card, sorted fewest-people → 🔥 → bookends.
             ScrollView {
@@ -423,6 +464,30 @@ struct FindCandidatesSection: View {
         isSearching = false
         hasSearched = true
         withAnimation(.snappy) { calendarExpanded = false }
+        // U-PERF: cache so a tab switch restores results without re-running the engine.
+        TradeFeedCache.shared.save(Self.cacheKey, .init(
+            signature: TradeFeedCache.signature(selectedIDs: Set(shifts.map(\.id)), whatIf: whatIf),
+            selectedIDs: selectedIDs, packages: packages, candidates: candidates,
+            rosterPeople: rosterPeople, hasSearched: true))
+    }
+
+    private static let cacheKey = "tradeSolutions"
+
+    /// D2: load the full distinct roster (minus you) for the "Look up a dispatcher" dropdown — ONCE per
+    /// session (cached in TradeFeedCache), so it's not re-fetched on every tab return.
+    private func loadAllDispatchers() async {
+        if !TradeFeedCache.shared.allDispatchers.isEmpty {
+            allDispatchers = TradeFeedCache.shared.allDispatchers; return
+        }
+        let myID = settings.username
+        let now = Date(); let end = Calendar.current.date(byAdding: .month, value: 12, to: now) ?? now
+        let entries = await RosterStore.shared.entries(from: now, to: end)
+        var seen = Set<String>(); var out: [(id: String, name: String)] = []
+        for e in entries where e.workerID != myID && seen.insert(e.workerID).inserted {
+            out.append((e.workerID, TradeNames.resolved(displayName: nil, rosterName: e.workerName, workerID: e.workerID)))
+        }
+        allDispatchers = out.sorted { $0.name < $1.name }
+        TradeFeedCache.shared.allDispatchers = allDispatchers
     }
 
     /// #7: email the selected give-days to the dispatch DL (Outlook draft) + Must-Be-Off blackout days.
@@ -460,191 +525,6 @@ struct FindCandidatesSection: View {
 
     static func weekday(_ date: Date) -> String {
         let f = DateFormatter(); f.dateFormat = "EEE"; return f.string(from: date)
-    }
-}
-
-// MARK: - Just 2 (single-date two-person swaps + per-dispatcher filter)
-
-/// Pick a day to give away → only DIRECT two-person swaps (you + one), sorted by the
-/// same priority (fewest people → 🔥 → bookends). A dropdown filters to one dispatcher.
-struct JustTwoSection: View {
-    private let store    = ShiftStore.shared
-    private let settings = SettingsManager.shared
-
-    @State private var selectedIDs: Set<String> = []
-    @State private var packages: [TradePackage] = []
-    @State private var isSearching = false
-    @State private var hasSearched = false
-    @State private var personFilter: String? = nil
-    @State private var calendarExpanded = true
-    @State private var detailPackage: TradePackage?
-    @State private var execRoute: NWayRoute?
-    @State private var packageSent: String?
-    @State private var pkgSwap: PackageSwapContext?
-    // D2: full-roster lookup — pick ANYONE to see their schedule + any trades (not just matches).
-    @State private var rosterPeople: [(id: String, name: String)] = []
-    @State private var lookupCandidate: PlanCandidate?
-
-    /// Only direct two-person packages (you + exactly one counterparty).
-    private var twoOnly: [TradePackage] { packages.filter { $0.peopleCount == 2 } }
-    private var shown: [TradePackage] {
-        guard let pid = personFilter else { return twoOnly }
-        return twoOnly.filter { p in p.assignments.contains { $0.workerID == pid } }
-    }
-    /// Dispatchers who appear in the two-person results — drives the filter dropdown.
-    private var people: [(id: String, name: String)] {
-        var seen = Set<String>(); var out: [(String, String)] = []
-        for p in twoOnly { for a in p.assignments where seen.insert(a.workerID).inserted { out.append((a.workerID, a.name)) } }
-        return out.sorted { $0.1 < $1.1 }
-    }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            controls
-            Divider()
-            content
-        }
-        .fullScreenCover(item: $detailPackage) { pkg in
-            PackageDetailView(package: pkg,
-                              onPropose: { Task { await propose(pkg) } },
-                              onExecute: { if let r = pkg.route { execRoute = r } })
-        }
-        .fullScreenCover(item: $lookupCandidate) { TwoWaySheet(candidate: $0) }   // D2: look up anyone
-        .sheet(item: $execRoute) { ExecutionConfirmationView(route: $0) }
-        .sheet(item: $pkgSwap) { ctx in
-            QualSwapPickerSheet(giveDeskLabel: "desk \(ctx.leg.giveDesk) (\(ctx.leg.giveQual))",
-                                takerName: ctx.leg.takerName, dayLabel: ctx.dayLabel,
-                                candidates: ctx.leg.candidates) { chosen in
-                Task {
-                    var sendLeg = ctx.leg
-                    sendLeg.candidates = ctx.leg.candidates.filter { chosen.contains($0.workerID) }
-                    await MessagingStore.shared.sendRequest(
-                        to: ctx.leg.takerID, toName: ctx.leg.takerName,
-                        note: "Qual swap to give away \(ctx.dayLabel) — \(ctx.leg.takerName) takes a freed desk.",
-                        take: [], give: [ctx.leg.giveShiftDayID], qualSwap: sendLeg)
-                    WidgetData.update()
-                    pkgSwap = nil
-                    packageSent = "Qual-swap request sent. Track it in your Inbox."
-                }
-            }
-        }
-        .alert("Sent", isPresented: Binding(get: { packageSent != nil }, set: { if !$0 { packageSent = nil } })) {
-            Button("OK", role: .cancel) {}
-        } message: { Text(packageSent ?? "") }
-        .task { await loadRoster() }
-    }
-
-    /// D2: load the full distinct roster (minus you), names resolved (G2a), for the lookup dropdown.
-    private func loadRoster() async {
-        let myID = settings.username
-        let now = Date(); let end = Calendar.current.date(byAdding: .month, value: 12, to: now) ?? now
-        let entries = await RosterStore.shared.entries(from: now, to: end)
-        var seen = Set<String>(); var out: [(id: String, name: String)] = []
-        for e in entries where e.workerID != myID && seen.insert(e.workerID).inserted {
-            out.append((e.workerID, TradeNames.resolved(displayName: nil, rosterName: e.workerName, workerID: e.workerID)))
-        }
-        rosterPeople = out.sorted { $0.name < $1.name }
-    }
-
-    private var controls: some View {
-        VStack(spacing: 8) {
-            HStack {
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("Pick a day to trade away").font(.caption2).foregroundStyle(.secondary)
-                    Text(selectedIDs.isEmpty ? "Tap a day" : "\(selectedIDs.count) selected").font(.subheadline).bold()
-                }
-                Spacer()
-                Button { Task { await search() } } label: { Label("Find", systemImage: "magnifyingglass") }
-                    .buttonStyle(.borderedProminent).controlSize(.small)
-                    .disabled(selectedIDs.isEmpty || isSearching)
-                Button { withAnimation(.snappy) { calendarExpanded.toggle() } } label: {
-                    Image(systemName: calendarExpanded ? "chevron.up" : "chevron.down").foregroundStyle(.secondary)
-                }
-            }
-            if calendarExpanded {
-                ShiftSelectCalendar(shifts: store.shifts, selection: $selectedIDs)
-                    .transition(.move(edge: .top).combined(with: .opacity))
-            }
-            // D2: look up ANY dispatcher's schedule + trades (always available, full roster).
-            Menu {
-                ForEach(rosterPeople, id: \.id) { p in
-                    Button(p.name) {
-                        lookupCandidate = PlanCandidate(workerID: p.id, name: p.name, quals: [],
-                                                        coveredShiftIDs: [], bookendShiftIDs: [], week: [])
-                    }
-                }
-            } label: {
-                HStack {
-                    Image(systemName: "magnifyingglass.circle")
-                    Text("Look up a dispatcher (\(rosterPeople.count))")
-                    Spacer(); Image(systemName: "chevron.down").font(.caption2)
-                }
-                .font(.caption).padding(.horizontal, 10).padding(.vertical, 6)
-                .background(.bar, in: Capsule())
-            }
-            .disabled(rosterPeople.isEmpty)
-
-            // Optional: filter the found two-person results to one dispatcher.
-            if hasSearched && !people.isEmpty {
-                Menu {
-                    Button("All dispatchers") { personFilter = nil }
-                    ForEach(people, id: \.id) { p in Button(p.name) { personFilter = p.id } }
-                } label: {
-                    HStack {
-                        Image(systemName: "line.3.horizontal.decrease.circle")
-                        Text(personFilter.flatMap { id in people.first { $0.id == id }?.name } ?? "Filter results")
-                        Spacer(); Image(systemName: "chevron.down").font(.caption2)
-                    }
-                    .font(.caption).padding(.horizontal, 10).padding(.vertical, 6)
-                    .background(.bar, in: Capsule())
-                }
-            }
-        }
-        .padding(.horizontal).padding(.vertical, 8).background(.bar)
-    }
-
-    @ViewBuilder private var content: some View {
-        if isSearching {
-            ProgressView("Searching…").frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else if !hasSearched {
-            ContentUnavailableView("Two-Person Swaps", systemImage: "arrow.left.arrow.right",
-                description: Text("Pick a day you want to give away, then Find. Only direct two-person swaps (you + one) are shown."))
-        } else if shown.isEmpty {
-            ContentUnavailableView("No Two-Person Swaps", systemImage: "person.slash",
-                description: Text("No single dispatcher can reciprocally swap for that day. Try Trade Solutions for multi-person packages."))
-        } else {
-            ScrollView {
-                ForEach(shown) { pkg in
-                    PackageCard(package: pkg,
-                                onPropose: { Task { await propose(pkg) } },
-                                onExecute: { if let r = pkg.route { execRoute = r } },
-                                onOpen: { detailPackage = pkg })
-                }
-            }
-        }
-    }
-
-    private func search() async {
-        let shifts = store.shifts.filter { selectedIDs.contains($0.id) }
-        guard !shifts.isEmpty else { return }
-        isSearching = true
-        await TradeProfileStore.shared.refreshOthers()
-        packages = await TradeRouter.packages(forGiveShifts: shifts, excluding: settings.username)
-        personFilter = nil
-        isSearching = false; hasSearched = true
-        withAnimation(.snappy) { calendarExpanded = false }
-    }
-
-    private func propose(_ pkg: TradePackage) async {
-        if let leg = pkg.qualSwap { pkgSwap = PackageSwapContext(leg: leg); return }
-        for a in pkg.assignments {
-            await MessagingStore.shared.sendRequest(
-                to: a.workerID, toName: a.name,
-                note: "Two-person swap — you take \(a.giveDayIDs.count), I take \(a.takeDayIDs.count).",
-                take: a.takeDayIDs, give: a.giveDayIDs)
-        }
-        WidgetData.update()
-        packageSent = "Sent to \(pkg.assignments.first?.name ?? "dispatcher"). Track replies in your Inbox."
     }
 }
 

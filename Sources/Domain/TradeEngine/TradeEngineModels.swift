@@ -594,11 +594,11 @@ enum AppGuide {
     static let appName  = "BATMAN Watcher"
     static let tagline  = "Schedule reading + shift trading for AA dispatchers — matched, scored, and synced."
 
-    /// The "why this exists" pitch, shown on the welcome page.
+    /// The "why this exists" pitch, shown on the welcome page (operator-facing — no jargon).
     static let purpose: [String] = [
         "BATMAN Watcher reads the dispatch master schedule for you — your shifts, days off, vacation, and qualifications — with no file to import and nothing to maintain by hand.",
-        "Then it does the hard part. Shift trading is a constraint-satisfaction and matching problem: every candidate swap has to clear hard contractual gates (qualification, 8-hour rest, weekly-hour caps, must-be-off) before it's even legal, and the space of multi-person and circular trades is combinatorial. The app models all of it explicitly — it enumerates legal two-way, multi-person, and circular-loop trades across the entire roster, then ranks them by a probabilistic acceptance model so the deals most likely to actually close float to the top.",
-        "The design intent is a single, auditable engine: one eligibility predicate every path shares, one scoring function behind every feed, and pure/testable cores so the matching can never quietly drift. Everything — trades, the channel, statuses, metrics — syncs across the team through CloudKit, so the whole shop works from one board.",
+        "Then it does the hard part. You mark the days you want to give away, and it searches the entire roster for trades that would actually work — checking each one against the real rules (desk qualification, the 8-hour rest gap) and each person's own preferences before it ever shows up. It looks at straight two-person swaps, larger multi-person packages, and full circular trades where everyone covers someone else — then puts the ones most likely to get a yes at the top.",
+        "It's built to be consistent and trustworthy: the same rules and the same ranking sit behind every search, so what you see is always playing by the book. And everything — your trades, the channel, statuses, and team stats — syncs across the shop through iCloud, so everyone is working from the same board.",
     ]
 
     /// Feature pillars (quick "what it does" grid on the welcome page).
@@ -728,6 +728,8 @@ enum AppGuide {
                 "'Max people in a trade' toggle (pairs / ≤3 / unbound) surfaced on the Intents and Trade Solutions pages; the two-way-only gate was removed so progressive-N is curated by the floor.",
                 "Qual-swap ranking: clean packages sort before qual-swap ones at equal N, while a qual-swap can still outrank a larger clean trade (N dominates).",
                 "1:1 chat photo attachments (rides the message JSON payload, no schema change).",
+                "Trades streamlined: the redundant Just 2 tab was removed (use Trade size → Pairs); its full-roster 'Look up a dispatcher' lookup moved to Trade Solutions. Trades is now three tabs — Intents · Trade Solutions · ECB.",
+                "Responsive Trades: a per-tab TradeFeedCache keeps each feed loaded across tab switches and re-runs the engine ONLY when inputs (intents / Trade size / What-If) change; searches are cancellable (Cancel button) and yield to the main run loop so the UI no longer freezes during a long search.",
                 "Performance: per-search MatchContext loads the roster window, day-maps, candidate universe, and acceptance priors ONCE and threads them through every stage — eliminating 2–4 redundant SwiftData fetches and the per-leg responses scan per search.",
                 "CloudKit production schema deployed (candidateIDs/perfectMatch/hasQualSwap indexed on TradeRequest; MetricEvent + PrivateState types) — activating bridge discovery, perfect-match & qual-swap push, team metrics, and private-note sync.",
             ]),

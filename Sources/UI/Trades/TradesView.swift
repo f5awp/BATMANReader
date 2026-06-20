@@ -42,7 +42,6 @@ struct TradesView: View {
                 switch segment {
                 case 0: TradeByIntentsFeed(whatIf: $whatIf)
                 case 1: FindCandidatesSection(whatIf: $whatIf)
-                case 2: JustTwoSection()
                 default: ECBTradesView()
                 }
             }
@@ -106,7 +105,7 @@ struct StatusAnchorButton: View {
 struct TradesSegmentBar: View {
     @Binding var segment: Int
     let intentCount: Int
-    private let titles = ["Intents", "Trade Solutions", "Just 2", "ECB"]
+    private let titles = ["Intents", "Trade Solutions", "ECB"]
 
     var body: some View {
         HStack(spacing: 4) {

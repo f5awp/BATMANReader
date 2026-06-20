@@ -243,10 +243,11 @@
 - **Expect:** only **package cards** (no individual-takers grid). Cards sorted fewest-people first,
   then 🔥/bookends. Each card header shows **🔥 N** (mutual intent) and **📖 N** (total bookends).
 
-### T35 — "Just 2" segment  [§U 9 · device-check]
-1. Trades tab → **Just 2** → pick a day → Find.
-- **Expect:** only **two-person** swaps (you + one). A **dropdown** lists the available dispatchers;
-  choosing one filters to swaps with that person. Same priority sort.
+### T35 — ~~"Just 2" segment~~ REMOVED (superseded by the Trade-size toggle)  [device-check]
+- The **Just 2** tab is gone — it's redundant with **Trade size → Pairs** on Trade Solutions.
+- Its **"Look up a dispatcher"** dropdown moved to **Trade Solutions** (above the calendar): tap it →
+  pick anyone → their two-way schedule/trade sheet opens (full roster, no search needed).
+- **Expect:** Trades now has exactly three tabs — **Intents · Trade Solutions · ECB**.
 
 ### T36 — Inbox 🔥 intent match  [§U 10 · Auto ✅; device-check]
 1. Have someone send you a request for a day you marked **Trade-Away** (or an **ECB** offer on a
@@ -454,6 +455,18 @@
      and the image is gone (tombstone).
 - **Break it:** a very large photo should still post (it's downscaled); confirm channel posts/replies
   images (T43) still work unchanged.
+
+### TR-TABS — Trades tabs stay loaded + searches are cancellable  [U-PERF · device-check]
+1. Open **Trades → Intents**, let it load. Switch to **Trade Solutions**, then back to **Intents**.
+   - **Expect:** Intents shows its results **instantly** — it does **not** re-run the engine or spin again
+     (nothing changed). Same for Trade Solutions: your picked days + results are still there on return.
+2. Go to **Home**, change an intent + **SAVE**, return to **Trades → Intents**.
+   - **Expect:** *now* it re-runs (inputs changed) — and only now.
+3. While Intents (or Trade Solutions) is searching, a **Cancel** button shows under the spinner.
+   - **Expect:** tapping **Cancel** stops the search immediately and the UI stays responsive (no frozen
+     spin). The search no longer locks up the app while it runs.
+- **Break it:** rapidly switch Intents↔Trade Solutions↔ECB — no tab should re-run its search unless you
+  changed intents / Trade size / What-If since it last ran.
 
 ### TR-PERF — search returns the same results, faster (MatchContext)  [U-PERF · Auto ✅ refactor; device-check]
 1. Open **Intents** and **Trade Solutions**, run searches as usual (mark days + SAVE / Find).
