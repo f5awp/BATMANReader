@@ -365,9 +365,14 @@ enum PersonPrior {
 /// pruning bound). Per-leg `p = σ(weighted features)`; the σ bounds it to (0,1) intrinsically.
 /// Hand-tuned weights now; later fit from inbox accept/decline data (logistic regression).
 enum TradeScore {
-    static let w0 = 0.4, wBook = 1.5, wSplit = 2.5, wFire = 2.0, wGive = 0.5,
-               wRecv = 1.0, wTime = 0.8, wQual = 1.2, wHours = 1.0, wEcb = 1.5,
-               wPerson = 1.0   // H2: weight on the receiver's learned acceptance prior
+    // Weights = the DESIGNED match priorities (not data-fit). Split (−2.5) is the heaviest penalty;
+    // mutual intent (2.0) the strongest positive. Removed during the matching cleanup: the base offset,
+    // `giverWants` (near-useless from the RECEIVER's view — mutualFire already covers both-want), and
+    // `hoursStrain` (the weekly-hours target is OPTIONAL, so it shouldn't penalize anyone). `personPrior`
+    // is kept but tiny (0.2) so individual history barely counts.
+    static let wBook = 1.5, wSplit = 2.5, wFire = 2.0,
+               wRecv = 1.0, wTime = 0.8, wQual = 1.2, wEcb = 1.5,
+               wPerson = 0.2
 
     /// How much the (probabilistic) TradeScore contributes to a package's QUALITY score that drives
     /// the score-floor cap. Deliberately TINY for now — TradeScore is promoted to the gate but stays
@@ -375,17 +380,15 @@ enum TradeScore {
     static let qualityBlendWeight = 0.05
 
     static func legLogit(_ f: LegFeatures) -> Double {
-        w0
-        + wBook * (f.bookend ? 1 : 0)
+        wBook * (f.bookend ? 1 : 0)
         - wSplit * (f.split ? 1 : 0)
         + wFire * (f.mutualFire ? 1 : 0)
-        + wGive * (f.giverWants ? 1 : 0)
         + wRecv * (f.receiverWants ? 1 : 0)
         + wTime * f.timeValue
         - wQual * (f.needsQualBridge ? 1 : 0)
-        - wHours * f.hoursStrain
         + wEcb * f.ecbValue
-        + wPerson * f.personPrior   // H2: nudges toward partners who historically accept
+        + wPerson * f.personPrior   // H2: tiny nudge toward partners who historically accept (0.2)
+        // removed during matching cleanup: base offset, giverWants, hoursStrain (optional target)
     }
     /// Probability the receiver accepts this leg, in (0,1).
     static func legProb(_ f: LegFeatures) -> Double { 1.0 / (1.0 + exp(-legLogit(f))) }
