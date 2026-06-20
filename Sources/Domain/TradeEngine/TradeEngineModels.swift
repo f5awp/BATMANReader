@@ -374,10 +374,6 @@ enum TradeScore {
     /// so smaller trades dominate — `allDual+book(N+1) < allDual+split(N)`. (U-PERF N-penalty.)
     static let nPenalty = 0.85
 
-    /// How much the probabilistic score contributes to the deterministic `qualityScore` band (legacy,
-    /// near-silent). The packageLogProb floor below is the real gate now.
-    static let qualityBlendWeight = 0.05
-
     static func legLogit(_ f: LegFeatures) -> Double {
         let want = wWant * Double(f.intentLevel)
         let splitPen = splitBase - splitRelief * Double(f.intentLevel)   // intent shrinks the split hit
@@ -401,19 +397,6 @@ enum TradeScore {
     /// Admissible upper bound on a partial route's final log-prob: the running sum (remaining legs
     /// can only add ≤ 0). Prune mid-DFS when this drops below log(threshold) — never drops a valid route.
     static func upperBoundLogProb(partial legs: [LegFeatures]) -> Double { packageLogProb(legs) }
-
-    /// A package-level acceptance log-prob from its summary signals, built on the REAL model
-    /// (`legLogit`→`legProb`→`packageLogProb`). DEV-ONLY instrumentation: this is COMPUTED and recorded
-    /// but is NOT a ranking input — it never changes which trades surface. `exp(result)` = P(executes).
-    static func packageScore(legCount: Int, fireCount: Int, bookendTotal: Int,
-                             partnerPrior: Double, ecb: Double = 0) -> Double {
-        guard legCount > 0 else { return 0 }
-        let feats = (0..<legCount).map { i in
-            LegFeatures(wantToTake: i < fireCount, wantToTrade: i < fireCount, bookend: i < bookendTotal,
-                        timeValue: 0.5, needsQualBridge: false, ecbValue: ecb, personPrior: partnerPrior)
-        }
-        return packageLogProb(feats)
-    }
 
     /// G3: desirability (log-joint-acceptance) of a circular route from its per-leg bookend/🔥
     /// flags. A non-bookend leg is a SPLIT, and a 🔥 leg is treated as DUAL intent (both want it).

@@ -84,31 +84,6 @@ struct TradePackage: Sendable, Hashable, Identifiable {
         self.partnerPrior = partnerPrior; self.acceptanceScore = acceptanceScore
     }
 
-    /// A single package QUALITY scalar driving the score-floor cap. DETERMINISTIC and dominated by the
-    /// visible signals (mutual intent ≫ bookends ≈ fewer-people > urgency); the probabilistic
-    /// `acceptanceScore` rides in at a TINY weight (`qualityBlendWeight`) so TradeScore stays mostly
-    /// silent for now. Interpretable: ~3 points ≈ one extra 🔥.
-    var qualityScore: Double {
-        Double(fireCount) * 3
-        + Double(bookendTotal) * 1
-        + Double(max(0, 5 - peopleCount))      // fewer people better: 2→3, 3→2, 4→1
-        + Double(urgency) * 0.5
-        + acceptanceScore * TradeScore.qualityBlendWeight   // mostly silent now; tunable later
-    }
-
-    /// Number of legs (days moved) — the model's leg count for the acceptance score.
-    var legCount: Int {
-        if let route { return route.legs.count }
-        return assignments.reduce(0) { $0 + $1.giveDayIDs.count + $1.takeDayIDs.count }
-    }
-    /// Fills `acceptanceScore` from the package's own signals via the real TradeScore model.
-    /// Pure-ish helper so every build site records the score consistently.
-    func scored() -> TradePackage {
-        var p = self
-        p.acceptanceScore = TradeScore.packageScore(legCount: legCount, fireCount: fireCount,
-                                                    bookendTotal: bookendTotal, partnerPrior: partnerPrior)
-        return p
-    }
     // TOTAL distinct people INCLUDING you (SPEC S-ENG-5): You↔Cary ⇒ 2. The route
     // lists each participant once (incl. self); assignments list only the others, so + you.
     var peopleCount: Int {
@@ -628,23 +603,6 @@ enum TradeRouter {
     /// Safety ceiling — neither feed ever shows more than this, even if the floor passes a huge set.
     static let intentResultCap = 60
 
-    // Score-floor bands: keep every package within `band` quality of the BEST. Baseline = narrow (only
-    // top-tier); Lucky = wide (allow weaker matches). Interpretable in 🔥-units (3 pts ≈ one 🔥).
-    static let qualityBandBaseline = 3.0   // ~within one 🔥 of the best
-    static let qualityBandLucky    = 9.0   // ~within three 🔥 of the best
-
-    /// VARIABLE score cap: keep every package whose quality is within `band` of the best one — so a
-    /// large set of high-quality packages all survive ("keep going"), while a narrow band trims the
-    /// weak tail. PURE → harness-tested. Empty in → empty out.
-    static func scoreFloored(_ packages: [TradePackage], band: Double) -> [TradePackage] {
-        guard let best = packages.map(\.qualityScore).max() else { return packages }
-        return packages.filter { $0.qualityScore >= best - band }
-    }
-    /// The band for a generation scope: baseline (`.fast`) is narrow; Lucky is wide.
-    static func qualityBand(_ generation: SearchFilter) -> Double {
-        generation == .fast ? qualityBandBaseline : qualityBandLucky
-    }
-
     // MARK: - Real per-leg scoring (Step 2: packageLogProb from live data)
 
     /// Grade one leg from live data. The RECEIVER picks up `day` (on the giver's `desk`). Pulls the
@@ -692,14 +650,6 @@ enum TradeRouter {
         let feats = legs.map { legFeatures(giverID: $0.g, receiverID: $0.r, day: $0.day, desk: $0.desk,
                                            receiverQuals: quals[$0.r] ?? [], maps: maps, selfID: selfID, start: start) }
         return TradeScore.packageLogProb(feats)
-    }
-
-    /// The SINGLE final gate for any ranked package result set — used by EVERY match type so the
-    /// variable score-floor + safety ceiling are applied identically everywhere. Records the
-    /// TradeScore first (so `qualityScore` is populated), then floors, then caps.
-    static func capped(_ ranked: [TradePackage], generation: SearchFilter) -> [TradePackage] {
-        let scored = ranked.map { $0.scored() }
-        return Array(scoreFloored(scored, band: qualityBand(generation)).prefix(intentResultCap))
     }
 
     // MARK: - Unified gate (packageLogProb floor + score-order) — the NEW gate
