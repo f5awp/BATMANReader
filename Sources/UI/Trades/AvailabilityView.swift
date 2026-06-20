@@ -97,7 +97,7 @@ struct FindCandidatesSection: View {
         }
         .sheet(isPresented: $showFilter) {
             MasterFilterSheet(filter: $searchFilter, people: rosterPeople,
-                              onGenerate: { f in if !selectedIDs.isEmpty { runSearch { await search(generation: f) } } },
+                              onGenerate: { f in if !selectedIDs.isEmpty { runSearch { await search(generation: f, lucky: true) } } },
                               onReset: { if !selectedIDs.isEmpty { runSearch { await searchFast() } } })
         }
         .onDisappear { searchTask?.cancel() }   // A1: leaving cancels any in-flight Lucky search
@@ -348,7 +348,7 @@ struct FindCandidatesSection: View {
 
     /// `generation` bounds the engine work: `.fast` (2-person, the Find default) or the user's Lucky
     /// criteria (heavy 3+/N-Way, one-time via Generate). Display still filters via `searchFilter`.
-    private func search(generation: SearchFilter = .fast) async {
+    private func search(generation: SearchFilter = .fast, lucky: Bool = false) async {
         let shifts = selectedShifts
         guard !shifts.isEmpty else { return }
         isSearching = true
@@ -401,7 +401,7 @@ struct FindCandidatesSection: View {
 
         // Same packaging algos as Trade by Intents, seeded from the selected days. Generation
         // scope gates the heavy 3+/N-Way work to Lucky → Generate (Find stays fast).
-        let result = await TradeRouter.packages(forGiveShifts: shifts, excluding: settings.username, generation: generation)
+        let result = await TradeRouter.packages(forGiveShifts: shifts, excluding: settings.username, generation: generation, lucky: lucky)
         if Task.isCancelled { return }   // A1: superseded by a newer search — don't clobber its state
         packages = result
 

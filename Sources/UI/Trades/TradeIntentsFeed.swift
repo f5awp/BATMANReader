@@ -91,7 +91,7 @@ struct TradeByIntentsFeed: View {
         }
         .sheet(isPresented: $showFilter) {
             MasterFilterSheet(filter: $searchFilter, people: rosterPeople,
-                              onGenerate: { f in runSearch { await reload(generation: f) } },
+                              onGenerate: { f in runSearch { await reload(generation: f, lucky: true) } },
                               onReset: { runSearch { await reloadFast() } })
         }
         .task { await reloadFast() }
@@ -160,13 +160,13 @@ struct TradeByIntentsFeed: View {
 
     /// `generation` bounds the engine work: `.fast` (2-person, background) or the user's Lucky
     /// criteria (heavy 3+/N-Way, one-time). The display still filters via `searchFilter`.
-    private func reload(generation: SearchFilter = .fast) async {
+    private func reload(generation: SearchFilter = .fast, lucky: Bool = false) async {
         loading = true
         await TradeProfileStore.shared.refreshOthers()
         let myID = SettingsManager.shared.username
         // Intents uses its OWN engine — a marketplace of intent-for-intent deals involving you,
-        // ranked intent-first — NOT the Trade Solutions packages() function.
-        let result = await TradeRouter.intentSolutions(excluding: myID, generation: generation)
+        // scored by the real packageLogProb (narrow floor normal / wide Lucky).
+        let result = await TradeRouter.intentSolutions(excluding: myID, generation: generation, lucky: lucky)
         if Task.isCancelled { return }   // A1: superseded by a newer search — don't clobber its state
         packages = result
         // A2: people for the Connection dropdown — union of the roster, published peers, and anyone

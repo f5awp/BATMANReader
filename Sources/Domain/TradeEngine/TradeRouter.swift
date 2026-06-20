@@ -156,10 +156,11 @@ enum TradeRouter {
     /// trades — cheap enough to auto-run in the background. The expensive 3+ multi-person covers and
     /// N-Way circular DFS run ONLY when the caller widens the scope (the "I'm Feeling Lucky" Generate),
     /// so they never burn cycles in the background. (Speed: U-PERF.)
-    static func packages(excluding selfID: String, generation: SearchFilter = .fast) async -> [TradePackage] {
+    static func packages(excluding selfID: String, generation: SearchFilter = .fast,
+                         lucky: Bool = false) async -> [TradePackage] {
         let (start, end) = horizon
         let giveShifts = await selfSeekingShifts(myID: selfID, start: start, end: end)
-        return await packages(forGiveShifts: giveShifts, excluding: selfID, generation: generation)
+        return await packages(forGiveShifts: giveShifts, excluding: selfID, generation: generation, lucky: lucky)
     }
 
     /// RECIPROCAL packaging for an explicit set of give-away shifts. Every package
@@ -167,7 +168,7 @@ enum TradeRouter {
     /// pairwise greedy (fewest counterparties) comes first; N-way circular loops
     /// are offered when pairwise can't fully reciprocate. Used by both feeds.
     static func packages(forGiveShifts giveShifts: [Shift], excluding selfID: String,
-                         generation: SearchFilter = .fast) async -> [TradePackage] {
+                         generation: SearchFilter = .fast, lucky: Bool = false) async -> [TradePackage] {
         let giveDayIDs = Set(giveShifts.filter { !$0.isOff }.map(\.id))
         guard !giveDayIDs.isEmpty else { return [] }
 
@@ -337,7 +338,7 @@ enum TradeRouter {
         //    fast background pass. `maxDepth` is bounded to the requested people cap.
         if generation.maxPeople >= 3, generation.engine != .minCost {
             let loops = await nWayRoutes(seedShifts: giveShifts, maxDepth: generation.maxPeople,
-                                         excluding: selfID, maxRoutes: generation == .fast ? 60 : 100)   // Lucky widens 60→100
+                                         excluding: selfID, maxRoutes: 500)   // high safety backstop; the floor curates
             for loop in loops.prefix(targetCount * 2) {
                 var gv: [String: [String]] = [:]   // peer → my days they cover
                 var tk: [String: [String]] = [:]   // peer → their days I cover
@@ -428,7 +429,14 @@ enum TradeRouter {
             return p
         }
         // Rank, then the shared variable score-floor + safety ceiling (same gate as every match type).
-        return capped(Self.rankPackages(scored), generation: generation)
+        // Step 2/3/5: real packageLogProb per package → score-order + floor + ceiling.
+        let qualsDict = rosterMeta.mapValues { $0.quals }
+        let rescored = scored.map { p -> TradePackage in
+            var q = p
+            q.acceptanceScore = packageLogProb(for: p, selfID: selfID, maps: maps, quals: qualsDict, start: start)
+            return q
+        }
+        return finalize(rescored, lucky: lucky)
     }
 
     // MARK: - Intents marketplace (DISTINCT from packages — intent-for-intent, intent-first ranking)
@@ -484,7 +492,8 @@ enum TradeRouter {
     /// trade-away days AND peers' marked trade-away days you'd take (so a peer's marked day seeds a
     /// deal even when you marked no give), and ranks by most mutual intent. `generation` gates the
     /// heavy 3+/circular work to Lucky → Generate, exactly like `packages` (U-PERF).
-    static func intentSolutions(excluding selfID: String, generation: SearchFilter = .fast) async -> [TradePackage] {
+    static func intentSolutions(excluding selfID: String, generation: SearchFilter = .fast,
+                                lucky: Bool = false) async -> [TradePackage] {
         let (start, end) = horizon
         let mySeeking = DayIntentStore.shared.seekingDayIDs
         let myProfile = TradeProfileStore.shared.myProfile()
@@ -578,7 +587,7 @@ enum TradeRouter {
             let giveShifts = await selfSeekingShifts(myID: selfID, start: start, end: end)
             let loops = await nWayRoutes(seedShifts: giveShifts, maxDepth: generation.maxPeople,
                                          excluding: selfID, allowPrefMiddles: true,
-                                         maxRoutes: generation == .fast ? 60 : 100)   // Lucky widens 60→100
+                                         maxRoutes: 500)   // high safety backstop; the floor curates
             func legMarked(_ leg: NWayLeg) -> Bool {
                 leg.fromID == selfID ? mySeeking.contains(leg.dayID)
                     : (profilesByID[leg.fromID]?.seekingDayIDs.contains(leg.dayID) ?? false)
@@ -607,8 +616,14 @@ enum TradeRouter {
             }
         }
 
-        // Intent-first rank, then the shared variable score-floor + safety ceiling (every match type).
-        return capped(rankIntentPackages(result), generation: generation)
+        // Step 2/3/5: compute the REAL packageLogProb per package, then score-order + floor + ceiling.
+        let qualsDict = rosterMeta.mapValues { $0.quals }
+        let scored = result.map { p -> TradePackage in
+            var q = p
+            q.acceptanceScore = packageLogProb(for: p, selfID: selfID, maps: maps, quals: qualsDict, start: start)
+            return q
+        }
+        return finalize(scored, lucky: lucky)
     }
     /// Safety ceiling — neither feed ever shows more than this, even if the floor passes a huge set.
     static let intentResultCap = 60
@@ -630,12 +645,77 @@ enum TradeRouter {
         generation == .fast ? qualityBandBaseline : qualityBandLucky
     }
 
+    // MARK: - Real per-leg scoring (Step 2: packageLogProb from live data)
+
+    /// Grade one leg from live data. The RECEIVER picks up `day` (on the giver's `desk`). Pulls the
+    /// real intent (want-to-take / want-to-trade), bookend (anchored for the receiver), soonness, qual
+    /// friction, and the receiver's tiny acceptance prior. Pure-ish (reads the shared stores).
+    private static func legFeatures(giverID: String, receiverID: String, day: String, desk: String,
+                            receiverQuals: [String], maps: [String: DayMap], selfID: String, start: Date) -> LegFeatures {
+        func seeking(_ id: String) -> Set<String> {
+            id == selfID ? DayIntentStore.shared.seekingDayIDs
+                         : (TradeProfileStore.shared.profile(forWorker: id)?.seekingDayIDs ?? [])
+        }
+        func wantWork(_ id: String) -> Set<String> {
+            id == selfID ? DayIntentStore.shared.wantToWorkDayIDs
+                         : (TradeProfileStore.shared.profile(forWorker: id)?.wantToWorkDayIDs ?? [])
+        }
+        let bookend: Bool = {
+            guard let d = TradeMatcher.dayDate(fromISO: day), let m = maps[receiverID] else { return false }
+            return TradeMatcher.isAnchored(day: d, map: m, plan: [day])
+        }()
+        let daysUntil = max(0, Int((TradeMatcher.dayDate(fromISO: day)?.timeIntervalSince(start) ?? 0) / 86400))
+        return LegFeatures(
+            wantToTake: wantWork(receiverID).contains(day),       // receiver wants to work it
+            wantToTrade: seeking(giverID).contains(day),          // giver marked it trade-away
+            bookend: bookend,
+            timeValue: exp(-0.05 * Double(daysUntil)),
+            needsQualBridge: !DeskRules.qualified(quals: receiverQuals, forDesk: desk),
+            personPrior: MessagingStore.shared.partnerAcceptanceLogOdds(receiverID))
+    }
+
+    /// The package's REAL acceptance log-prob: build per-leg features for every handoff and multiply
+    /// (with the N-penalty folded in by `TradeScore.packageLogProb`). Circular reads `route.legs`;
+    /// a reciprocal package synthesizes legs (you→them for gives, them→you for takes).
+    private static func packageLogProb(for pkg: TradePackage, selfID: String,
+                               maps: [String: DayMap], quals: [String: [String]], start: Date) -> Double {
+        var legs: [(g: String, r: String, day: String, desk: String)] = []
+        if let route = pkg.route {
+            for l in route.legs { legs.append((l.fromID, l.toID, l.dayID, l.desk)) }
+        } else {
+            for a in pkg.assignments {
+                for d in a.giveDayIDs { if let e = maps[selfID]?[d] { legs.append((selfID, a.workerID, d, e.desk)) } }
+                for d in a.takeDayIDs { if let e = maps[a.workerID]?[d] { legs.append((a.workerID, selfID, d, e.desk)) } }
+            }
+        }
+        guard !legs.isEmpty else { return 0 }
+        let feats = legs.map { legFeatures(giverID: $0.g, receiverID: $0.r, day: $0.day, desk: $0.desk,
+                                           receiverQuals: quals[$0.r] ?? [], maps: maps, selfID: selfID, start: start) }
+        return TradeScore.packageLogProb(feats)
+    }
+
     /// The SINGLE final gate for any ranked package result set — used by EVERY match type so the
     /// variable score-floor + safety ceiling are applied identically everywhere. Records the
     /// TradeScore first (so `qualityScore` is populated), then floors, then caps.
     static func capped(_ ranked: [TradePackage], generation: SearchFilter) -> [TradePackage] {
         let scored = ranked.map { $0.scored() }
         return Array(scoreFloored(scored, band: qualityBand(generation)).prefix(intentResultCap))
+    }
+
+    // MARK: - Unified gate (packageLogProb floor + score-order) — the NEW gate
+    static let floorNormalProb = 0.32   // normal feed: keep packages with ≥32% combined acceptance
+    static let floorLuckyProb  = 0.07   // Lucky: wider, allow weaker matches
+    static let emptyFallbackCount = 5   // if nothing clears the floor, still show the top few by score
+
+    /// Score-order by the REAL `packageLogProb` (already stored in `acceptanceScore`), drop everything
+    /// below the floor (normal 0.32 / Lucky 0.07), keep a top-N fallback if the floor empties it, then
+    /// a safety ceiling. Replaces the legacy count/qualityScore `capped`. (Step 3/5.)
+    static func finalize(_ pkgs: [TradePackage], lucky: Bool) -> [TradePackage] {
+        let sorted = pkgs.sorted { $0.acceptanceScore > $1.acceptanceScore }
+        let floorLog = log(lucky ? floorLuckyProb : floorNormalProb)
+        let passed = sorted.filter { $0.acceptanceScore >= floorLog }
+        let kept = passed.isEmpty ? Array(sorted.prefix(emptyFallbackCount)) : passed
+        return Array(kept.prefix(intentResultCap))
     }
 
     /// U4 priority tier (lower = higher priority): 0 = 🔥+bookends, 1 = 🔥-only, 2 = bookends-only.
