@@ -20,6 +20,7 @@ struct TradeByIntentsFeed: View {
     @State private var searchFilter = SearchFilter()
     @State private var showFilter = false
     @State private var rosterPeople: [(id: String, name: String)] = []
+    @State private var searchTask: Task<Void, Never>?   // A1: cancellable Lucky search
 
     /// A1/A2: filtered + capped (best-first via rankPackages order) view of the results.
     private var displayed: [TradePackage] { Array(searchFilter.filter(packages).prefix(100)) }
@@ -90,15 +91,16 @@ struct TradeByIntentsFeed: View {
         }
         .sheet(isPresented: $showFilter) {
             MasterFilterSheet(filter: $searchFilter, people: rosterPeople,
-                              onGenerate: { f in Task { await reload(generation: f) } },
-                              onReset: { Task { await reloadFast() } })
+                              onGenerate: { f in runSearch { await reload(generation: f) } },
+                              onReset: { runSearch { await reloadFast() } })
         }
         .task { await reloadFast() }
-        .onChange(of: whatIf) { _, _ in Task { await reloadFast() } }
+        .onChange(of: whatIf) { _, _ in runSearch { await reloadFast() } }
         // C1: recompute on an explicit SAVE (intents revision) — NOT on every edit (was
         // MatchInputsSignature, which re-ran the heavy search on every keystroke). Background
         // reruns stay FAST (2-person) — the heavy 3+/N-Way search only runs via Lucky → Generate.
-        .onChange(of: DayIntentStore.shared.intentsRevision) { _, _ in Task { await reloadFast() } }
+        .onChange(of: DayIntentStore.shared.intentsRevision) { _, _ in runSearch { await reloadFast() } }
+        .onDisappear { searchTask?.cancel() }   // A1: leaving cancels any in-flight Lucky search
         .alert("Package sent", isPresented: Binding(
             get: { sentMessage != nil }, set: { if !$0 { sentMessage = nil } })) {
             Button("OK", role: .cancel) {}
@@ -142,6 +144,13 @@ struct TradeByIntentsFeed: View {
         .padding(.horizontal).padding(.top, 4)
     }
 
+    /// A1: run a search, CANCELLING any still-running one first (re-Generate / Reset / SAVE / What-If
+    /// supersedes the previous Lucky search instead of racing it).
+    private func runSearch(_ work: @escaping () async -> Void) {
+        searchTask?.cancel()
+        searchTask = Task { await work() }
+    }
+
     /// Background/default: fast 2-person generation, and clear any Lucky filter so the
     /// 2-person results aren't hidden by a stale engine/people selection.
     private func reloadFast() async {
@@ -157,7 +166,9 @@ struct TradeByIntentsFeed: View {
         let myID = SettingsManager.shared.username
         // Intents uses its OWN engine — a marketplace of intent-for-intent deals involving you,
         // ranked intent-first — NOT the Trade Solutions packages() function.
-        packages = await TradeRouter.intentSolutions(excluding: myID, generation: generation)
+        let result = await TradeRouter.intentSolutions(excluding: myID, generation: generation)
+        if Task.isCancelled { return }   // A1: superseded by a newer search — don't clobber its state
+        packages = result
         // A2: people for the Connection dropdown — union of the roster, published peers, and anyone
         // already in a result — names resolved (G2a) — so it's never blank with a thin roster.
         let now = Date()

@@ -54,6 +54,7 @@ struct FindCandidatesSection: View {
     @State private var searchFilter = SearchFilter()
     @State private var showFilter = false
     @State private var rosterPeople: [(id: String, name: String)] = []
+    @State private var searchTask: Task<Void, Never>?   // A1: cancellable Lucky search
     private var filteredPackages: [TradePackage] { searchFilter.filter(packages) }
     // B1: international-desk qual-swap entry — the button glows green only when a selected desk is gated.
     @State private var showQualSwaps = false
@@ -96,9 +97,10 @@ struct FindCandidatesSection: View {
         }
         .sheet(isPresented: $showFilter) {
             MasterFilterSheet(filter: $searchFilter, people: rosterPeople,
-                              onGenerate: { f in if !selectedIDs.isEmpty { Task { await search(generation: f) } } },
-                              onReset: { if !selectedIDs.isEmpty { Task { await searchFast() } } })
+                              onGenerate: { f in if !selectedIDs.isEmpty { runSearch { await search(generation: f) } } },
+                              onReset: { if !selectedIDs.isEmpty { runSearch { await searchFast() } } })
         }
+        .onDisappear { searchTask?.cancel() }   // A1: leaving cancels any in-flight Lucky search
         .sheet(isPresented: $showQualSwaps) {
             QualSwapDaysSheet(packages: qualSwapResults, loading: loadingQual, selectedShifts: selectedShifts) { selectedPkgs in
                 showQualSwaps = false
@@ -168,7 +170,7 @@ struct FindCandidatesSection: View {
                     }
                     .controlSize(.small).disabled(selectedIDs.isEmpty)
                     .accessibilityLabel("Email selected days to dispatch DL")
-                    Button { TradeHistoryStore.shared.recordSearch(at: Date()); Task { await searchFast() } } label: {
+                    Button { TradeHistoryStore.shared.recordSearch(at: Date()); runSearch { await searchFast() } } label: {
                         Label("Find", systemImage: "magnifyingglass")
                     }
                     .buttonStyle(.borderedProminent).controlSize(.small)
@@ -212,10 +214,10 @@ struct FindCandidatesSection: View {
                         .font(.caption.weight(.semibold))
                 }
                 .tint(.purple)
-                .onChange(of: whatIf) { _, _ in if hasSearched { Task { await searchFast() } } }
+                .onChange(of: whatIf) { _, _ in if hasSearched { runSearch { await searchFast() } } }
                 // C1: re-run on an explicit SAVE (intents revision), not on every edit. Background
                 // reruns stay FAST (2-person); the heavy 3+/N-Way search runs only via Lucky → Generate.
-                .onChange(of: DayIntentStore.shared.intentsRevision) { _, _ in if hasSearched { Task { await searchFast() } } }
+                .onChange(of: DayIntentStore.shared.intentsRevision) { _, _ in if hasSearched { runSearch { await searchFast() } } }
             }
         }
         .padding(.horizontal).padding(.vertical, 8)
@@ -331,6 +333,13 @@ struct FindCandidatesSection: View {
         else { displayed.forEach { selected.insert($0.id) } }
     }
 
+    /// A1: run a search, CANCELLING any still-running one first (Find / Generate / Reset / What-If
+    /// supersedes the previous search instead of racing it).
+    private func runSearch(_ work: @escaping () async -> Void) {
+        searchTask?.cancel()
+        searchTask = Task { await work() }
+    }
+
     /// Find: fast 2-person generation, with any Lucky filter cleared so the results show.
     private func searchFast() async {
         searchFilter = .normal
@@ -392,7 +401,9 @@ struct FindCandidatesSection: View {
 
         // Same packaging algos as Trade by Intents, seeded from the selected days. Generation
         // scope gates the heavy 3+/N-Way work to Lucky → Generate (Find stays fast).
-        packages = await TradeRouter.packages(forGiveShifts: shifts, excluding: settings.username, generation: generation)
+        let result = await TradeRouter.packages(forGiveShifts: shifts, excluding: settings.username, generation: generation)
+        if Task.isCancelled { return }   // A1: superseded by a newer search — don't clobber its state
+        packages = result
 
         // A2: people for the Connection dropdown — candidates + published peers + result participants.
         var seen = Set<String>(); var people: [(id: String, name: String)] = []

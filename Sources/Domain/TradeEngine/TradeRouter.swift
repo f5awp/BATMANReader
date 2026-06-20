@@ -820,6 +820,7 @@ enum TradeRouter {
         // working days to a next node who can cover it. Close when the last node's
         // gift is covered by SELF.
         func extend(path: [NWayLeg], visited: Set<String>, current: String, currentMap: DayMap) {
+            if Task.isCancelled { return }                   // A1: cooperatively cancellable (Lucky re-filter)
             if routes.count > maxRoutes { return }           // hard mid-search cap (60 baseline / 100 Lucky)
             let depth = visited.count
 
@@ -900,6 +901,7 @@ enum TradeRouter {
         })
         let orderedGiveDays = seedOrder.compactMap { id in giveDays.first { $0.id == id } }
         for s in orderedGiveDays {
+            if Task.isCancelled { break }   // A1: bail the seed loop too when cancelled
             if constraints.enforceTopology, DayIntentStore.shared.topology(forDay: s.id) != .standard { continue }
             guard let myEntry = selfMap[s.id] else { continue }
             if giveBlocked(selfID, myEntry) { continue }   // relief: my own post-horizon shift isn't real
