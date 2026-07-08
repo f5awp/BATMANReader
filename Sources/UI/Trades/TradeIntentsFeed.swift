@@ -1098,11 +1098,11 @@ func participantStatus(_ id: String) -> String? {
     return (s?.isEmpty ?? true) ? nil : s
 }
 
-/// Is this peer actually ON the app? True only if they've published a trade profile (you are always on).
-/// Profileless roster peers still appear in matches (behavior inferred) but can't receive messages.
+/// Is this peer actually ON the app? True only if they're a real signed-in account (their published
+/// profile is stamped `accountClaimed`) — NOT merely a legacy/orphan profile record. You are always on.
+/// Inactive roster peers still appear in matches (behavior inferred) but can't receive messages.
 func participantHasProfile(_ id: String) -> Bool {
-    if id == SettingsManager.shared.username { return true }
-    return TradeProfileStore.shared.profile(forWorker: id) != nil
+    TradeProfileStore.shared.isActiveAccount(id)
 }
 
 /// Robot suffix (🤖) for peers not on the app — appended to their NAME in displays so it's obvious

@@ -85,6 +85,9 @@ struct TradeProfile: Sendable, Hashable, Codable, Identifiable {
     // v2 trade rules (all optional so older records still decode).
     var statusBroadcast: String? = nil
     var isMercenaryMode: Bool? = nil
+    /// True ONLY when this profile was published by a real, signed-in account (see `publishMine`).
+    /// Legacy/orphan CloudKit records lack it (nil) → treated as "not on the app" (🤖, can't be messaged).
+    var accountClaimed: Bool? = nil
     // Per-day availability pills, published so matching is pill-based cross-user.
     // Each entry is "ISO|TYPE", e.g. "2026-07-04|AM". Optional so old records decode.
     var availabilitySlots: [String]? = nil
@@ -379,6 +382,8 @@ final class TradeProfileStore {
         p.qualValues = s.qualValues.isEmpty ? nil : s.qualValues
         p.qualSwapBlacklistDesks = s.qualSwapBlacklistDesks.isEmpty ? nil : s.qualSwapBlacklistDesks
         p.reliefThrough = s.effectiveReliefThrough   // nil unless relief toggled ON + dated
+        // Proof this profile belongs to a real, signed-in account (not a legacy/orphan cloud record).
+        p.accountClaimed = s.appleUserID.isEmpty ? nil : true
         return p
     }
 
@@ -413,6 +418,14 @@ final class TradeProfileStore {
     }
 
     func profile(forWorker workerID: String) -> TradeProfile? { others[workerID] }
+
+    /// Is this worker a REAL, on-the-app account — not just a legacy/orphan profile record? You are
+    /// always active. A peer is active ONLY if their published profile is stamped `accountClaimed`
+    /// (set on real signup/publish). This is what drives the 🤖 marker + the "can't message" gate.
+    func isActiveAccount(_ workerID: String) -> Bool {
+        if workerID == SettingsManager.shared.username { return true }
+        return others[workerID]?.accountClaimed == true
+    }
 
     private static let isoDayF: DateFormatter = {
         let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; return f

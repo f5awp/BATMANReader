@@ -773,9 +773,10 @@ final class MessagingStore {
         let now = Date()
         // Sender-side "Perfect Match": does this hit the recipient's published intents? (U6 push)
         let recipient = TradeProfileStore.shared.profile(forWorker: toID)
-        // GATE: a peer with no active profile isn't on the app and can't receive anything. Deny the
-        // send and surface it to the UI (they still appear in matches — behavior is just inferred).
-        guard toID == myID || recipient != nil else {
+        // GATE: only a REAL signed-in account (profile stamped `accountClaimed`) can receive anything —
+        // a legacy/orphan profile record does NOT count. Deny + surface to the UI (they still appear in
+        // matches; behavior is just inferred).
+        guard toID == myID || recipient?.accountClaimed == true else {
             blockedRecipient = toName
             return
         }

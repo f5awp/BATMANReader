@@ -130,6 +130,9 @@ struct ContentView: View {
             _ = await RosterStore.shared.syncMasterIfNewer()   // pull the latest master roster
             await PrivateStateStore.shared.syncOnLaunch()      // private notes across your devices (A3)
             await TradeProfileStore.shared.syncMyStatus()      // public status across your devices (A3 #12)
+            if !settings.username.trimmingCharacters(in: .whitespaces).isEmpty {
+                await TradeProfileStore.shared.publishMine()   // stamp our profile `accountClaimed` so peers see us as active
+            }
             await CloudPush.setup()                            // register push subscriptions
             WidgetData.update()
             // Refresh the once-a-day summary notification with the latest counts (default ON).
