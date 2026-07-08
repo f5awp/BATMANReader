@@ -24,6 +24,7 @@ struct ContentView: View {
     @State private var showInbox = false
     @State private var showChannel = false
     @State private var showChangelog = false   // Z2: startup "What's New"
+    @State private var launchLoading = true     // spinner during the initial sync so it never looks frozen
     @State private var pendingTab: Int? = nil   // C1 phase-2: tab the user wants to leave Home for
     @State private var showLeaveGuard = false   // C1 phase-2: Save-or-Discard guard
     private var dev = DevAccess.shared
@@ -105,7 +106,9 @@ struct ContentView: View {
             OnboardingView()
         }
         .preferredColorScheme(AppAppearance(rawValue: settings.appearance)?.scheme)
+        .loadingOverlay(launchLoading, label: "Loading…")   // spinner during the initial sync
         .task {
+            defer { launchLoading = false }
             await MessagingStore.shared.refresh()
             _ = await RosterStore.shared.syncMasterIfNewer()   // pull the latest master roster
             await PrivateStateStore.shared.syncOnLaunch()      // private notes across your devices (A3)

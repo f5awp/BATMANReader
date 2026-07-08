@@ -134,6 +134,43 @@ struct SlackMessageRow<Actions: View>: View {
     }
 }
 
+// MARK: - Loading overlay (so the app never looks frozen)
+
+/// A centered spinner card shown over content while `active`. Reassures the user that startup, a
+/// match search, or a tab-load is working — not frozen. Dims the background lightly; taps pass through
+/// visually but the spinner sits on top. Fades in/out.
+struct LoadingOverlay: ViewModifier {
+    let active: Bool
+    var label: String = "Loading…"
+    func body(content: Content) -> some View {
+        content.overlay {
+            if active {
+                ZStack {
+                    Color(.systemBackground).opacity(0.35).ignoresSafeArea()
+                    VStack(spacing: 12) {
+                        ProgressView().controlSize(.large)
+                        Text(label).font(.subheadline.weight(.medium)).foregroundStyle(.secondary)
+                    }
+                    .padding(24)
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18))
+                    .shadow(color: .black.opacity(0.15), radius: 12, y: 4)
+                }
+                .transition(.opacity)
+                .accessibilityElement()
+                .accessibilityLabel(label)
+            }
+        }
+        .animation(.easeInOut(duration: 0.2), value: active)
+    }
+}
+
+extension View {
+    /// Show a spinner card over this view while `active` (e.g. startup / match search / tab-load).
+    func loadingOverlay(_ active: Bool, label: String = "Loading…") -> some View {
+        modifier(LoadingOverlay(active: active, label: label))
+    }
+}
+
 // MARK: - Expandable image (B4-11)
 
 /// An inline image that expands to a full-screen, pinch-to-zoom viewer on tap. Shared by channel

@@ -98,7 +98,7 @@
 | Availability / two-way / ECB | `AvailabilityView.swift` | Find Candidates, `TwoWaySheet`, `MiniScheduleGrid/Legend`, ECB flow | U-SEARCH, U-SWAPS |
 | Day pickers / strips | `ShiftSelectCalendar.swift`; `AvailabilityView.swift` | `ShiftSelectCalendar` (multi-select; shows intent bar + note dot, C3); `CoverageStrip` | C3 ✅ |
 | Inbox / channels / chat | `MessagingViews.swift` | `InboxView`, `ThreadView`, `ChannelView`, `MessagingDock`, `StatusBadge` | U-INBOX, U-MSG |
-| Slack-style atoms | `SlackKit.swift` | `Avatar`, `SlackMessageRow`, `SlackComposer` (`canSendWhenEmpty`), `ChannelHeader`, **`ExpandableImage`/`ZoomableImageViewer`** (tap-to-zoom, B4-11) | U-MSG, B4-11 |
+| Slack-style atoms | `SlackKit.swift` | `Avatar`, `SlackMessageRow`, `SlackComposer` (`canSendWhenEmpty`), `ChannelHeader`, `ExpandableImage`/`ZoomableImageViewer` (tap-to-zoom, B4-11), **`LoadingOverlay`/`.loadingOverlay(_:label:)`** (spinner popup; used on ContentView launch) | U-MSG, B4-11 |
 | Settings | `SettingsView.swift` | account/contact/notif/calendars/iCloud toggle/dev tools; qual-swap section → **U-SETTINGS-1** | U-SETTINGS |
 | Welcome / help / tester guide | `HelpView.swift` | `WelcomeView` (startup: hero + pillars + What's-New + links), `MechanismsView` (engineer tour), `VersionHistoryView`, `ChangeLogView`, `HelpView`, `TesterGuideView`; content in `AppGuide` (`TradeEngineModels.swift`) | I1, Z2 |
 | Design tokens + colors | `DispatchPalette.swift` | `DS` tokens, font ramp, `mineScheme/peerScheme/loopTrade/traderThemes/highImpact`; add `qualSwap/vacation/urgentAlert` | U-GLOBAL, S-UIUX-NEW |

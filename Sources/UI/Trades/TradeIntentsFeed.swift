@@ -661,12 +661,6 @@ struct CompactSwapCard: View {
                 swapLine("They get", days: a?.giveDayIDs ?? [], color: peerColor)
                 Spacer(minLength: 0)
             }
-            // Mini-calendar: the TRADER's week, with the shift you're giving them highlighted. Loads only
-            // that peer's week lazily (after the feed renders), so search stays fast. Tap → full calendar.
-            if let a, !a.giveDayIDs.isEmpty {
-                TraderWeekStrip(workerID: a.workerID, giveDayIDs: a.giveDayIDs, peerColor: peerColor)
-                    .padding(.top, 2)
-            }
             if DevAccess.shared.unlocked {
                 Text(String(format: "TradeScore: %.0f%% · cover %d", package.acceptanceScore * 100, package.coverageCount))
                     .font(.dsBadge).foregroundStyle(.purple)
