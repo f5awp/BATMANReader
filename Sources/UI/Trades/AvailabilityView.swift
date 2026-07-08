@@ -216,28 +216,7 @@ struct FindCandidatesSection: View {
 
                 // #4: lucky bar ABOVE the calendar so it's always visible at the top of Trade
                 // Solutions — when the calendar is expanded it would otherwise push this off-screen.
-                MaxPeoplePicker().padding(.horizontal)
                 luckyBar
-
-                // D2: look up ANY dispatcher's schedule + trades (moved here from the former Just 2 tab).
-                Menu {
-                    ForEach(allDispatchers, id: \.id) { p in
-                        Button(p.name) {
-                            twoWayCandidate = PlanCandidate(workerID: p.id, name: p.name, quals: [],
-                                                            coveredShiftIDs: [], bookendShiftIDs: [], week: [])
-                        }
-                    }
-                } label: {
-                    HStack {
-                        Image(systemName: "magnifyingglass.circle")
-                        Text("Look up a dispatcher (\(allDispatchers.count))")
-                        Spacer(); Image(systemName: "chevron.down").font(.caption2)
-                    }
-                    .font(.caption).padding(.horizontal, 10).padding(.vertical, 6)
-                    .background(.bar, in: Capsule())
-                }
-                .disabled(allDispatchers.isEmpty)
-                .padding(.horizontal)
 
                 if calendarExpanded {
                     ShiftSelectCalendar(shifts: store.shifts, selection: $selectedIDs)
@@ -322,20 +301,45 @@ struct FindCandidatesSection: View {
 
     private var luckyBar: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Button { showFilter = true } label: {
-                Label(luckyTitle, systemImage: "wand.and.stars").font(.subheadline.weight(.semibold)).frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.borderedProminent).controlSize(.small)
-            .tint(searchFilter.isActive ? .orange : nil)
-            if searchFilter.isActive {
-                HStack(spacing: 6) {
-                    luckyChip("One-time generation — tap to change or reset")
-                    Spacer()
+            // I'm Feeling Lucky + Look-up a dispatcher, side by side.
+            HStack(spacing: 8) {
+                Button { showFilter = true } label: {
+                    Label(luckyTitle, systemImage: "wand.and.stars").font(.subheadline.weight(.semibold))
+                        .lineLimit(1)
                 }
-                .font(.caption2)
+                .buttonStyle(.borderedProminent).controlSize(.small)
+                .tint(searchFilter.isActive ? .orange : nil)
+                lookUpMenu
+                Spacer(minLength: 0)
+            }
+            if searchFilter.isActive {
+                luckyChip("One-time generation — tap to change or reset").font(.caption2)
+                // Trade size (Max people) is a Lucky-time option — only shown once Lucky is engaged.
+                MaxPeoplePicker()
             }
         }
         .padding(.horizontal).padding(.top, 4)
+    }
+
+    /// D2: look up ANY dispatcher's schedule + trades. Compact so it sits next to the Lucky button.
+    private var lookUpMenu: some View {
+        Menu {
+            ForEach(allDispatchers, id: \.id) { p in
+                Button(p.name) {
+                    twoWayCandidate = PlanCandidate(workerID: p.id, name: p.name, quals: [],
+                                                    coveredShiftIDs: [], bookendShiftIDs: [], week: [])
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "magnifyingglass.circle")
+                Text("Look up").lineLimit(1)
+            }
+            .font(.caption.weight(.semibold)).padding(.horizontal, 10).padding(.vertical, 6)
+            .background(.bar, in: Capsule())
+        }
+        .disabled(allDispatchers.isEmpty)
+        .accessibilityLabel("Look up a dispatcher")
     }
 
     private func luckyChip(_ t: String) -> some View {

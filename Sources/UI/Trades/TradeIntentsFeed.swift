@@ -83,8 +83,11 @@ struct TradeByIntentsFeed: View {
                 }
 
                 if !loading {
-                    MaxPeoplePicker().padding(.horizontal).padding(.top, 4)
                     luckyBar
+                    // Trade size (Max people) is a Lucky-time option — only shown once Lucky is engaged.
+                    if searchFilter.isActive {
+                        MaxPeoplePicker().padding(.horizontal).padding(.top, 4)
+                    }
                 }
 
                 if loading {
@@ -652,9 +655,20 @@ struct CompactSwapCard: View {
                 .buttonStyle(.borderedProminent).controlSize(.small)
                 .accessibilityLabel("Propose")
             }
-            // What each side gets — shown ONCE each (no duplication).
-            swapLine("You get",  days: a?.takeDayIDs ?? [], color: BrickPalette.mineScheme)
-            swapLine("They get", days: a?.giveDayIDs ?? [], color: peerColor)
+            // You get / They get — on ONE line (ECB-card style), each shown once.
+            HStack(alignment: .firstTextBaseline, spacing: 14) {
+                swapLine("You get", days: a?.takeDayIDs ?? [], color: BrickPalette.mineScheme)
+                swapLine("They get", days: a?.giveDayIDs ?? [], color: peerColor)
+                Spacer(minLength: 0)
+            }
+            // Mini-calendar snapshot of the trade month: the counterparty receives my gives (fill) and
+            // gives their takes (border). No per-card schedule fetch (keeps the feed fast); full in-context
+            // schedule is on tap → PackageDetailView.
+            if let a, let month = tradeMonth(a) {
+                MiniScheduleGrid(title: "", days: [:], month: month, accent: peerColor,
+                                 giveDays: Set(a.takeDayIDs), takeDays: Set(a.giveDayIDs))
+                    .padding(.top, 2)
+            }
             if DevAccess.shared.unlocked {
                 Text(String(format: "TradeScore: %.0f%%", exp(package.acceptanceScore) * 100))
                     .font(.dsBadge).foregroundStyle(.purple)
@@ -683,12 +697,19 @@ struct CompactSwapCard: View {
         }
     }
 
+    /// The calendar month (first of month) of the earliest day in the swap — anchors the mini-calendar.
+    private func tradeMonth(_ a: PackageAssignment) -> Date? {
+        guard let earliest = (a.giveDayIDs + a.takeDayIDs).min(),
+              let d = TradeMatcher.dayDate(fromISO: earliest) else { return nil }
+        let cal = Calendar.current
+        return cal.date(from: cal.dateComponents([.year, .month], from: d))
+    }
+
     private func swapLine(_ label: String, days: [String], color: Color) -> some View {
-        HStack(alignment: .top, spacing: 6) {
-            Text(label).font(.caption2.weight(.bold)).foregroundStyle(color).frame(width: 56, alignment: .leading)
+        HStack(alignment: .firstTextBaseline, spacing: 4) {
+            Text(label).font(.caption2.weight(.bold)).foregroundStyle(color)
             Text(days.isEmpty ? "—" : DayFmt.list(days)).font(.caption)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 0)
+                .lineLimit(1).minimumScaleFactor(0.75)
         }
     }
 }
