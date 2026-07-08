@@ -172,81 +172,88 @@ struct FindCandidatesSection: View {
                     .font(.subheadline).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
             } else {
+                // ONE clean action row: [selection summary ▾] · [Qual Swap when needed] · Find · ⋯
                 HStack(spacing: 10) {
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text("Trading away").font(.caption2).foregroundStyle(.secondary)
-                        if selectedIDs.isEmpty {
-                            Text("Tap days on the calendar").font(.subheadline).bold()
-                        } else {
-                            Text(selectedDatesLabel).font(.subheadline).bold().lineLimit(2)
+                    // Tap the summary to show/hide the day calendar (replaces the separate chevron button).
+                    Button { withAnimation(.snappy) { calendarExpanded.toggle() } } label: {
+                        HStack(spacing: 6) {
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text("Trading away").font(.caption2).foregroundStyle(.secondary)
+                                Text(selectedIDs.isEmpty ? "Tap to pick days" : selectedDatesLabel)
+                                    .font(.subheadline).bold().lineLimit(1).foregroundStyle(.primary)
+                            }
+                            Image(systemName: calendarExpanded ? "chevron.up" : "chevron.down")
+                                .font(.caption2).foregroundStyle(.secondary)
                         }
                     }
-                    Spacer()
-                    if !selectedIDs.isEmpty {
-                        Button { selectedIDs = []; packages = []; candidates = []; hasSearched = false } label: {
-                            Label("Clear", systemImage: "xmark.circle")
-                        }
-                        .controlSize(.small)
-                        .accessibilityLabel("Clear selected days")
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(calendarExpanded ? "Hide day calendar" : "Show day calendar")
+
+                    Spacer(minLength: 8)
+
+                    // Qual Swap surfaces ONLY when a selected desk actually needs it (progressive disclosure).
+                    if qualGatedSelected {
+                        Button {
+                            Task {
+                                loadingQual = true; showQualSwaps = true
+                                qualSwapResults = await TradeRouter.qualSwapOptions(forGiveShifts: selectedShifts, excluding: settings.username)
+                                loadingQual = false
+                            }
+                        } label: { Image(systemName: "arrow.triangle.swap") }
+                        .buttonStyle(.borderedProminent).controlSize(.small).tint(.green)
+                        .disabled(isSearching)
+                        .accessibilityLabel("Qual swap for international desks")
                     }
-                    Button { emailSelectedToDispatch() } label: {
-                        Image(systemName: "envelope.fill")
-                    }
-                    .controlSize(.small).disabled(selectedIDs.isEmpty)
-                    .accessibilityLabel("Email selected days to dispatch DL")
+
+                    // Primary action.
                     Button { TradeHistoryStore.shared.recordSearch(at: Date()); runSearch { await searchFast() } } label: {
                         Label("Find", systemImage: "magnifyingglass")
                     }
                     .buttonStyle(.borderedProminent).controlSize(.small)
                     .disabled(selectedIDs.isEmpty || isSearching)
 
-                    // B1: gray + disabled normally; glows GREEN when a selected desk is international.
-                    // Tapping runs a DEDICATED qual-swap search for the selected international days.
-                    Button {
-                        Task {
-                            loadingQual = true; showQualSwaps = true
-                            qualSwapResults = await TradeRouter.qualSwapOptions(forGiveShifts: selectedShifts, excluding: settings.username)
-                            loadingQual = false
+                    // Everything secondary lives in the overflow — no clutter by default.
+                    Menu {
+                        if !selectedIDs.isEmpty {
+                            Button(role: .destructive) {
+                                selectedIDs = []; packages = []; candidates = []; hasSearched = false
+                            } label: { Label("Clear selection", systemImage: "xmark.circle") }
                         }
+                        Button { showFilter = true } label: { Label(luckyTitle, systemImage: "wand.and.stars") }
+                        Toggle(isOn: $whatIf) { Label("What If? — show every legal option", systemImage: "sparkles") }
+                        if !allDispatchers.isEmpty {
+                            Menu {
+                                ForEach(allDispatchers, id: \.id) { p in
+                                    Button(p.name) {
+                                        twoWayCandidate = PlanCandidate(workerID: p.id, name: p.name, quals: [],
+                                                                        coveredShiftIDs: [], bookendShiftIDs: [], week: [])
+                                    }
+                                }
+                            } label: { Label("Look up a dispatcher", systemImage: "magnifyingglass.circle") }
+                        }
+                        Button { emailSelectedToDispatch() } label: { Label("Email to dispatch DL", systemImage: "envelope") }
+                            .disabled(selectedIDs.isEmpty)
                     } label: {
-                        Label("Qual Swap", systemImage: "arrow.triangle.swap")
+                        Image(systemName: "ellipsis.circle").font(.title3)
+                            .foregroundStyle(searchFilter.isActive ? .orange : .secondary)   // orange = a Lucky filter is on
                     }
-                    .buttonStyle(.borderedProminent).controlSize(.small)
-                    .tint(qualGatedSelected ? .green : .gray)
-                    .disabled(!qualGatedSelected || isSearching)
-                    .shadow(color: qualGatedSelected ? .green.opacity(0.6) : .clear, radius: 6)
-                    .accessibilityLabel("Qual swap for international desks")
-
-                    Button { withAnimation(.snappy) { calendarExpanded.toggle() } } label: {
-                        Image(systemName: calendarExpanded ? "chevron.up" : "chevron.down")
-                            .foregroundStyle(.secondary)
-                    }
-                    .accessibilityLabel(calendarExpanded ? "Collapse calendar" : "Expand calendar")
+                    .accessibilityLabel("More trade options")
                 }
 
-                // #4: lucky bar ABOVE the calendar so it's always visible at the top of Trade
-                // Solutions — when the calendar is expanded it would otherwise push this off-screen.
-                luckyBar
-
+                // Trade size appears only once Lucky is engaged; calendar only when expanded.
+                if searchFilter.isActive { MaxPeoplePicker() }
                 if calendarExpanded {
                     ShiftSelectCalendar(shifts: store.shifts, selection: $selectedIDs)
                         .transition(.move(edge: .top).combined(with: .opacity))
                 }
-
-                Toggle(isOn: $whatIf.animation()) {
-                    Label("What If? Mode — show every legal option", systemImage: "wand.and.stars")
-                        .font(.caption.weight(.semibold))
-                }
-                .tint(.purple)
-                .onChange(of: whatIf) { _, _ in if hasSearched { runSearch { await searchFast() } } }
-                // C1: re-run on an explicit SAVE (intents revision), not on every edit. Background
-                // reruns stay FAST (2-person); the heavy 3+/N-Way search runs only via Lucky → Generate.
-                .onChange(of: DayIntentStore.shared.intentsRevision) { _, _ in if hasSearched { runSearch { await searchFast() } } }
-                .onChange(of: SettingsManager.shared.normalMaxPeople) { _, _ in if hasSearched { runSearch { await searchFast() } } }
             }
         }
         .padding(.horizontal).padding(.vertical, 8)
         .background(.bar)
+        // Re-run FAST when inputs change (What If / saved intents / max-people). Heavy 3+/N-Way is Lucky-only.
+        .onChange(of: whatIf) { _, _ in if hasSearched { runSearch { await searchFast() } } }
+        .onChange(of: DayIntentStore.shared.intentsRevision) { _, _ in if hasSearched { runSearch { await searchFast() } } }
+        .onChange(of: SettingsManager.shared.normalMaxPeople) { _, _ in if hasSearched { runSearch { await searchFast() } } }
     }
 
     @ViewBuilder
@@ -309,53 +316,8 @@ struct FindCandidatesSection: View {
             .map { "Lucky: \($0)" } ?? "I'm Feeling Lucky"
     }
 
-    private var luckyBar: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            // I'm Feeling Lucky + Look-up a dispatcher, side by side.
-            HStack(spacing: 8) {
-                Button { showFilter = true } label: {
-                    Label(luckyTitle, systemImage: "wand.and.stars").font(.subheadline.weight(.semibold))
-                        .lineLimit(1)
-                }
-                .buttonStyle(.borderedProminent).controlSize(.small)
-                .tint(searchFilter.isActive ? .orange : nil)
-                lookUpMenu
-                Spacer(minLength: 0)
-            }
-            if searchFilter.isActive {
-                luckyChip("One-time generation — tap to change or reset").font(.caption2)
-                // Trade size (Max people) is a Lucky-time option — only shown once Lucky is engaged.
-                MaxPeoplePicker()
-            }
-        }
-        .padding(.horizontal).padding(.top, 4)
-    }
-
-    /// D2: look up ANY dispatcher's schedule + trades. Compact so it sits next to the Lucky button.
-    private var lookUpMenu: some View {
-        Menu {
-            ForEach(allDispatchers, id: \.id) { p in
-                Button(p.name) {
-                    twoWayCandidate = PlanCandidate(workerID: p.id, name: p.name, quals: [],
-                                                    coveredShiftIDs: [], bookendShiftIDs: [], week: [])
-                }
-            }
-        } label: {
-            HStack(spacing: 4) {
-                Image(systemName: "magnifyingglass.circle")
-                Text("Look up").lineLimit(1)
-            }
-            .font(.caption.weight(.semibold)).padding(.horizontal, 10).padding(.vertical, 6)
-            .background(.bar, in: Capsule())
-        }
-        .disabled(allDispatchers.isEmpty)
-        .accessibilityLabel("Look up a dispatcher")
-    }
-
-    private func luckyChip(_ t: String) -> some View {
-        Text(t).font(.caption2.weight(.semibold)).padding(.horizontal, 8).padding(.vertical, 3)
-            .background(Color(.tertiarySystemFill), in: Capsule())
-    }
+    // (Old always-on lucky bar / look-up capsule / chip removed — their actions now live in the
+    // trade bar's overflow ⋯ menu. `luckyTitle` above is still used as that menu item's label.)
 
     private var resultsHeader: some View {
         HStack(spacing: 10) {
