@@ -148,12 +148,15 @@ reflects via B4-3; publishes to profile.
   the user set manually — test it only touches 1 & 7).
 - Depends on B4-3 (do B4-3 first).
 
-#### B4-5 — Profileless users: infer accept-prefs from last 60 days worked  · M · ⏪ REVERTED from matching
-**Shipped then reverted (2026-07-07):** applied as a hard blacklist on profileless peers, it over-pruned
-multi-day and multi-person covers (most peers are profileless) — user saw 3-way + multi-day trades vanish.
-`MatchContext.profile(for:)` is back to the plain A8 bookends default. `InferredPrefs` core + tests are
-kept for a future **soft** re-introduction (a ranking nudge, not a hard gate; or a much larger window /
-region-only). Do NOT re-wire as a hard blacklist.
+#### B4-5 — Profileless peers hard-restricted to last-60-day behavior  · M · ✅ (per user decision 2026-07-08)
+**Hard blacklist, by explicit user choice.** For a profileless peer with **≥6 worked shifts** in the last
+60 days, their A8 default hard-blacklists: **regions** not worked, **shift types (AM/PM/MID)** not worked,
+and **weekends** if they worked **zero** Sat/Sun. `< 6` shifts → plain bookends default (sparse/new people
+not boxed in). A published profile always overrides. `InferredPrefs.Result` (types/regions/worksWeekend)
++ `defaultForUnpublished(...,blacklistWeekends:)`; wired in `MatchContext`.
+**Known + accepted tradeoff:** restricting peers to real behavior shrinks the eligible pool per day, so
+**fewer 3-way / multi-day covers** in the normal feed (more under Lucky). The **shift-type** dimension is
+the biggest reducer — drop it (or raise `minSample`) if it's too strict. This is intentional, not a bug.
 **Decision applied:** **60-day** lookback, **soft** default (a real published profile always wins;
 empty/short history → fall back to A8 bookends).
 

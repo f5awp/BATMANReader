@@ -1386,25 +1386,34 @@ enum TradeEngineTests {
             check(WeekendBlackout.isOn([1, 7, 4]) && !WeekendBlackout.isOn([1, 4]), "B4-4: isOn requires BOTH weekend days")
         }
 
-        // MARK: B4-5 — infer profileless prefs from recent shifts; smarter A8 default blacklists the complement.
+        // MARK: B4-5 — hard-blacklist profileless peers to their recent behavior (region + type + weekend).
         do {
-            let asOf = TradeMatcher.dayDate(fromISO: "2026-03-01")!
+            let asOf = TradeMatcher.dayDate(fromISO: "2026-03-02")!   // a Monday
             func e(_ day: String, off: Bool = false, hour: Int = 5, desk: String = "10") -> RosterEntry {
                 RosterEntry(workerID: "W", workerName: "W", quals: ["D"], day: day, startHour: hour, desk: desk, isOff: off)
             }
             let amType = ShiftAvailabilityType.infer(fromStartHour: 5).rawValue
             let reg10 = DeskRules.region(forDesk: "10").rawValue
-            let recent = [e("2026-02-20"), e("2026-02-25"), e("2026-02-27"), e("2026-02-10", off: true), e("2025-01-01")]
-            let inf = InferredPrefs.from(entries: recent, asOf: asOf)
+            // 6 weekday AM/desk-10 shifts, no weekends → weekend blacklist expected.
+            let weekdays = ["2026-02-16", "2026-02-17", "2026-02-18", "2026-02-19", "2026-02-20", "2026-02-23"].map { e($0) }
+            let inf = InferredPrefs.from(entries: weekdays + [e("2026-02-10", off: true), e("2025-01-01")], asOf: asOf)
             check(inf?.shiftTypes == [amType], "B4-5: infers only worked shift types (AM); off/old excluded")
             check(inf?.regions == [reg10], "B4-5: infers only worked regions")
-            check(InferredPrefs.from(entries: [e("2026-02-20")], asOf: asOf) == nil, "B4-5: too little history → nil (no over-restriction)")
-            let prof = TradeProfile.defaultForUnpublished(workerID: "W", name: "W", inferredShiftTypes: [amType], inferredRegions: [reg10])
+            check(inf?.worksWeekend == false, "B4-5: no Sat/Sun in window → worksWeekend false")
+            check(InferredPrefs.from(entries: [e("2026-02-20")], asOf: asOf) == nil, "B4-5: < 6 shifts → nil (no over-restriction)")
+            // A worker WITH a weekend shift (Sat 2026-02-21).
+            let withWknd = InferredPrefs.from(entries: weekdays + [e("2026-02-21")], asOf: asOf)
+            check(withWknd?.worksWeekend == true, "B4-5: a Sat shift → worksWeekend true")
+            // Default profile: complement blacklisted + weekends blacklisted when they don't work them.
+            let prof = TradeProfile.defaultForUnpublished(workerID: "W", name: "W",
+                        inferredShiftTypes: [amType], inferredRegions: [reg10], blacklistWeekends: true)
             check(!prof.blacklistedShiftTypes.contains(amType)
                   && prof.blacklistedShiftTypes.count == ShiftAvailabilityType.allCases.count - 1,
                   "B4-5: inferred default blacklists every shift type EXCEPT worked")
+            check(prof.blacklistedWeekdays == [1, 7], "B4-5: blacklistWeekends → Sun+Sat blacklisted")
             let plain = TradeProfile.defaultForUnpublished(workerID: "W", name: "W")
-            check(plain.blacklistedShiftTypes.isEmpty && plain.blacklistedRegions.isEmpty, "B4-5: plain A8 default unchanged")
+            check(plain.blacklistedShiftTypes.isEmpty && plain.blacklistedRegions.isEmpty && plain.blacklistedWeekdays.isEmpty,
+                  "B4-5: plain A8 default unchanged")
         }
 
         // MARK: B4-3 — Blackout blacklist predicate (paints blacklisted shifts on the calendar).

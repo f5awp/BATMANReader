@@ -139,17 +139,25 @@ enum TradeRouter {
         let profilesByID: [String: TradeProfile]
         let universe: [MatchCandidate]
         let priors: [String: Double]                               // worker → acceptance log-odds
+        let inferred: [String: InferredPrefs.Result]               // B4-5: profileless peers' recent behavior
 
         /// My own schedule entries in the window (the preload `twoWayExplore` reuses).
         var mineEntries: [RosterEntry] { Array((maps[selfID] ?? [:]).values) }
         /// worker → quals, for the per-leg qual-bridge feature.
         var qualsDict: [String: [String]] { rosterMeta.mapValues { $0.quals } }
 
-        /// A8: a roster peer with no published profile defaults to Bookends-Only, never invisible.
-        /// (B4-5 inferred-prefs default was REVERTED here — as a hard blacklist it over-pruned multi-day
-        /// and multi-person covers. `InferredPrefs` core is kept for a future SOFT re-introduction.)
+        /// A roster peer with no published profile is included (never invisible). B4-5: if they've worked
+        /// enough recently, hard-restrict their default to that behavior — region + shift type + weekends
+        /// (weekend blacklist only if they worked none). A real published profile always wins.
         func profile(for id: String, name: String) -> TradeProfile {
-            profilesByID[id] ?? TradeProfile.defaultForUnpublished(workerID: id, name: name)
+            if let p = profilesByID[id] { return p }
+            guard let inf = inferred[id] else {
+                return TradeProfile.defaultForUnpublished(workerID: id, name: name)
+            }
+            return TradeProfile.defaultForUnpublished(workerID: id, name: name,
+                                                      inferredShiftTypes: inf.shiftTypes,
+                                                      inferredRegions: inf.regions,
+                                                      blacklistWeekends: !inf.worksWeekend)
         }
 
         static func build(selfID: String) async -> MatchContext {
@@ -166,9 +174,20 @@ enum TradeRouter {
                 roster: rosterMeta.map { (id: $0.key, name: $0.value.name, quals: $0.value.quals) },
                 profiles: profilesByID, selfID: selfID)
             let priors = MessagingStore.shared.acceptancePriorMap()
+            // B4-5: infer each PROFILELESS peer's recent (60d) behavior to hard-restrict their default.
+            // One extra windowed fetch (past 60d); shapes the default only, never the match window.
+            let lookbackStart = start.addingTimeInterval(-60 * 86_400)
+            var recentByWorker: [String: [RosterEntry]] = [:]
+            for e in await RosterStore.shared.entries(from: lookbackStart, to: start) {
+                recentByWorker[e.workerID, default: []].append(e)
+            }
+            var inferred: [String: InferredPrefs.Result] = [:]
+            for (wid, entries) in recentByWorker where profilesByID[wid] == nil {
+                if let inf = InferredPrefs.from(entries: entries, asOf: start) { inferred[wid] = inf }
+            }
             return MatchContext(start: start, end: end, selfID: selfID, maps: maps,
                                 rosterMeta: rosterMeta, profilesByID: profilesByID,
-                                universe: universe, priors: priors)
+                                universe: universe, priors: priors, inferred: inferred)
         }
     }
 

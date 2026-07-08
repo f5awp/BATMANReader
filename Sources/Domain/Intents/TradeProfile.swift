@@ -139,19 +139,21 @@ struct TradeProfile: Sendable, Hashable, Codable, Identifiable {
     /// is the epoch so any real published profile always wins last-write-wins.
     static func defaultForUnpublished(workerID: String, name: String,
                                       inferredShiftTypes: Set<String>? = nil,
-                                      inferredRegions: Set<String>? = nil) -> TradeProfile {
-        // B4-5: if we've inferred what they actually work (last 60d), blacklist the COMPLEMENT so a
-        // profileless peer is only offered shift types / regions they've been working. Soft: `updatedAt`
-        // stays epoch, so any real published profile always wins LWW.
+                                      inferredRegions: Set<String>? = nil,
+                                      blacklistWeekends: Bool = false) -> TradeProfile {
+        // B4-5: if we've inferred what they actually work (last 60d), hard-blacklist the COMPLEMENT so a
+        // profileless peer is only offered shift types / regions / weekdays they've been working. A real
+        // published profile always wins LWW (`updatedAt` stays epoch).
         let blShiftTypes = inferredShiftTypes.map {
             Set(ShiftAvailabilityType.allCases.map(\.rawValue)).subtracting($0)
         } ?? []
         let blRegions = inferredRegions.map {
             Set(DeskRegion.allCases.map(\.rawValue)).subtracting($0)
         } ?? []
+        let blWeekdays: Set<Int> = blacklistWeekends ? [1, 7] : []   // Sun + Sat
         return TradeProfile(workerID: workerID, displayName: name,
                      openness: TradeOpenness.bookends.rawValue,
-                     blacklistedWeekdays: [], blacklistedDesks: [],
+                     blacklistedWeekdays: blWeekdays, blacklistedDesks: [],
                      blacklistedShiftTypes: blShiftTypes, blacklistedRegions: blRegions,
                      seekingDayIDs: [], updatedAt: Date(timeIntervalSince1970: 0))
     }

@@ -72,7 +72,7 @@
 | Feature | File | Key symbols | Spec |
 |---|---|---|---|
 | Profile value type | `TradeProfile.swift` | `TradeProfile`, `wouldPickUp(...)` (gates `mustBeOffDayIDs` first), `passesBlacklist(...)`, `availabilityMap`; `defaultForUnpublished(...,inferredShiftTypes:,inferredRegions:)` (A8 + B4-5 inferred blacklist); **has** `mustBeOffDayIDs`/`keepDayIDs` | S-DATA-2, S-ENG-9 ✅, B4-5 |
-| **Profileless prefs inference (B4-5)** | `TradeEngineModels.swift` | `InferredPrefs.from(...)` + `defaultForUnpublished(inferredShiftTypes:inferredRegions:)` — pure core + tests only. **NOT wired into matching** (reverted: hard blacklist over-pruned multi-day/multi-person). For a future soft signal | B4-5 ⏪ |
+| **Profileless prefs inference (B4-5)** | `TradeEngineModels.swift` + `TradeProfile.swift` + `TradeRouter.MatchContext` | `InferredPrefs.from(...) -> Result{shiftTypes,regions,worksWeekend}` (≥6 shifts/60d) → `defaultForUnpublished(inferredShiftTypes:inferredRegions:blacklistWeekends:)` HARD-restricts profileless peers to recent region+type+weekend behavior; wired in `MatchContext.profile(for:)`. Published profile overrides. Tradeoff: fewer large covers | B4-5 ✅ |
 | Profile store + service | `TradeProfile.swift` (store), `CloudKitTradeProfileService.swift`, `LocalTradeProfileService` | `TradeProfileStore.shared`, `myProfile()`, `publishMine()`, `refreshOthers()`, `availableDispatchers(on:type:)` | S-SYNC-2 |
 | CloudKit config | `TradeProfile.swift` | `CloudKitConfig.containerID = "iCloud.com.ervinlee.batmanreader"` | — |
 

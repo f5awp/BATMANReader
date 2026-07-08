@@ -587,24 +587,33 @@ enum Blackout {
 }
 
 /// B4-5: infer what a profileless dispatcher actually works from their recent shifts, so their A8
-/// default only accepts shift types / regions they've been working. Pure + deterministic (pass `asOf`).
+/// default is hard-restricted to that behavior (region + shift type + weekends). Pure + deterministic.
 enum InferredPrefs {
-    /// From a worker's recent WORKED shifts within [asOf − lookbackDays, asOf], the shift types +
-    /// regions they work. Returns nil when there's too little history (→ fall back to the plain A8 default).
+    struct Result: Equatable, Sendable {
+        var shiftTypes: Set<String>   // AM/PM/MID they worked
+        var regions: Set<String>      // regions they worked
+        var worksWeekend: Bool        // worked ≥1 Sat/Sun in the window
+    }
+
+    /// From a worker's WORKED shifts within [asOf − lookbackDays, asOf]: the shift types + regions they
+    /// work, and whether they work weekends. Returns nil when there's too little history (< `minSample`
+    /// worked shifts) so sparse/new people aren't boxed in ("more than a few days" → default 6).
     static func from(entries: [RosterEntry], asOf: Date, lookbackDays: Int = 60,
-                     minSample: Int = 3) -> (shiftTypes: Set<String>, regions: Set<String>)? {
+                     minSample: Int = 6) -> Result? {
         let cutoff = asOf.addingTimeInterval(-Double(lookbackDays) * 86_400)
-        let recent = entries.filter { e in
-            guard !e.isOff, let d = TradeMatcher.dayDate(fromISO: e.day) else { return false }
-            return d >= cutoff && d <= asOf
-        }
-        guard recent.count >= minSample else { return nil }   // too little history → don't over-restrict
+        let cal = Calendar.current
         var types = Set<String>(), regions = Set<String>()
-        for e in recent {
+        var worksWeekend = false, count = 0
+        for e in entries where !e.isOff {
+            guard let d = TradeMatcher.dayDate(fromISO: e.day), d >= cutoff, d <= asOf else { continue }
+            count += 1
             types.insert(ShiftAvailabilityType.infer(fromStartHour: e.startHour).rawValue)
             regions.insert(DeskRules.region(forDesk: e.desk).rawValue)
+            let wd = cal.component(.weekday, from: d)
+            if wd == 1 || wd == 7 { worksWeekend = true }   // Sun / Sat
         }
-        return (types, regions)
+        guard count >= minSample else { return nil }
+        return Result(shiftTypes: types, regions: regions, worksWeekend: worksWeekend)
     }
 }
 
