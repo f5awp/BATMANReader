@@ -934,6 +934,15 @@ enum TradeRouter {
                       daysUntil: daysUntil(entry.day),
                       qualGatedDesk: DeskRules.hasQualGatedSelection(desks: [entry.desk]))
         }
+        // U-PERF (B4-10): the giver's working days, best-first. `givePromise` is computed ONCE per entry
+        // here instead of ~O(n log n) times inside a sort comparator at every DFS node. Result-neutral —
+        // same entries, same keys, same deterministic sort → identical order (see B4-10 reasoning).
+        func promiseSorted(_ map: DayMap, by giverID: String) -> [RosterEntry] {
+            map.values.filter { !$0.isOff }
+                .map { (entry: $0, p: givePromise($0, by: giverID)) }
+                .sorted { $0.p > $1.p }
+                .map(\.entry)
+        }
 
         // DFS: path of leg tuples. Each step, the current node gives one of THEIR
         // working days to a next node who can cover it. Close when the last node's
@@ -947,8 +956,7 @@ enum TradeRouter {
             // visited.count (self + others), so `>= 3` = self + ≥2 others; a 2-cycle is a 2-way swap,
             // handled by twoWayExplore/packages, never emitted here as a fake "circular."
             if depth >= 3 {
-                for entry in currentMap.values.filter({ !$0.isOff })
-                    .sorted(by: { givePromise($0, by: current) > givePromise($1, by: current) }) {   // A1: best-first
+                for entry in promiseSorted(currentMap, by: current) {   // A1: best-first (B4-10: precomputed)
                     guard entry.day >= TradeMatcher.isoDay(start) else { continue }
                     guard !keepDays(current).contains(entry.day) else { continue }   // never give a Keep day
                     guard !giveBlocked(current, entry) else { continue }             // relief: not a real shift
@@ -978,8 +986,7 @@ enum TradeRouter {
             guard depth < maxDepth else { return }
 
             // Otherwise, current gives one of their working days to a fresh node — A1: best-first.
-            for entry in currentMap.values.filter({ !$0.isOff })
-                .sorted(by: { givePromise($0, by: current) > givePromise($1, by: current) }) {
+            for entry in promiseSorted(currentMap, by: current) {   // B4-10: givePromise precomputed once/entry
                 if keepDays(current).contains(entry.day) { continue }   // never give a Keep day
                 if giveBlocked(current, entry) { continue }             // relief: not a real shift
                 // Prefer days the current giver actually wants to give (intent). The Intents engine

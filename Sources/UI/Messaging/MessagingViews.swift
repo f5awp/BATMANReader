@@ -904,33 +904,41 @@ struct ChannelView: View {
                     .listStyle(.plain)
                     .refreshable { await store.refresh(); await TradeProfileStore.shared.refreshOthers() }
                 }
-                Divider()
-                HStack(spacing: 8) {
-                    PhotosPicker(selection: $pickerItem, matching: .images) {
-                        Label("Photo", systemImage: "photo").font(.caption)
+            }
+            // B4-13: pin the composer in a bottom inset — stable identity OUTSIDE the scrolling List so
+            // tapping the Photo picker presents cleanly instead of re-laying-out the channel (which
+            // collapsed expanded threads + swallowed the tap). Mirrors ThreadView's working composer.
+            .safeAreaInset(edge: .bottom) {
+                VStack(spacing: 0) {
+                    Divider()
+                    HStack(spacing: 8) {
+                        PhotosPicker(selection: $pickerItem, matching: .images) {
+                            Label("Photo", systemImage: "photo").font(.caption)
+                        }
+                        if let img = pendingImage {
+                            Image(uiImage: img).resizable().scaledToFill()
+                                .frame(width: 32, height: 32).clipShape(RoundedRectangle(cornerRadius: 6))
+                            Button { pendingImage = nil; pickerItem = nil } label: {
+                                Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                            }
+                        }
+                        Spacer()
                     }
-                    if let img = pendingImage {
-                        Image(uiImage: img).resizable().scaledToFill()
-                            .frame(width: 32, height: 32).clipShape(RoundedRectangle(cornerRadius: 6))
-                        Button { pendingImage = nil; pickerItem = nil } label: {
-                            Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                    .padding(.horizontal, 12).padding(.top, 4)
+                    SlackComposer(placeholder: "Message #\(channel)", text: $draft) {
+                        let text = draft; draft = ""
+                        let img = pendingImage; pendingImage = nil; pickerItem = nil
+                        Task {
+                            let b64 = img.flatMap { PostImage.encode($0) }
+                            await store.post(text: text, channel: channel, imageBase64: b64)
                         }
                     }
-                    Spacer()
                 }
-                .padding(.horizontal, 12).padding(.top, 4)
+                .background(.bar)
                 .onChange(of: pickerItem) { _, item in
                     guard let item else { return }
                     Task {
                         if let data = try? await item.loadTransferable(type: Data.self) { pendingImage = UIImage(data: data) }
-                    }
-                }
-                SlackComposer(placeholder: "Message #\(channel)", text: $draft) {
-                    let text = draft; draft = ""
-                    let img = pendingImage; pendingImage = nil; pickerItem = nil
-                    Task {
-                        let b64 = img.flatMap { PostImage.encode($0) }
-                        await store.post(text: text, channel: channel, imageBase64: b64)
                     }
                 }
             }

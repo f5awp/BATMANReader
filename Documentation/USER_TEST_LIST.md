@@ -587,6 +587,31 @@
 3. A peer WITH a published profile.
    - **Expect:** unaffected — their real profile always wins.
 
+### B4-10 — Faster search (result-neutral speed opts)  [B4-10 · build-verified; device-check]
+1. Trade Solutions / Intents: change **Max people**, toggle **What If?**, and **Save** intents in quick
+   succession.
+   - **Expect:** the feed settles to the correct result **once** (rapid changes coalesce, ~150ms) — no
+     flurry of flashing intermediate results; feels snappier, especially with Max people on Unbound.
+2. Results themselves are **unchanged** — same cards, same order as before this build.
+- **Break it:** the FINAL change must always take effect (make several changes fast, then stop → the
+  last one's results show). Report if any result set differs from before B4-10.
+
+### B4-8 — Names (not employee #) everywhere in calendar/trade views  [B4-8 · build-verified; device-check]
+1. Open a package detail (back-to-back calendars), a circular handoff chain, and a two-way calendar with a
+   dispatcher who has **no published profile** but is on the roster.
+   - **Expect:** their **real name** shows (from the roster), not a bare number like "660615".
+2. A worker with a genuinely blank/all-digit roster name and no profile.
+   - **Expect:** falls back to the employee # only as a last resort (failsafe) — never a blank.
+- **Break it:** open a detail cold (before running a search) — names may briefly show the # until the
+  roster warms, then resolve. Report if a real name ever stays a number.
+
+### B4-13 — Channel Photo chip opens the picker without resetting the view  [B4-13 · device-check]
+1. In a Channel, **expand a post's replies** (tap it), then tap the **Photo** chip on the bottom composer.
+   - **Expect:** the system **photo picker opens**; the expanded thread stays as-is (no jump back to the
+     main channel). Pick an image → it previews → send → it posts with the image.
+- **Break it:** expand several threads, tap Photo — none should collapse; cancel the picker → you're
+  still where you were.
+
 ### Notes for the tester
 - If something here fails, tell me the item number (e.g. "T5 ⚠️") and what you saw.
 - "Auto ✅" means the logic is unit-guarded, but **your device check is still the real proof** — the

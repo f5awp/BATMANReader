@@ -214,7 +214,14 @@ struct TradeByIntentsFeed: View {
     /// supersedes the previous Lucky search instead of racing it).
     private func runSearch(_ work: @escaping () async -> Void) {
         searchTask?.cancel()
-        searchTask = Task { await work() }
+        searchTask = Task {
+            // B4-10: debounce — coalesce rapid triggers (SAVE + whatIf + max-people can fire together) so
+            // the engine starts once for the settled input. A superseded task is cancelled during the
+            // sleep and bails; the final trigger still runs (result-neutral for the settled state).
+            try? await Task.sleep(for: .milliseconds(150))
+            if Task.isCancelled { return }
+            await work()
+        }
     }
 
     /// Background/default: fast 2-person generation, and clear any Lucky filter so the
@@ -1096,7 +1103,11 @@ func participantName(_ id: String) -> String {
         let dn = SettingsManager.shared.displayName
         return dn.isEmpty ? "You" : dn
     }
-    return TradeProfileStore.shared.profile(forWorker: id)?.displayName ?? id
+    // B4-8: published display name → cached roster name → employee # (last resort). `TradeNames.resolved`
+    // rejects blank / all-digits / == id so a calendar never shows a bare number when a real name exists.
+    return TradeNames.resolved(displayName: TradeProfileStore.shared.profile(forWorker: id)?.displayName,
+                               rosterName: RosterStore.shared.name(for: id),
+                               workerID: id)
 }
 
 func participantStatus(_ id: String) -> String? {

@@ -36,6 +36,7 @@
 |---|---|---|---|
 | Roster store (SwiftData, LOCAL) | `RosterStore.swift` | `RosterStore.shared`, `container` (self-healing `init`), `RosterModelActor`, `importRoster`, `dispatchersOff/Working(on:)`, `entries(from:to:)`, `schedule(forWorker:)` | — |
 | Master publish + pull | `RosterStore.swift` | `publishMaster(csv:)`, `syncMasterIfNewer()` (derives user schedule → `ShiftStore.save` + reconcile + alerts) | S-PARSE-2, S-SYNC |
+| Worker name resolve (B4-8) | `RosterStore.swift` + `TradeIntentsFeed.swift` | `RosterStore.name(for:)` (synchronous cached roster-name map, warmed by every fetch) → `participantName(id)` routes display-name → roster-name → # via `TradeNames.resolved`; fixes calendars/PackageDetail/HandoffChain showing employee # | B4-8 |
 | Roster row model | `RosterShift.swift` | `@Model RosterShift {workerID,workerName,quals,day,date,startHour,desk,isOff}`, `RosterEntry` snapshot; add `leaveCode` here | S-DATA-1 |
 
 ## 3. Intents (per-day marks: trade away / keep / must-be-off / availability)
@@ -93,7 +94,7 @@
 | Root tabs + dock + onboarding + launch task | `ContentView.swift` | `ContentView`, `OnboardingView`, `MessagingDock` overlay, `AppAppearance` | — |
 | App entry | `BATMANReaderApp.swift` | `@main`, perms, `.modelContainer` | — |
 | Home (calendar/intents/import) | `HomeView.swift`, `HomeCalendar.swift` | `HomeView`, intent calendar, `MarkIntentsToolbar`, `handleImport`, `reconcileSnapshot`; metrics header → **U-HOME-1** | U-HOME |
-| Trades (search/intents/ECB) | `TradesView.swift`, `TradeIntentsFeed.swift` | `TradesView` segments, `PackageCard`, **`CompactSwapCard`** (2-person → thin ECB-style card; gate `TradePackage.usesCompactCard`, B4-14), `PackageDetailView`, `HandoffChain`, `TraderChips`, `IntentTallyBar`, `IntentColorKey`; default=Search → **U-TRADES-1** | U-TRADES, U-CARD, B4-14 |
+| Trades (search/intents/ECB) | `TradesView.swift`, `TradeIntentsFeed.swift` | `TradesView` segments, `PackageCard`, **`CompactSwapCard`** (2-person → thin ECB-style card; gate `TradePackage.usesCompactCard`, B4-14), `PackageDetailView`, `HandoffChain`, `TraderChips`, `IntentTallyBar`, `IntentColorKey`; `runSearch` **debounced 150ms** (B4-10); default=Search → **U-TRADES-1** | U-TRADES, U-CARD, B4-14, B4-10 |
 | Availability / two-way / ECB | `AvailabilityView.swift` | Find Candidates, `TwoWaySheet`, `MiniScheduleGrid/Legend`, ECB flow | U-SEARCH, U-SWAPS |
 | Day pickers / strips | `ShiftSelectCalendar.swift`; `AvailabilityView.swift` | `ShiftSelectCalendar` (multi-select; shows intent bar + note dot, C3); `CoverageStrip` | C3 ✅ |
 | Inbox / channels / chat | `MessagingViews.swift` | `InboxView`, `ThreadView`, `ChannelView`, `MessagingDock`, `StatusBadge` | U-INBOX, U-MSG |

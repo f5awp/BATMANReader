@@ -386,7 +386,13 @@ struct FindCandidatesSection: View {
     /// supersedes the previous search instead of racing it).
     private func runSearch(_ work: @escaping () async -> Void) {
         searchTask?.cancel()
-        searchTask = Task { await work() }
+        searchTask = Task {
+            // B4-10: debounce — coalesce rapid triggers so the engine starts once for the settled input.
+            // A superseded task is cancelled during the sleep and bails; the final trigger still runs.
+            try? await Task.sleep(for: .milliseconds(150))
+            if Task.isCancelled { return }
+            await work()
+        }
     }
 
     /// Find: fast 2-person generation, with any Lucky filter cleared so the results show.

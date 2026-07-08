@@ -167,7 +167,7 @@ AM/domestic-like pickups; empty history → today's A8 bookends behavior.
 
 ### Theme D — Trade UX & correctness
 
-#### B4-8 — Calendar trade view shows name, not employee #  · S · ☐
+#### B4-8 — Calendar trade view shows name, not employee #  · S · ✅ (all calendar/detail views via participantName)
 **Design.** Route the offending calendar-trade label through `TradeNames.resolved(displayName:rosterName:workerID:)`
 (SSOT, R3-G2a). Locate the call-site still printing `workerID` (in `HomeCalendar`/`AvailabilityView` trade overlay).
 
@@ -178,7 +178,7 @@ AM/domestic-like pickups; empty history → today's A8 bookends behavior.
 - Edge: all-digits/blank/`==id` display names must NOT be shown (already in `TradeNames` — verify the
   call-site passes the raw values, not a pre-resolved string). Device-verify.
 
-#### B4-9 — Legend/key at the bottom of the calendar trade view  · S · ☐
+#### B4-9 — Legend/key at the bottom of the calendar trade view  · S · ✅ (already present: MiniScheduleLegend / IntentColorKey / TradeFeedKey across the views)
 **Design.** Pin a compact `IntentColorKey` (Trade-away · Want-to-work · **Blackout** · 📖 bookend ·
 🔥 mutual · per-trader colors) at the bottom of the calendar trade view.
 
@@ -234,7 +234,7 @@ ECB compact style lives in `ECBOfferRow` (`MessagingViews.swift`). The two-way s
 
 ### Theme E — Performance
 
-#### B4-10 — Speed up trade search (engine refactor phase 2, SAFE ONLY)  · L · ☐
+#### B4-10 — Speed up trade search (engine refactor phase 2, SAFE ONLY)  · L · ✅ (debounce + precompute; prune/cache deferred)
 **Decision applied:** behavior-preserving optimizations only (no off-main-actor DFS).
 
 **Design (measure first, apply incrementally).**
@@ -264,7 +264,7 @@ results/order.
 - Nil-safe: a decode failure (`PostImage.decode` → nil) shows a graceful placeholder, never crashes.
 - Reuse one component (no three divergent viewers).
 
-#### B4-12 — Dev mode crashes while typing messages  · M · ☐
+#### B4-12 — Dev mode crashes while typing messages  · — · ⏹️ NOT REPRODUCIBLE (no crash log even with dev on, per user 2026-07-07). Closed; reopen if a crash log surfaces.
 **Design.** Reproduce (dev unlocked → thread/channel → type). Pull the crash log (`GetCrashIssueLogs`),
 find root cause (suspects: per-keystroke `@Observable` write, a force-unwrap in a `dev.unlocked` overlay,
 formatter re-entrancy), fix, guard.
@@ -276,7 +276,12 @@ formatter re-entrancy), fix, guard.
 - If root cause is pure (formatter/parse on input) → RED unit test on the crashing input.
 - Regression: verify non-dev mode was and stays stable (isolate the dev-only path).
 
-#### B4-13 — Tapping a thread opens the photo picker (should expand/minimize)  · S · ☐
+#### B4-13 — Channel "Photo" chip resets the view / doesn't open the picker  · S · ✅ (fix in; device-verify)
+**Actual bug (clarified):** the ChannelView bottom composer's **Photo** chip collapsed the expanded
+thread back to the main channel and never opened the picker — because the composer sat inside the
+scrolling `List`/`VStack`, so the `PhotosPicker` presentation churned the layout. **Fix:** moved the
+composer into a pinned `.safeAreaInset(edge:.bottom)` (stable identity outside the List), mirroring the
+working `ThreadView` composer. Build-verified; **device-verify** the picker now opens and the thread stays.
 **Design.** Separate the row's expand/collapse tap target from the composer `PhotosPicker`
 (distinct `contentShape`/regions) so a row tap toggles expand/minimize; the picker opens only from the photo button.
 

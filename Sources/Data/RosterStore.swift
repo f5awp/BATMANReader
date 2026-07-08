@@ -99,6 +99,16 @@ final class RosterStore {
         set { UserDefaults.standard.set(newValue, forKey: "batman.rosterMasterVersion") }
     }
 
+    /// B4-8: synchronous worker-id → roster-name cache so views (calendars, package detail, handoff
+    /// chain) can resolve a real name instead of showing the employee number. Warmed by every roster
+    /// fetch below. `name(for:)` is the read; callers still route through `TradeNames.resolved` for the
+    /// blank/all-digits failsafe.
+    private var nameCache: [String: String] = [:]
+    func name(for workerID: String) -> String? { nameCache[workerID] }
+    private func cacheNames(_ entries: [RosterEntry]) {
+        for e in entries where nameCache[e.workerID] == nil { nameCache[e.workerID] = e.workerName }
+    }
+
     private init() {
         // The roster is LOCAL per-device data. Explicitly opt out of SwiftData's
         // automatic CloudKit mirroring — the iCloud entitlement would otherwise
@@ -181,19 +191,23 @@ final class RosterStore {
     }
 
     func dispatchersOff(on date: Date) async -> [RosterEntry] {
-        (try? await actor.dispatchersOff(onDay: Self.iso(date))) ?? []
+        let r = (try? await actor.dispatchersOff(onDay: Self.iso(date))) ?? []
+        cacheNames(r); return r
     }
 
     func dispatchersWorking(on date: Date) async -> [RosterEntry] {
-        (try? await actor.dispatchersWorking(onDay: Self.iso(date))) ?? []
+        let r = (try? await actor.dispatchersWorking(onDay: Self.iso(date))) ?? []
+        cacheNames(r); return r
     }
 
     func schedule(forWorker workerID: String) async -> [RosterEntry] {
-        (try? await actor.schedule(forWorker: workerID)) ?? []
+        let r = (try? await actor.schedule(forWorker: workerID)) ?? []
+        cacheNames(r); return r
     }
 
     func entries(from lower: Date, to upper: Date) async -> [RosterEntry] {
-        (try? await actor.entries(from: lower, to: upper)) ?? []
+        let r = (try? await actor.entries(from: lower, to: upper)) ?? []
+        cacheNames(r); return r
     }
 
     private static func iso(_ date: Date) -> String {
