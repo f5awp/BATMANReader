@@ -115,4 +115,9 @@ struct Shift: Codable, Identifiable, Hashable {
         let type = ShiftAvailabilityType.infer(fromStartHour: startHour).rawValue
         return desk.isEmpty ? type : "\(type) \(desk)"
     }
+
+    /// Just the shift type — "AM"/"PM"/"MID" — with no desk (for when the desk-numbers layer is off).
+    var shiftTypeLabel: String {
+        isOff ? "" : ShiftAvailabilityType.infer(fromStartHour: startHour).rawValue
+    }
 }

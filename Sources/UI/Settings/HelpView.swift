@@ -20,10 +20,12 @@ struct WelcomeView: View {
                 VStack(alignment: .leading, spacing: 24) {
                     hero
                     purpose
+                    firstSteps        // lead with what to DO
+                    whatsNew
                     pillars
+                    // The deep methodology + scoring detail live at the BOTTOM — reference, not the pitch.
                     methodology
                     scoringTable
-                    whatsNew
                     deepLinks
                 }
                 .padding(20)
@@ -57,12 +59,34 @@ struct WelcomeView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    /// Shortened intro — one line. The full "why" + methodology now live lower down / behind the links.
     private var purpose: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            ForEach(AppGuide.purpose, id: \.self) { p in
-                Text(p).font(.subheadline).foregroundStyle(.primary)
+        Text(AppGuide.purpose.first ?? "")
+            .font(.subheadline).foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// The lead content: a numbered checklist of the first things to do after joining.
+    private var firstSteps: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Your first steps").font(.headline)
+            ForEach(Array(AppGuide.firstSteps.enumerated()), id: \.element.id) { i, step in
+                HStack(alignment: .top, spacing: 12) {
+                    Text("\(i + 1)")
+                        .font(.footnote.weight(.bold)).foregroundStyle(.white)
+                        .frame(width: 24, height: 24)
+                        .background(AppColor.primary, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Label(step.title, systemImage: step.symbol)
+                            .font(.subheadline.weight(.semibold)).labelStyle(.titleAndIcon)
+                        Text(step.detail).font(.caption).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var pillars: some View {

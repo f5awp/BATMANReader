@@ -958,20 +958,22 @@ struct ChannelView: View {
             .safeAreaInset(edge: .bottom) {
                 VStack(spacing: 0) {
                     Divider()
-                    HStack(spacing: 8) {
+                    HStack(spacing: 10) {
                         PhotosPicker(selection: $pickerItem, matching: .images) {
-                            Label("Photo", systemImage: "photo").font(.caption)
+                            Image(systemName: "photo").font(.subheadline).foregroundStyle(.secondary)
                         }
                         if let img = pendingImage {
                             Image(uiImage: img).resizable().scaledToFill()
-                                .frame(width: 32, height: 32).clipShape(RoundedRectangle(cornerRadius: 6))
+                                .frame(width: 30, height: 30)
+                                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                             Button { pendingImage = nil; pickerItem = nil } label: {
                                 Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
                             }
+                            Text("Photo attached").font(.caption2).foregroundStyle(.tertiary)
                         }
                         Spacer()
                     }
-                    .padding(.horizontal, 12).padding(.top, 4)
+                    .padding(.horizontal, 12).padding(.top, 6)
                     SlackComposer(placeholder: "Message #\(channel)", text: $draft,
                                   mentionPeople: mentionPeople) {
                         let text = draft; draft = ""

@@ -139,9 +139,12 @@ struct LegendSwatch: View {
     var body: some View {
         switch swatch {
         case .fill(let c):
-            RoundedRectangle(cornerRadius: 5).fill(c.opacity(0.65)).frame(width: size, height: size)
+            // Full-strength token color (no opacity wash) so the legend reads at true contrast and
+            // matches the palette exactly. A hairline keeps light swatches legible on any background.
+            RoundedRectangle(cornerRadius: 5).fill(c).frame(width: size, height: size)
+                .overlay(RoundedRectangle(cornerRadius: 5).stroke(.white.opacity(0.15), lineWidth: 0.5))
         case .border(let c):
-            RoundedRectangle(cornerRadius: 5).strokeBorder(c, lineWidth: 2).frame(width: size, height: size)
+            RoundedRectangle(cornerRadius: 5).strokeBorder(c, lineWidth: 2.5).frame(width: size, height: size)
         case .icon(let symbol, let c):
             Image(systemName: symbol).font(.system(size: size * 0.72)).foregroundStyle(c).frame(width: size, height: size)
         case .glyph(let g):
@@ -328,10 +331,12 @@ struct SlackComposer: View {
                 Button(action: onSend) {
                     Image(systemName: "paperplane.fill")
                         .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .frame(width: 34, height: 34)
-                        .background(isEmpty ? AppColor.neutral.opacity(0.4) : Color.accentColor, in: Circle())
+                        .foregroundStyle(isEmpty ? Color.secondary : .white)
+                        .frame(width: DS.controlSize, height: DS.controlSize)
+                        .background(isEmpty ? Color(.tertiarySystemFill) : Color.accentColor,
+                                    in: RoundedRectangle(cornerRadius: DS.controlRadius, style: .continuous))
                 }
+                .buttonStyle(.plain)
                 .disabled(isEmpty)
             }
             if showFormatBar {

@@ -21,6 +21,7 @@ struct LayerVisibility {
     var notes = true          // DayNote markers
     var intentOverlays = true // intent tints
     var availability = true   // AM/PM/MID pickup markers on off days (#2: now toggleable)
+    var deskAssignments = true // show the desk on worked days ("PM 32" vs just "PM")
 }
 
 // MARK: - Home
@@ -509,13 +510,16 @@ struct VisibilityToolbar: View {
 
     /// Collapsed into a single "layers" menu so it no longer occupies a full toolbar row.
     /// The icon fills accent when any layer is hidden (so it's obvious something is off).
-    private var anyHidden: Bool { !(layers.notes && layers.intentOverlays && layers.availability) }
+    private var anyHidden: Bool {
+        !(layers.notes && layers.intentOverlays && layers.availability && layers.deskAssignments)
+    }
 
     var body: some View {
         Menu {
             Toggle(isOn: $layers.notes) { Label("Notes", systemImage: "note.text") }
             Toggle(isOn: $layers.intentOverlays) { Label("Intent colors", systemImage: "paintpalette.fill") }
             Toggle(isOn: $layers.availability) { Label("Shift availability", systemImage: "clock.badge.checkmark") }
+            Toggle(isOn: $layers.deskAssignments) { Label("Desk numbers", systemImage: "number") }
         } label: {
             Image(systemName: "square.3.layers.3d")
                 .font(.system(size: 15, weight: .semibold))

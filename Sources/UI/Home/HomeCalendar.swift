@@ -238,7 +238,7 @@ struct IntentCalendarView: View {
 
     @ViewBuilder private func dayContent(shift: Shift?, isWorking: Bool, isOff: Bool, dayID: String) -> some View {
         if isWorking, let shift {
-            Text(shift.shiftShortLabel)
+            Text(layers.deskAssignments ? shift.shiftShortLabel : shift.shiftTypeLabel)
                 .font(.caption.weight(.heavy)).lineLimit(1).minimumScaleFactor(0.6)
         } else if let shift, shift.isVacation {
             // Vacation reads as a distinct teal state, not a plain day off. (U-VAC)

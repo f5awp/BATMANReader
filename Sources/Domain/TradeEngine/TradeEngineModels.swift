@@ -679,6 +679,28 @@ enum AppGuide {
         "It's built to be consistent and trustworthy: the same rules and the same ranking sit behind every search. And everything — your trades, the channel, statuses, and team stats — syncs across the shop through iCloud, so everyone is working from the same board.",
     ]
 
+    /// The concrete first things to do after joining — the welcome page LEADS with these (a checklist)
+    /// instead of a long pitch. Operator-facing, ordered as a first-day walkthrough.
+    struct FirstStep: Identifiable, Sendable { let id = UUID(); let symbol: String; let title: String; let detail: String }
+    static let firstSteps: [FirstStep] = [
+        FirstStep(symbol: "icloud.fill", title: "Turn on iCloud & shared calendar",
+                  detail: "In Trade Settings, keep iCloud Trade Sync on and connect the shared calendar — that's how you see everyone, the channel, and your schedule from the master."),
+        FirstStep(symbol: "arrow.left.arrow.right", title: "Set your trade settings",
+                  detail: "Set your openness (Bookends-Only or Open to all), any blacklists, and a status — so matches fit how you actually trade."),
+        FirstStep(symbol: "pencil.and.list.clipboard", title: "Mark your intents",
+                  detail: "On Home, tap Mark Intents and paint the working days you want to trade away and the off days you'd pick up."),
+        FirstStep(symbol: "megaphone.fill", title: "Say hi in the channel",
+                  detail: "Open the Channel and introduce yourself — @mention someone or @everyone. It's how the shop coordinates."),
+        FirstStep(symbol: "magnifyingglass", title: "Search for a trade",
+                  detail: "On Trades, use Intents or Trade Solutions to find real, legal swaps for your days — best matches on top."),
+        FirstStep(symbol: "paperplane.fill", title: "Send a trade request",
+                  detail: "Found a good one? Tap Propose to send it, and track replies in your Inbox."),
+        FirstStep(symbol: "hammer.fill", title: "Try to break it",
+                  detail: "Poke at edge cases and unusual trades — this is a beta, and real use is what finds the sharp edges."),
+        FirstStep(symbol: "exclamationmark.bubble.fill", title: "Report bugs in #feedback",
+                  detail: "Anything weird or broken? Post it in the #feedback channel so it gets fixed fast."),
+    ]
+
     /// Feature pillars (quick "what it does" grid on the welcome page).
     static let pillars: [(symbol: String, title: String, blurb: String)] = [
         ("calendar", "Auto schedule", "Your roster, vacation, and quals — read from the master, kept current automatically."),

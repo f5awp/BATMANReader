@@ -58,20 +58,30 @@ extension Font {
 /// categorical ramp for identity only. Fresh reduced palette — harmonized saturation/
 /// luminance so hues sit together cleanly in light and dark.
 enum AppColor {
+    /// Global contrast knob: every palette color's channels are scaled toward/away from mid-gray by this
+    /// factor, so the whole app (and the legend, which uses these same tokens) retunes from one place.
+    /// 1.00 = raw definition; 0.92 = −8% contrast (softer, current). Change here to retune the ENTIRE app.
+    static let contrast: Double = 0.92
+    /// Build a palette color with the global contrast applied to each channel.
+    private static func c(_ r: Double, _ g: Double, _ b: Double) -> Color {
+        func adj(_ v: Double) -> Double { min(1, max(0, 0.5 + (v - 0.5) * contrast)) }
+        return Color(red: adj(r), green: adj(g), blue: adj(b))
+    }
+
     // ── Tier 1 · semantic ────────────────────────────────────────────────
-    static let primary   = Color(red: 0.16, green: 0.43, blue: 0.88)  // blue — actions, links, selection, "you", info
-    static let success   = Color(red: 0.20, green: 0.66, blue: 0.33)  // green — accepted, kept, authorized, optimal, done
-    static let pending   = Color(red: 0.90, green: 0.63, blue: 0.11)  // amber — waiting, caution, "want to work"
-    static let danger    = Color(red: 0.84, green: 0.24, blue: 0.22)  // red — declined, error, destructive
-    static let heat      = Color(red: 0.95, green: 0.45, blue: 0.16)  // orange — demand / urgency ONLY
-    static let special   = Color(red: 0.49, green: 0.33, blue: 0.83)  // violet — multi-way / circular / trade-away
-    static let milestone = Color(red: 0.89, green: 0.35, blue: 0.63)  // pink — protected personal date (rare)
-    static let neutral   = Color(.systemGray)                          // cancelled / inert / no intent
+    static let primary   = c(0.16, 0.43, 0.88)  // blue — actions, links, selection, "you", info
+    static let success   = c(0.20, 0.66, 0.33)  // green — accepted, kept, authorized, optimal, done
+    static let pending   = c(0.90, 0.63, 0.11)  // amber — waiting, caution, "want to work"
+    static let danger    = c(0.84, 0.24, 0.22)  // red — declined, error, destructive
+    static let heat      = c(0.95, 0.45, 0.16)  // orange — demand / urgency ONLY
+    static let special   = c(0.49, 0.33, 0.83)  // violet — multi-way / circular / trade-away
+    static let milestone = c(0.89, 0.35, 0.63)  // pink — protected personal date (rare)
+    static let neutral   = Color(.systemGray)    // cancelled / inert / no intent (system-managed)
 
     // Cooler off-day states (kept distinct from worked-day hues).
-    static let locked      = Color(red: 0.29, green: 0.32, blue: 0.52) // slate — "must be off" (locked)
-    static let passiveOpen = Color(red: 0.45, green: 0.53, blue: 0.60) // faded slate-blue — passively open
-    static let vacation    = Color(red: 0.11, green: 0.60, blue: 0.55) // teal — a day OFF on vacation
+    static let locked      = c(0.29, 0.32, 0.52) // slate — "must be off" (locked)
+    static let passiveOpen = c(0.45, 0.53, 0.60) // faded slate-blue — passively open
+    static let vacation    = c(0.11, 0.60, 0.55) // teal — a day OFF on vacation
 
     /// Your schedule reads in the action/"you" blue on every trade surface.
     static var mine: Color { primary }
@@ -81,13 +91,13 @@ enum AppColor {
     /// unused for "you" (you're always `mine`/blue); peers cycle from index 1 so a peer is
     /// never the danger red or success green by coincidence of meaning.
     static let categorical: [Color] = [
-        primary,                                        // 0 — blue (you)
-        Color(red: 0.85, green: 0.30, blue: 0.34),      // 1 — red
-        Color(red: 0.93, green: 0.55, blue: 0.16),      // 2 — orange
-        Color(red: 0.24, green: 0.64, blue: 0.36),      // 3 — green
-        special,                                        // 4 — violet
-        Color(red: 0.82, green: 0.30, blue: 0.55),      // 5 — magenta
-        Color(red: 0.13, green: 0.62, blue: 0.60),      // 6 — teal
+        primary,               // 0 — blue (you)
+        c(0.85, 0.30, 0.34),   // 1 — red
+        c(0.93, 0.55, 0.16),   // 2 — orange
+        c(0.24, 0.64, 0.36),   // 3 — green
+        special,               // 4 — violet
+        c(0.82, 0.30, 0.55),   // 5 — magenta
+        c(0.13, 0.62, 0.60),   // 6 — teal
     ]
 }
 
@@ -137,14 +147,14 @@ enum AppLegend {
         Section(title: "Intent colors", items: [
             Item(swatch: .fill(WorkingIntentState.dontWantToWork.brickColor), name: "Trade away",
                  meaning: "A working day you want to give away"),
+            Item(swatch: .fill(WorkingIntentState.mustWork.brickColor), name: "Blackout — working shift",
+                 meaning: "A working day you'll never trade away"),
             Item(swatch: .fill(OffIntentState.wantToWork.brickColor), name: "Want to work",
                  meaning: "An off day you'd pick up a shift on"),
-            Item(swatch: .fill(WorkingIntentState.mustWork.brickColor), name: "Blackout (working)",
-                 meaning: "A working day you'll never trade away"),
-            Item(swatch: .fill(OffIntentState.mustBeOff.brickColor), name: "Must be off",
-                 meaning: "An off day you'll never work"),
+            Item(swatch: .fill(OffIntentState.mustBeOff.brickColor), name: "Blackout — day off",
+                 meaning: "An off day you'll never be scheduled to work"),
             Item(swatch: .fill(OffIntentState.neutralOpen.brickColor), name: "Open",
-                 meaning: "Passively available — no strong preference"),
+                 meaning: "An off day you're passively available — no strong preference"),
             Item(swatch: .fill(AppColor.vacation), name: "Vacation",
                  meaning: "A day off on approved vacation"),
             Item(swatch: .fill(AppColor.neutral), name: "Neutral",
@@ -173,6 +183,8 @@ enum AppLegend {
                  meaning: "You both want this exact move"),
             Item(swatch: .glyph("📖"), name: "Bookend",
                  meaning: "Attaches cleanly to existing work / off"),
+            Item(swatch: .glyph("🤖"), name: "Not on the app yet",
+                 meaning: "This dispatcher hasn't set up trading — they show in matches but can't receive messages until they join"),
         ]),
     ]
 }
