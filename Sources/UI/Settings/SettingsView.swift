@@ -23,6 +23,7 @@ struct SettingsView: View {
     @State private var showHelp = false
     @State private var showTesterGuide = false
     @State private var showWelcome = false
+    @State private var rosterProbe: String?   // dev: roster date-span + last-60d readout
     private var dev = DevAccess.shared
     @Environment(\.dismiss) private var dismiss
 
@@ -357,6 +358,9 @@ struct SettingsView: View {
                         Button(role: .destructive) { dev.lock() } label: {
                             Label("Lock developer access", systemImage: "lock.open.fill")
                         }
+                        Button { Task { rosterProbe = await Self.probeRoster() } } label: {
+                            Label("Roster date-span probe", systemImage: "calendar.badge.clock")
+                        }
                     } else {
                         Button { showDebugPrompt = true } label: {
                             Label("Developer access", systemImage: "lock.fill")
@@ -409,6 +413,9 @@ struct SettingsView: View {
                     Button("Done") { dismiss() }
                 }
             }
+            .alert("Roster probe", isPresented: Binding(get: { rosterProbe != nil }, set: { if !$0 { rosterProbe = nil } })) {
+                Button("OK", role: .cancel) {}
+            } message: { Text(rosterProbe ?? "") }
             .sheet(isPresented: $showWelcome) { WelcomeView() }
             .sheet(isPresented: $showHelp) { HelpView() }
             .sheet(isPresented: $showTesterGuide) { TesterGuideView() }
@@ -461,6 +468,34 @@ struct SettingsView: View {
     private func weekdayName(_ weekday: Int) -> String {
         let symbols = Calendar.current.weekdaySymbols   // ["Sunday" … "Saturday"]
         return symbols[(weekday - 1) % symbols.count]
+    }
+
+    /// DEV: confirm the roster's actual date span + whether the last-60-day (backward) window that B4-5
+    /// inference reads even contains data. If "last 60d" is ~0, backward inference is impossible and the
+    /// lookback is looking at the wrong period (the master is likely forward-only).
+    static func probeRoster() async -> String {
+        let cal = Calendar.current
+        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"
+        let today = cal.startOfDay(for: Date())
+        let all = await RosterStore.shared.entries(from: today.addingTimeInterval(-500 * 86_400),
+                                                   to: today.addingTimeInterval(500 * 86_400))
+        guard !all.isEmpty else { return "Roster is EMPTY (0 rows). Sync/import the master first." }
+        let dates = all.compactMap { f.date(from: $0.day) }
+        let minS = dates.min().map { f.string(from: $0) } ?? "?"
+        let maxS = dates.max().map { f.string(from: $0) } ?? "?"
+        let lo = today.addingTimeInterval(-60 * 86_400)
+        let recent = all.filter { let d = f.date(from: $0.day); return d != nil && d! >= lo && d! <= today }
+        let worked = recent.filter { !$0.isOff }
+        let weekend = worked.filter { let d = f.date(from: $0.day)!; let w = cal.component(.weekday, from: d); return w == 1 || w == 7 }
+        let workers = Set(worked.map { $0.workerID }).count
+        return """
+        rows: \(all.count)
+        span: \(minS) … \(maxS)
+        today: \(f.string(from: today))
+        last 60d: \(recent.count) entries
+        worked: \(worked.count) (weekend: \(weekend.count))
+        workers worked ≥1: \(workers)
+        """
     }
 
 
