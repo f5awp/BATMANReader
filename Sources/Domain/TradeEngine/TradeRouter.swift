@@ -328,13 +328,15 @@ enum TradeRouter {
                                        route: nil, urgency: urgency(of: cover), isOptimal: fullCover))
         }
 
-        // 2) If nobody can do it alone, find the fewest-people multi-person cover
-        //    (optimal), else a greedy balanced cover. GATED: 3+ people only when the
-        //    caller widened the scope (Lucky/Generate) — never in the fast background pass.
-        if result.isEmpty, generation.maxPeople >= 3 {
+        // 2) Also offer a fewest-people MULTI-person cover of your days (optimal, else a greedy balanced
+        //    cover) — ALWAYS when 3+ is allowed, not only when no 2-person exists. Coverage-first ranking
+        //    then floats a full multi-person cover above 2-person partials. (Was gated on `result.isEmpty`,
+        //    which hid multi-person covers whenever any 2-person partial existed.)
+        if generation.maxPeople >= 3 {
             let cands = peerSwaps.map {
                 OptimalMatcher.Cand(id: $0.id, name: $0.name, canTake: Set($0.canTake), givesBack: $0.givesBack)
             }
+            var addedMulti = false
             if let opt = OptimalMatcher.minPeopleReciprocal(giveDayIDs: giveAll, peers: cands, contiguous: contiguityOK) {
                 let a = opt.map { PackageAssignment(workerID: $0.id, name: $0.name,
                                                     giveDayIDs: $0.giveDayIDs, takeDayIDs: $0.takeDayIDs) }
@@ -342,36 +344,40 @@ enum TradeRouter {
                     id: "optimal-" + a.map(\.workerID).sorted().joined(separator: ","),
                     methodology: .greedy, assignments: a, route: nil,
                     urgency: urgency(of: a.flatMap(\.giveDayIDs)), isOptimal: true))
+                addedMulti = true
             }
-            var uncovered = giveDayIDs
-            var usedBack = Set<String>()
-            var assigns: [PackageAssignment] = []
-            var pool = peerSwaps
-            while result.isEmpty, !uncovered.isEmpty {
-                let best = pool.compactMap { ps -> (PeerSwap, [String], [String])? in
-                    let gives = ps.canTake.filter { uncovered.contains($0) }
-                    let backs = ps.givesBack.filter { !usedBack.contains($0) }
-                    let k = min(gives.count, backs.count)
-                    guard k > 0 else { return nil }
-                    return (ps, Array(gives.prefix(k)), Array(backs.prefix(k)))
-                }.max { l, r in
-                    if l.1.count != r.1.count { return l.1.count < r.1.count }
-                    let lu = urgencyWeight(l.1), ru = urgencyWeight(r.1)
-                    if lu != ru { return lu < ru }
-                    return l.0.id > r.0.id
+            // Greedy balanced cover — only as a fallback when the optimal one didn't produce a cover.
+            if !addedMulti {
+                var uncovered = giveDayIDs
+                var usedBack = Set<String>()
+                var assigns: [PackageAssignment] = []
+                var pool = peerSwaps
+                while !uncovered.isEmpty {
+                    let best = pool.compactMap { ps -> (PeerSwap, [String], [String])? in
+                        let gives = ps.canTake.filter { uncovered.contains($0) }
+                        let backs = ps.givesBack.filter { !usedBack.contains($0) }
+                        let k = min(gives.count, backs.count)
+                        guard k > 0 else { return nil }
+                        return (ps, Array(gives.prefix(k)), Array(backs.prefix(k)))
+                    }.max { l, r in
+                        if l.1.count != r.1.count { return l.1.count < r.1.count }
+                        let lu = urgencyWeight(l.1), ru = urgencyWeight(r.1)
+                        if lu != ru { return lu < ru }
+                        return l.0.id > r.0.id
+                    }
+                    guard let (ps, gives, takes) = best else { break }
+                    assigns.append(PackageAssignment(workerID: ps.id, name: ps.name,
+                                                     giveDayIDs: gives, takeDayIDs: takes))
+                    uncovered.subtract(gives)
+                    usedBack.formUnion(takes)
+                    pool.removeAll { $0.id == ps.id }
                 }
-                guard let (ps, gives, takes) = best else { break }
-                assigns.append(PackageAssignment(workerID: ps.id, name: ps.name,
-                                                 giveDayIDs: gives, takeDayIDs: takes))
-                uncovered.subtract(gives)
-                usedBack.formUnion(takes)
-                pool.removeAll { $0.id == ps.id }
-            }
-            if result.isEmpty, uncovered.isEmpty, !assigns.isEmpty, contiguityOK(asOpt(assigns)) {
-                result.append(TradePackage(
-                    id: "recip-" + assigns.map(\.workerID).sorted().joined(separator: ","),
-                    methodology: .greedy, assignments: assigns, route: nil,
-                    urgency: urgency(of: assigns.flatMap(\.giveDayIDs))))
+                if uncovered.isEmpty, !assigns.isEmpty, contiguityOK(asOpt(assigns)) {
+                    result.append(TradePackage(
+                        id: "recip-" + assigns.map(\.workerID).sorted().joined(separator: ","),
+                        methodology: .greedy, assignments: assigns, route: nil,
+                        urgency: urgency(of: assigns.flatMap(\.giveDayIDs))))
+                }
             }
         }
 
