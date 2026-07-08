@@ -6,7 +6,6 @@
 // ScheduleCalendarView.
 
 import SwiftUI
-import UniformTypeIdentifiers
 
 // MARK: - Marking mode
 
@@ -34,15 +33,11 @@ struct HomeView: View {
 
     @State private var mode: IntentMode = .off
     @State private var layers = LayerVisibility()
-    @State private var showTradeSettings = false
     @State private var editTarget: DayEditTarget?
     @State private var changedDays: Set<String> = []
     @State private var showBanner = false
     @AppStorage("batman.v2.lastReconciledFetch") private var lastReconciledFetch: Double = 0
     @State private var flashChanged = false
-    @State private var showImporter = false
-    @State private var importResult: String?
-    @State private var importError: String?
     @State private var offBrush: ShiftAvailabilityType?   // nil = generic "want to work"
     @State private var workBrush: WorkingIntentState = .dontWantToWork
     @State private var offIntentBrush: OffIntentState = .wantToWork   // direct off-day intent brush (F1)
@@ -50,8 +45,6 @@ struct HomeView: View {
     @State private var pendingConflict: PendingConflict?
     @State private var overwriteConfirmed = false   // #10: ask-overwrite ONCE per mass-action session
     @State private var showLeaveGuard = false        // C1 phase-2: Save-or-Discard when leaving with unsaved edits
-    @State private var showKey = false
-    @State private var showAppSettings = false
 
     var body: some View {
         NavigationStack {
@@ -59,17 +52,22 @@ struct HomeView: View {
                 if showBanner, !changedDays.isEmpty {
                     updateBanner
                 }
-                HomeMetricsHeader()   // pinned metrics, first thing seen (H1)
-                StatusHeaderBar()
-                HStack(alignment: .center, spacing: 10) {
-                    if mode == .off { markIntentsPill }
-                    Spacer()
-                    VisibilityToolbar(layers: $layers)
+                // ONE control row (not editing): primary action on the left; the ambient trades stat
+                // + layers toggle grouped on the right. Collapses the old 3 stacked strips into one,
+                // killing the dead space. While editing, the edit panel takes over this space.
+                if mode == .off {
+                    HStack(spacing: 10) {
+                        markIntentsPill
+                        Spacer(minLength: 8)
+                        HomeMetricsHeader()
+                        VisibilityToolbar(layers: $layers)
+                    }
+                    .padding(.horizontal).padding(.vertical, 6)
                 }
-                .padding(.horizontal).padding(.top, 2)
                 homeNotesBar
                 MarkIntentsToolbar(mode: $mode, offBrush: $offBrush, workBrush: $workBrush,
                                    offIntentBrush: $offIntentBrush, noteBrush: $noteBrush,
+                                   layers: $layers,
                                    onSave: saveIntents, onDone: attemptLeaveEditing)
                 Divider()
 
@@ -98,42 +96,11 @@ struct HomeView: View {
             }
             .navigationTitle("BATMAN Watcher")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button { showImporter = true } label: { Image(systemName: "square.and.arrow.down") }
-                        .accessibilityLabel("Import schedule CSV")
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button { showKey = true } label: { Image(systemName: "info.circle") }
-                        .accessibilityLabel("Color key")
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Menu {
-                        Button { showTradeSettings = true } label: { Label("Trade Settings", systemImage: "arrow.left.arrow.right") }
-                        Button { showAppSettings = true } label: { Label("App Settings", systemImage: "gearshape") }
-                    } label: {
-                        Image(systemName: "gearshape")
-                    }
-                }
-            }
-            .sheet(isPresented: $showTradeSettings) { TradeSettingsSheet() }
-            .sheet(isPresented: $showAppSettings) { SettingsView() }
-            .sheet(isPresented: $showKey) { IntentKeySheet() }
+            .toolbar(.hidden, for: .navigationBar)   // the shared AppTopBar is the header now
             .sheet(item: $editTarget) { target in
                 DayIntentEditor(target: target)
                     .presentationDetents([.large])
             }
-            .fileImporter(isPresented: $showImporter,
-                          allowedContentTypes: [.commaSeparatedText, .plainText, .text],
-                          allowsMultipleSelection: false) { handleImport($0) }
-            .alert("Import Error", isPresented: Binding(
-                get: { importError != nil }, set: { if !$0 { importError = nil } })) {
-                Button("OK", role: .cancel) {}
-            } message: { Text(importError ?? "") }
-            .alert("Schedule Imported", isPresented: Binding(
-                get: { importResult != nil }, set: { if !$0 { importResult = nil } })) {
-                Button("OK", role: .cancel) {}
-            } message: { Text(importResult ?? "") }
             .alert("Overwrite existing marks?", isPresented: Binding(
                 get: { pendingConflict != nil }, set: { if !$0 { pendingConflict = nil } })) {
                 Button("Overwrite", role: .destructive) { pendingConflict?.apply(); pendingConflict = nil }
@@ -169,57 +136,6 @@ struct HomeView: View {
 
     // MARK: CSV import (admin publishes the shared master roster)
 
-    private func handleImport(_ result: Result<[URL], Error>) {
-        guard case .success(let urls) = result, let url = urls.first else {
-            if case .failure(let error) = result { importError = error.localizedDescription }
-            return
-        }
-        let scoped = url.startAccessingSecurityScopedResource()
-        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-        guard let data = try? Data(contentsOf: url),
-              let csv = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1) else {
-            importError = "Could not read the file as text."
-            return
-        }
-        let username = settings.username
-        Task {
-            do {
-                let workers = try await Task.detached { try ScheduleParser().parseAllWorkers(csv: csv) }.value
-                var lines: [String] = []
-                let mine = workers.first(where: { $0.id == username }) ?? (workers.count == 1 ? workers.first : nil)
-                if let mine {
-                    let diff = await ShiftStore.shared.save(mine.shifts)
-                    await AvailabilityManager.shared.buildFromSchedule()
-                    await NotificationManager.shared.scheduleAll(for: mine.shifts)
-                    let restored = EventKitManager.shared.resyncPersonalEvents(for: mine.shifts)
-                    lines.append("\(mine.shifts.filter { !$0.isOff }.count) of your working shifts imported. \(diff.summary)")
-                    if restored > 0 { lines.append("\(restored) calendar events restored.") }
-                }
-                if workers.count > 1 {
-                    let rows = await RosterStore.shared.importRoster(workers)
-                    lines.append("Roster: \(workers.count) dispatchers loaded for matching (\(rows) rows).")
-                    // G4: post-import sanity check — surface malformed/partial imports instead of shipping them.
-                    let report = ImportAudit.validate(workers: workers.map { ($0.id, $0.name) }, selfID: username)
-                    lines.append(report.ok ? "Import check: looks good ✓"
-                                           : "⚠️ Import check: " + report.warnings.joined(separator: " "))
-                    if DevAccess.shared.unlocked {
-                        let ok = await RosterStore.shared.publishMaster(csv: csv)
-                        lines.append(ok ? "Published as MASTER roster — all users get this on their next launch."
-                                        : "(Not published as master — turn on iCloud Trade Sync first.)")
-                    }
-                }
-                if lines.isEmpty {
-                    importError = "Couldn't find your employee ID (\(username)) in this file, and there's no roster to load."
-                } else {
-                    importResult = lines.joined(separator: "\n")
-                }
-                WidgetData.update()
-            } catch {
-                importError = error.localizedDescription
-            }
-        }
-    }
-
     // MARK: Pieces
 
     /// Enters Mark-Intents (edit) mode — lives on the left of the header row.
@@ -227,10 +143,13 @@ struct HomeView: View {
         Button { withAnimation(.snappy) { mode = .workingShifts } } label: {
             Label("Mark Intents", systemImage: "pencil.and.list.clipboard")
                 .font(.subheadline.weight(.semibold))
-                .padding(.horizontal, 14).padding(.vertical, 7)
-                .background(Color.accentColor.opacity(0.14), in: Capsule())
+                .foregroundStyle(Color.accentColor)
+                .frame(height: DS.controlSize)
+                .padding(.horizontal, 14)
+                .background(Color.accentColor.opacity(0.14),
+                            in: RoundedRectangle(cornerRadius: DS.controlRadius, style: .continuous))
         }
-        .buttonStyle(.plain).tint(.accentColor)
+        .buttonStyle(.plain)
     }
 
     /// Read-only one-line view of your private notes (from Trade Settings), swipe to
@@ -248,7 +167,7 @@ struct HomeView: View {
 
     private var updateBanner: some View {
         HStack(alignment: .top, spacing: 10) {
-            Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.orange)
+            Image(systemName: "exclamationmark.circle.fill").foregroundStyle(AppColor.pending)
             VStack(alignment: .leading, spacing: 2) {
                 Text("Schedule Updated").font(.subheadline.bold())
                 Text("^[\(changedDays.count) date](inflect: true) changed. Tap to review and re-mark your intents.")
@@ -260,7 +179,7 @@ struct HomeView: View {
             }
         }
         .padding(.horizontal, 14).padding(.vertical, 10)
-        .background(.orange.opacity(0.12))
+        .background(AppColor.pending.opacity(0.12))
         .contentShape(Rectangle())
         .onTapGesture {
             withAnimation { flashChanged = true }
@@ -374,15 +293,17 @@ struct MarkIntentsToolbar: View {
     @Binding var workBrush: WorkingIntentState
     @Binding var offIntentBrush: OffIntentState
     @Binding var noteBrush: String
+    @Binding var layers: LayerVisibility   // layers menu rides in the top row while editing
     var onSave: () -> Void          // SAVE this session's marks (clears the dirty glow)
     var onDone: () -> Void          // leave the section (guarded if there are unsaved edits)
     private var intents = DayIntentStore.shared
 
     init(mode: Binding<IntentMode>, offBrush: Binding<ShiftAvailabilityType?>,
          workBrush: Binding<WorkingIntentState>, offIntentBrush: Binding<OffIntentState>,
-         noteBrush: Binding<String>, onSave: @escaping () -> Void, onDone: @escaping () -> Void) {
+         noteBrush: Binding<String>, layers: Binding<LayerVisibility>,
+         onSave: @escaping () -> Void, onDone: @escaping () -> Void) {
         _mode = mode; _offBrush = offBrush; _workBrush = workBrush
-        _offIntentBrush = offIntentBrush; _noteBrush = noteBrush
+        _offIntentBrush = offIntentBrush; _noteBrush = noteBrush; _layers = layers
         self.onSave = onSave; self.onDone = onDone
     }
 
@@ -403,6 +324,7 @@ struct MarkIntentsToolbar: View {
                     Text("Days Off").tag(IntentMode.daysOff)
                 }
                 .pickerStyle(.segmented)
+                VisibilityToolbar(layers: $layers)
                 Button { onDone() } label: {
                     Text("Done").font(.subheadline.weight(.bold))
                 }
@@ -444,9 +366,9 @@ struct MarkIntentsToolbar: View {
                 .font(.subheadline.weight(.bold))
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 10)
-                .foregroundStyle(dirty ? .white : Color.green.opacity(0.55))
-                .background(dirty ? Color.green : Color.green.opacity(0.14), in: Capsule())
-                .shadow(color: dirty ? Color.green.opacity(0.7) : .clear, radius: dirty ? 10 : 0)
+                .foregroundStyle(dirty ? .white : AppColor.success.opacity(0.55))
+                .background(dirty ? AppColor.success : AppColor.success.opacity(0.14), in: Capsule())
+                .shadow(color: dirty ? AppColor.success.opacity(0.7) : .clear, radius: dirty ? 10 : 0)
         }
         .buttonStyle(.plain)
         .disabled(!dirty)
@@ -468,10 +390,11 @@ struct MarkIntentsToolbar: View {
     private func brushPill(on: Bool, label: String, color: Color, _ action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 6) {
-                Circle().fill(color).frame(width: 11, height: 11)
-                Text(label).font(.subheadline.weight(on ? .bold : .regular))
+                Circle().fill(color).frame(width: 10, height: 10)
+                Text(label).font(.subheadline.weight(.semibold))   // constant weight → selecting doesn't resize
+                    .lineLimit(1)
             }
-            .padding(.horizontal, 14).padding(.vertical, 7)
+            .padding(.horizontal, 12).padding(.vertical, 7)
             .foregroundStyle(on ? color : Color.primary)
             .background(on ? color.opacity(0.22) : Color(.tertiarySystemFill), in: Capsule())
             .overlay(Capsule().stroke(on ? color : .clear, lineWidth: 2))
@@ -523,32 +446,36 @@ struct HomeMetricsHeader: View {
     private var company: Int { Metrics.count(metrics.globalEvents, kind: .trade, period: period, now: Date()) }
 
     var body: some View {
-        // Metrics on the LEFT; the period control sits BELOW them so it no longer
-        // collides with the floating Inbox/Channel dock pinned to the top-right.
-        VStack(alignment: .leading, spacing: DS.s) {
-            HStack(spacing: DS.l) {
-                total("Your Successful Trades", mine)
-                Divider().frame(height: 30)
-                total("PAFCA Successful Trades", company)
-                Spacer()
-            }
-            Picker("", selection: $period) {
+        // A tight, self-sizing chip (no Spacer / full-width) so it sits inline in the Home control
+        // row next to the layers toggle — successful-trade counts + a compact period menu.
+        Menu {
+            Picker("Period", selection: $period) {
                 ForEach(MetricPeriod.allCases) { Text($0.label).tag($0) }
             }
-            .pickerStyle(.segmented).frame(maxWidth: 260)
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "checkmark.seal.fill").foregroundStyle(AppColor.success)
+                countPair(mine, "you")
+                Text("·").foregroundStyle(.secondary)
+                countPair(company, "PAFCA")
+                Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold)).foregroundStyle(.secondary)
+            }
+            .font(.caption2)
+            .lineLimit(1)
+            .frame(height: DS.controlSize)
+            .padding(.horizontal, 12)
+            .background(Color(.tertiarySystemFill), in: RoundedRectangle(cornerRadius: DS.controlRadius, style: .continuous))
         }
-        .padding(.horizontal, DS.cardPadding).padding(.vertical, DS.s)
-        .background(.bar)
-        .contentShape(Rectangle())
+        .buttonStyle(.plain)
         .onLongPressGesture { if dev.unlocked { TradeHistoryStore.shared.resetMetrics() } }   // admin reset
-        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Successful trades: \(mine) you, \(company) PAFCA, \(period.label)")
         .task { await metrics.refresh() }
     }
 
-    private func total(_ label: String, _ n: Int) -> some View {
-        VStack(alignment: .leading, spacing: 1) {
-            Text("\(n)").font(.title3.monospacedDigit().bold())
-            Text(label).font(.caption2).foregroundStyle(.secondary).lineLimit(2)
+    private func countPair(_ n: Int, _ label: String) -> some View {
+        HStack(spacing: 3) {
+            Text("\(n)").fontWeight(.bold).monospacedDigit()
+            Text(label).foregroundStyle(.secondary)
         }
     }
 }
@@ -580,28 +507,25 @@ struct SyncTag: View {
 struct VisibilityToolbar: View {
     @Binding var layers: LayerVisibility
 
-    var body: some View {
-        HStack(spacing: 2) {
-            toggle("note.text", on: $layers.notes, label: "Notes")
-            toggle("paintpalette.fill", on: $layers.intentOverlays, label: "Intent colors")
-            toggle("clock.badge.checkmark", on: $layers.availability, label: "Shift availability")
-        }
-        .padding(3)
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 9))
-    }
+    /// Collapsed into a single "layers" menu so it no longer occupies a full toolbar row.
+    /// The icon fills accent when any layer is hidden (so it's obvious something is off).
+    private var anyHidden: Bool { !(layers.notes && layers.intentOverlays && layers.availability) }
 
-    private func toggle(_ symbol: String, on: Binding<Bool>, label: String) -> some View {
-        Button { on.wrappedValue.toggle() } label: {
-            Image(systemName: symbol)
-                .font(.system(size: 13, weight: .semibold))
-                .frame(width: 30, height: 26)
-                .foregroundStyle(on.wrappedValue ? Color.white : Color.secondary)
-                .background(on.wrappedValue ? Color.accentColor : Color.clear,
-                            in: RoundedRectangle(cornerRadius: 7))
+    var body: some View {
+        Menu {
+            Toggle(isOn: $layers.notes) { Label("Notes", systemImage: "note.text") }
+            Toggle(isOn: $layers.intentOverlays) { Label("Intent colors", systemImage: "paintpalette.fill") }
+            Toggle(isOn: $layers.availability) { Label("Shift availability", systemImage: "clock.badge.checkmark") }
+        } label: {
+            Image(systemName: "square.3.layers.3d")
+                .font(.system(size: 15, weight: .semibold))
+                .frame(width: DS.controlSize, height: DS.controlSize)
+                .foregroundStyle(anyHidden ? Color.white : Color.primary)
+                .background(anyHidden ? Color.accentColor : Color(.tertiarySystemFill),
+                            in: RoundedRectangle(cornerRadius: DS.controlRadius, style: .continuous))
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(label)
-        .accessibilityAddTraits(on.wrappedValue ? [.isSelected] : [])
+        .accessibilityLabel("Layer visibility")
     }
 }
 
@@ -623,54 +547,28 @@ struct PendingConflict: Identifiable {
 
 // MARK: - Color key
 
-/// Explains what every calendar color / marker means.
+/// The comprehensive color key / legend — the single source of "what every color means" across
+/// the app (calendars, intents, trade status, markers). Driven by `AppLegend`, so it can never
+/// drift from the colors the UI actually draws.
 struct IntentKeySheet: View {
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         NavigationStack {
             List {
-                Section("Working shifts") {
-                    keyRow(BrickPalette.change, "Trade away", "You want to give this shift away")
-                    keyRow(BrickPalette.clear, "Blackout", "Protected — never traded away")
-                    keyRow(BrickPalette.neutral, "Neutral / open", "No strong preference")
+                Section {
+                    Text("One color = one meaning across the app. Everything below is drawn from the same palette the calendars and trade cards use.")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
-                Section("Days off") {
-                    keyRow(BrickPalette.availableOff, "Available (AM/PM/MID)", "Legal pickup types you'll work")
-                    iconRow("xmark.circle.fill", BrickPalette.critical, "Unavailable (deselected all)")
-                }
-                Section("Markers & borders") {
-                    borderRow(BrickPalette.warning, "High-Demand date")
-                    borderRow(BrickPalette.milestone, "Personal Milestone")
-                    iconRow("note.text", BrickPalette.info, "Has a note (tap the day to read)")
-                    iconRow("a.circle.fill", BrickPalette.clear, "AM/PM/MID pickup availability")
+                ForEach(AppLegend.sections) { section in
+                    Section(section.title) {
+                        ForEach(section.items) { LegendRow(item: $0) }
+                    }
                 }
             }
-            .navigationTitle("Color Key")
+            .navigationTitle("Colors & Legend")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
-        }
-    }
-
-    private func keyRow(_ color: Color, _ title: String, _ desc: String) -> some View {
-        HStack(spacing: 12) {
-            RoundedRectangle(cornerRadius: 6).fill(color.opacity(0.62)).frame(width: 26, height: 26)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(title).font(.subheadline.weight(.semibold))
-                Text(desc).font(.caption).foregroundStyle(.secondary)
-            }
-        }
-    }
-    private func borderRow(_ color: Color, _ title: String) -> some View {
-        HStack(spacing: 12) {
-            RoundedRectangle(cornerRadius: 6).strokeBorder(color, lineWidth: 2).frame(width: 26, height: 26)
-            Text(title).font(.subheadline.weight(.semibold))
-        }
-    }
-    private func iconRow(_ symbol: String, _ color: Color, _ title: String) -> some View {
-        HStack(spacing: 12) {
-            Image(systemName: symbol).foregroundStyle(color).frame(width: 26)
-            Text(title).font(.subheadline.weight(.semibold))
         }
     }
 }

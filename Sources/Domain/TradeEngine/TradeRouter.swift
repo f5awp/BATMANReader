@@ -73,6 +73,10 @@ struct TradePackage: Sendable, Hashable, Identifiable {
     // How many of YOUR requested give-days this package covers — the PRIMARY ranking key (most coverage
     // first, so one person covering all your days floats to the top). Set at generation.
     var coverageCount: Int = 0
+    // How many days YOU receive that are NOT a clean bookend for you (a random mid-week island you didn't
+    // mark want-to-work). When you're open-to-all these aren't excluded, but a package with any of them
+    // ranks BELOW every all-clean package (bookends ranked higher). Set at generation.
+    var dirtyReceives: Int = 0
 
     // EXPLICIT init — freezes the construction signature so adding the fields above doesn't
     // churn the memberwise-init symbol (stale-incremental-link fix). New fields are defaulted.
@@ -173,9 +177,16 @@ enum TradeRouter {
                 if rosterMeta[e.workerID] == nil { rosterMeta[e.workerID] = (e.workerName, e.quals) }
             }
             let profilesByID = TradeProfileStore.shared.others
+            // People permanently on TRN / irregular shifts are "not a dispatch shift" → not tradeable.
+            // Keep only workers whose in-window schedule holds at least one genuine dispatch shift; a
+            // real dispatcher with a stray training day is retained (canCover still blocks that one leg).
+            let dispatchWorkers = Set(maps.compactMap { (wid, map) in
+                map.values.contains { TradeTiming.isDispatchShift(desk: $0.desk, startHour: $0.startHour, isOff: $0.isOff) } ? wid : nil
+            })
             let universe = MatchUniverse.candidates(
                 roster: rosterMeta.map { (id: $0.key, name: $0.value.name, quals: $0.value.quals) },
                 profiles: profilesByID, selfID: selfID)
+                .filter { dispatchWorkers.contains($0.workerID) }
             let priors = MessagingStore.shared.acceptancePriorMap()
             // B4-5: infer each PROFILELESS peer's recent (60d) behavior to hard-restrict their default.
             // One extra windowed fetch (past 60d); shapes the default only, never the match window.
@@ -241,7 +252,9 @@ enum TradeRouter {
         let ctx = await MatchContext.build(selfID: selfID)
         let (start, end) = (ctx.start, ctx.end)
         let mySeeking = DayIntentStore.shared.seekingDayIDs
+        let myWantToWork = DayIntentStore.shared.wantToWorkDayIDs   // non-bookend days I'll still accept receiving
         let myProfile = TradeProfileStore.shared.myProfile()
+        let myBookendsOnly = myProfile.opennessLevel == .bookends   // Bookends Only → hard-exclude islands
 
         // Whether `prof` would actually pick up a leg — honors their availability
         // pills, openness, bookend (no-split) rule, blacklist, and mercenary mode.
@@ -278,7 +291,11 @@ enum TradeRouter {
                 preloadedMine: mineEntries, preloadedPeer: Array((maps[cand.workerID] ?? [:]).values))
             plansByPeer[cand.workerID] = plan
             let canTake   = plan.iGive.filter { giveDayIDs.contains($0.dayID) && wouldTake(profile, $0) }.map(\.dayID)
-            let givesBack = plan.iTake.filter { wouldTake(myProfile, $0) }.map(\.dayID)
+            // The days I'll RECEIVE back, bookends-first. If I'm Bookends Only, non-bookend islands are
+            // dropped; if I'm open-to-all they're kept (but sorted last, and demote the package in ranking).
+            let givesBack = TradeRouter.cleanReceiveLegs(plan.iTake.filter { wouldTake(myProfile, $0) },
+                                                         wantToWork: myWantToWork,
+                                                         bookendsOnly: myBookendsOnly).map(\.dayID)
             if !canTake.isEmpty, !givesBack.isEmpty {
                 peerSwaps.append(PeerSwap(id: cand.workerID, name: cand.name, canTake: canTake, givesBack: givesBack))
             }
@@ -464,16 +481,22 @@ enum TradeRouter {
             if let route = pkg.route {
                 p.fireCount    = route.tier == .matchingIntents ? route.legs.count : 0
                 p.bookendTotal = route.bookendCount   // G3: real per-leg bookend count (split legs don't count)
+                // Circular loop: count the days I RECEIVE that aren't a clean bookend for me.
+                p.dirtyReceives = TradeRouter.routeDirtyReceives(route, selfID: selfID,
+                                                                 myMap: maps[selfID] ?? [:], wantToWork: myWantToWork)
             } else {
-                var fire = 0, book = 0
+                var fire = 0, book = 0, dirty = 0
                 for a in pkg.assignments {
                     let plan = plansByPeer[a.workerID]
                     let giveByDay = Dictionary((plan?.iGive ?? []).map { ($0.dayID, $0) }, uniquingKeysWith: { x, _ in x })
                     let takeByDay = Dictionary((plan?.iTake ?? []).map { ($0.dayID, $0) }, uniquingKeysWith: { x, _ in x })
                     for d in a.giveDayIDs { if let l = giveByDay[d] { if l.bookend { book += 1 }; if l.wanted { fire += 1 } } }
-                    for d in a.takeDayIDs { if let l = takeByDay[d] { if l.bookend { book += 1 }; if l.wanted { fire += 1 } } }
+                    for d in a.takeDayIDs { if let l = takeByDay[d] {
+                        if l.bookend { book += 1 } else if !myWantToWork.contains(d) { dirty += 1 }   // a non-bookend island I receive
+                        if l.wanted { fire += 1 }
+                    } }
                 }
-                p.fireCount = fire; p.bookendTotal = book
+                p.fireCount = fire; p.bookendTotal = book; p.dirtyReceives = dirty
             }
             return p
         }
@@ -488,7 +511,10 @@ enum TradeRouter {
             q.coverageCount = myGiveCoverage(p, selfID: selfID)
             return q
         }
-        return finalize(rescored, lucky: lucky)
+        // Bookends Only (my setting): hard-exclude any package that would hand me a non-bookend island —
+        // across 2-way, multi-person, AND circular. Open-to-all keeps them (ranked below clean via rankLess).
+        let gated = myBookendsOnly ? rescored.filter { $0.dirtyReceives == 0 } : rescored
+        return finalize(gated, lucky: lucky)
     }
 
     // MARK: - Intents marketplace (DISTINCT from packages — intent-for-intent, intent-first ranking)
@@ -529,6 +555,7 @@ enum TradeRouter {
         let deduped = packages.filter { seen.insert($0.id).inserted }
         return deduped.sorted {
             if $0.fireCount != $1.fireCount { return $0.fireCount > $1.fireCount }        // most mutual intent first
+            if $0.dirtyReceives != $1.dirtyReceives { return $0.dirtyReceives < $1.dirtyReceives } // then clean (bookend) receives
             if $0.peopleCount != $1.peopleCount { return $0.peopleCount < $1.peopleCount } // then fewest people
             if $0.bookendTotal != $1.bookendTotal { return $0.bookendTotal > $1.bookendTotal }
             if $0.partnerPrior != $1.partnerPrior { return $0.partnerPrior > $1.partnerPrior } // H2: likelier-to-accept partners
@@ -549,7 +576,9 @@ enum TradeRouter {
         let ctx = await MatchContext.build(selfID: selfID)
         let (start, end) = (ctx.start, ctx.end)
         let mySeeking = DayIntentStore.shared.seekingDayIDs
+        let myWantToWork = DayIntentStore.shared.wantToWorkDayIDs   // non-bookend days I'll still accept receiving
         let myProfile = TradeProfileStore.shared.myProfile()
+        let myBookendsOnly = myProfile.opennessLevel == .bookends
 
         func wouldTake(_ prof: TradeProfile, _ leg: TwoWayLeg) -> Bool {
             let cal = Calendar.current
@@ -625,6 +654,9 @@ enum TradeRouter {
                                    isOptimal: deal.mutualMarked == deal.gives.count + deal.takes.count)
             pkg.fireCount = deal.mutualMarked
             pkg.partnerPrior = priors[cand.workerID] ?? 0   // H2 (O(1) from the prebuilt map)
+            // Days I RECEIVE that aren't a clean bookend (and I didn't mark want-to-work) → demote/exclude.
+            let takeBookend = Dictionary(theirTakeable.map { ($0.dayID, $0.bookend) }, uniquingKeysWith: { x, _ in x })
+            pkg.dirtyReceives = deal.takes.filter { !(takeBookend[$0] ?? false) && !myWantToWork.contains($0) }.count
             result.append(pkg)
         }
 
@@ -656,6 +688,8 @@ enum TradeRouter {
                                        assignments: a, route: loop, urgency: urgency(of: a.flatMap(\.giveDayIDs)))
                 pkg.fireCount = loop.legs.filter(legMarked).count   // real mutual-intent legs (not assumed)
                 pkg.bookendTotal = loop.bookendCount
+                pkg.dirtyReceives = TradeRouter.routeDirtyReceives(loop, selfID: selfID,
+                                                                   myMap: maps[selfID] ?? [:], wantToWork: myWantToWork)
                 // H2: average the other participants' acceptance priors.
                 let others = participants
                 if !others.isEmpty {
@@ -674,7 +708,10 @@ enum TradeRouter {
             q.coverageCount = myGiveCoverage(p, selfID: selfID)
             return q
         }
-        return finalize(scored, lucky: lucky)
+        // Bookends Only: hard-exclude any deal/loop that hands me a non-bookend island (open-to-all keeps
+        // them but rankLess demotes them below all-clean). Consistent with Trade Solutions.
+        let gated = myBookendsOnly ? scored.filter { $0.dirtyReceives == 0 } : scored
+        return finalize(gated, lucky: lucky)
     }
     /// Safety ceiling — neither feed ever shows more than this, even if the floor passes a huge set.
     static let intentResultCap = 60
@@ -746,7 +783,39 @@ enum TradeRouter {
     /// Coverage-first ranking (what the user asked for): most of YOUR days covered → fewest people →
     /// bookends → acceptance quality → soonest → id. `acceptanceScore` is the AVERAGE leg quality (0…1),
     /// so a clean full-cover isn't buried for having many legs.
+    /// PURE, testable: the reciprocal days I'll RECEIVE from a peer, in preference order (bookends — days
+    /// that attach to my existing work — first, then soonest). A "clean" receive is a bookend or a day I
+    /// explicitly marked want-to-work. When `bookendsOnly` (my openness = Bookends Only) the random
+    /// mid-week islands are DROPPED entirely; otherwise (open-to-all) they're kept but sorted last, and a
+    /// package built from them is ranked below all-clean ones (see `dirtyReceives`).
+    static func cleanReceiveLegs(_ legs: [TwoWayLeg], wantToWork: Set<String>, bookendsOnly: Bool) -> [TwoWayLeg] {
+        let base = bookendsOnly ? legs.filter { $0.bookend || wantToWork.contains($0.dayID) } : legs
+        return base.sorted { ($0.bookend ? 0 : 1, $0.date) < ($1.bookend ? 0 : 1, $1.date) }
+    }
+
+    /// Is a received day "clean" for me — a bookend, or one I explicitly marked want-to-work?
+    static func isCleanReceive(_ leg: TwoWayLeg, wantToWork: Set<String>) -> Bool {
+        leg.bookend || wantToWork.contains(leg.dayID)
+    }
+
+    /// How many days a circular ROUTE hands ME that aren't clean — i.e. I receive them (leg points to me),
+    /// I didn't mark want-to-work, and the day doesn't anchor to my existing work (not a bookend for me).
+    /// `NWayLeg` carries no bookend flag, so it's derived from my own schedule via `isAnchored`.
+    static func routeDirtyReceives(_ route: NWayRoute, selfID: String,
+                                   myMap: [String: RosterEntry], wantToWork: Set<String>) -> Int {
+        let myReceived = Set(route.legs.filter { $0.toID == selfID }.map(\.dayID))
+        return route.legs.filter { leg in
+            guard leg.toID == selfID, !wantToWork.contains(leg.dayID),
+                  let d = TradeMatcher.dayDate(fromISO: leg.dayID) else { return false }
+            return !TradeMatcher.isAnchored(day: d, map: myMap, plan: myReceived)
+        }.count
+    }
+
     static func rankLess(_ a: TradePackage, _ b: TradePackage) -> Bool {
+        // Bookends ranked higher even when open-to-all: any package that hands YOU a non-bookend island
+        // sorts below every all-clean package, regardless of coverage. (User: rank bookends significantly
+        // higher; only Bookends-Only mode excludes the island outright.)
+        if a.dirtyReceives != b.dirtyReceives { return a.dirtyReceives < b.dirtyReceives }
         if a.coverageCount != b.coverageCount { return a.coverageCount > b.coverageCount }   // most days first
         if a.peopleCount != b.peopleCount { return a.peopleCount < b.peopleCount }           // fewest people
         if a.bookendTotal != b.bookendTotal { return a.bookendTotal > b.bookendTotal }       // cleaner (bookends)
@@ -791,6 +860,9 @@ enum TradeRouter {
             keptCapped = capped
         }
         return (exempt + keptCapped).sorted {
+            // Clean (bookend) receives ranked higher even when open-to-all — a package that hands YOU an
+            // island sorts below every all-clean one.
+            if $0.dirtyReceives != $1.dirtyReceives { return $0.dirtyReceives < $1.dirtyReceives }
             if $0.peopleCount != $1.peopleCount { return $0.peopleCount < $1.peopleCount }   // N groups
             if $0.needsQualSwap != $1.needsQualSwap { return !$0.needsQualSwap }             // D5: clean before qual, same N
             let t0 = packageTier($0), t1 = packageTier($1)
@@ -1067,24 +1139,6 @@ enum TradeRouter {
     }
 
     // MARK: Helpers
-
-    /// The weekly-hour cap for a worker, if any (self from Settings, peers from
-    /// their published profile).
-    private static func weeklyCap(forWorker id: String) -> Int? {
-        if id == SettingsManager.shared.username { return SettingsManager.shared.maxWeeklyHours }
-        return TradeProfileStore.shared.profile(forWorker: id)?.maxWeeklyHours
-    }
-
-    /// Worked hours in the Sun–Sat week containing `day` (each shift = 9h).
-    private static func weeklyWorkedHours(map: DayMap, around day: Date) -> Int {
-        let cal = Calendar.current
-        guard let week = cal.dateInterval(of: .weekOfYear, for: day) else { return 0 }
-        var hours = 0
-        for entry in map.values where !entry.isOff {
-            if let d = TradeMatcher.dayDate(fromISO: entry.day), week.contains(d) { hours += 9 }
-        }
-        return hours
-    }
 
     /// Score bonus for resolving higher-gravity dates (weight − 1 per self give-leg;
     /// standard days add nothing).

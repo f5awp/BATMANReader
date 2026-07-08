@@ -1,12 +1,22 @@
 // DispatchPalette.swift
-// Semantic colors mirroring the airline dispatch "brick" notification legend, so
-// the app's intent overlays and trade-status badges read the way dispatchers
-// already expect from WSI Fusion / Desk Flight Progress.
+// THE single color language for the app. One hue = one meaning, so a color can be
+// decoded at a glance. `AppColor` is the source of truth (Tier 1 = semantic, Tier 2 =
+// categorical identity). Everything else — the legacy `BrickPalette` names, the intent /
+// status / staging extensions, avatars, and trade-seat colors — resolves to `AppColor`,
+// so re-tuning a hue is a one-line change here.
 //
-//   green   = good / available / done        purple = change (trade away)
-//   yellow  = caution / pending              cyan   = info / unread
-//   orange  = alert / high-demand            red    = stop / critical
-//   pink    = milestone (rejected hue)       gray   = neutral
+// Tier 1 — SEMANTIC (functional meaning; never reuse a hue for two meanings):
+//   primary  (blue)   actions · links · selection · "you" · info
+//   success  (green)  accepted · kept · authorized · optimal · done
+//   pending  (amber)  waiting · caution · "want to work"
+//   danger   (red)    declined · error · destructive · over-limit
+//   heat     (orange) demand / urgency ONLY
+//   special  (violet) multi-way / circular trades · "trade away"
+//   milestone(pink)   a protected personal date (rare)
+//   neutral  (gray)   cancelled · inert · no intent
+//   locked / passiveOpen / vacation — the cooler off-day states
+//
+// Tier 2 — CATEGORICAL (identity only, NO meaning): avatars and per-seat trade colors.
 
 import SwiftUI
 
@@ -27,6 +37,10 @@ enum DS {
     static let pillRadius: CGFloat = 8
     static let pillFill: Double = 0.16    // one tint strength for all chips/pills
     static let avatar: CGFloat = 30
+    // ONE control shape for the whole app: every button / chip / icon toggle is a rounded-rect
+    // (squircle) of this radius + height — matching the calendar day cells. No circles, no capsules.
+    static let controlRadius: CGFloat = 10
+    static let controlSize: CGFloat = 34   // square icon-button side, and the height of text controls
 }
 
 /// Semantic type ramp — built on Dynamic Type styles so everything scales for
@@ -40,40 +54,127 @@ extension Font {
     static let dsLabel     = Font.caption.weight(.bold)         // small section labels (was caption2)
 }
 
-enum BrickPalette {
-    static let clear     = Color(red: 0.26, green: 0.74, blue: 0.30)  // bright green
-    static let change    = Color(red: 0.62, green: 0.27, blue: 0.80)  // purple/magenta
-    static let info      = Color(red: 0.18, green: 0.68, blue: 0.90)  // cyan
-    static let caution   = Color(red: 0.85, green: 0.64, blue: 0.08)  // deeper yellow-gold (readable on light)
-    static let warning   = Color(red: 0.95, green: 0.55, blue: 0.15)  // orange
-    static let critical  = Color(red: 0.86, green: 0.21, blue: 0.21)  // red
-    static let milestone = Color(red: 0.95, green: 0.40, blue: 0.70)  // pink
-    static let neutral   = Color.gray
-    // Distinct off-day hues so off intents never collide with worked-day intents.
-    // availableOff is amber/gold (colorblind-safe — readable for red-green vision).
-    static let availableOff = Color(red: 0.93, green: 0.69, blue: 0.13)  // amber — ACTIVE "want to work"
-    static let openOff      = Color(red: 0.42, green: 0.55, blue: 0.62)  // muted slate-blue — PASSIVE "open/available", faded
-    static let lockedOff    = Color(red: 0.27, green: 0.30, blue: 0.55)  // slate
-    static let vacation     = Color(red: 0.13, green: 0.59, blue: 0.53)  // teal — a day OFF on vacation (distinct). S-UIUX-NEW
-    // Trade-calendar signature colors. You read blue (your schedule); the
-    // counterparty reads red (theirs). The mini-calendars tint worked days faintly
-    // and trade cells more strongly in these hues, so a swapped shift looks like it
-    // belongs to whichever schedule it lands on.
-    static let mineScheme = Color(red: 0.13, green: 0.45, blue: 0.92)    // your schedule blue
-    static let peerScheme = Color(red: 0.84, green: 0.25, blue: 0.28)    // their schedule red
-    static let loopTrade  = Color(red: 0.48, green: 0.31, blue: 0.84)    // violet
-    // POSITIONAL per-seat trade colors (you are always `mineScheme` blue). Seat order, per the
-    // user spec: 2nd person red, 3rd orange, 4th green, then violet/magenta for any extras.
-    static let traderThemes: [Color] = [
-        peerScheme,                                    // seat 1 (2nd person) — red
-        Color(red: 0.90, green: 0.52, blue: 0.10),     // seat 2 (3rd person) — orange
-        Color(red: 0.20, green: 0.62, blue: 0.34),     // seat 3 (4th person) — green
-        loopTrade,                                     // seat 4 — violet
-        Color(red: 0.80, green: 0.20, blue: 0.52),     // seat 5 — magenta
+/// THE color language. Tier 1 tokens carry meaning (one hue per meaning); Tier 2 is a
+/// categorical ramp for identity only. Fresh reduced palette — harmonized saturation/
+/// luminance so hues sit together cleanly in light and dark.
+enum AppColor {
+    // ── Tier 1 · semantic ────────────────────────────────────────────────
+    static let primary   = Color(red: 0.16, green: 0.43, blue: 0.88)  // blue — actions, links, selection, "you", info
+    static let success   = Color(red: 0.20, green: 0.66, blue: 0.33)  // green — accepted, kept, authorized, optimal, done
+    static let pending   = Color(red: 0.90, green: 0.63, blue: 0.11)  // amber — waiting, caution, "want to work"
+    static let danger    = Color(red: 0.84, green: 0.24, blue: 0.22)  // red — declined, error, destructive
+    static let heat      = Color(red: 0.95, green: 0.45, blue: 0.16)  // orange — demand / urgency ONLY
+    static let special   = Color(red: 0.49, green: 0.33, blue: 0.83)  // violet — multi-way / circular / trade-away
+    static let milestone = Color(red: 0.89, green: 0.35, blue: 0.63)  // pink — protected personal date (rare)
+    static let neutral   = Color(.systemGray)                          // cancelled / inert / no intent
+
+    // Cooler off-day states (kept distinct from worked-day hues).
+    static let locked      = Color(red: 0.29, green: 0.32, blue: 0.52) // slate — "must be off" (locked)
+    static let passiveOpen = Color(red: 0.45, green: 0.53, blue: 0.60) // faded slate-blue — passively open
+    static let vacation    = Color(red: 0.11, green: 0.60, blue: 0.55) // teal — a day OFF on vacation
+
+    /// Your schedule reads in the action/"you" blue on every trade surface.
+    static var mine: Color { primary }
+
+    // ── Tier 2 · categorical (identity only — assign NO meaning) ──────────
+    /// Evenly spaced, equal-weight hues for avatars and per-seat trade colors. Index 0 is
+    /// unused for "you" (you're always `mine`/blue); peers cycle from index 1 so a peer is
+    /// never the danger red or success green by coincidence of meaning.
+    static let categorical: [Color] = [
+        primary,                                        // 0 — blue (you)
+        Color(red: 0.85, green: 0.30, blue: 0.34),      // 1 — red
+        Color(red: 0.93, green: 0.55, blue: 0.16),      // 2 — orange
+        Color(red: 0.24, green: 0.64, blue: 0.36),      // 3 — green
+        special,                                        // 4 — violet
+        Color(red: 0.82, green: 0.30, blue: 0.55),      // 5 — magenta
+        Color(red: 0.13, green: 0.62, blue: 0.60),      // 6 — teal
     ]
-    // Day-marker circles, used identically on every calendar.
-    static let highImpact = Color(red: 0.86, green: 0.65, blue: 0.12)    // gold — high-demand date
-    static let personalDay = milestone                                  // pink — personal milestone
+}
+
+/// Legacy names, kept as thin aliases so existing call sites and domain extensions keep
+/// compiling — every one now resolves to an `AppColor` token (the single source of truth).
+enum BrickPalette {
+    static let clear     = AppColor.success
+    static let change    = AppColor.special
+    static let info      = AppColor.primary
+    static let caution   = AppColor.pending
+    static let warning   = AppColor.heat
+    static let critical  = AppColor.danger
+    static let milestone = AppColor.milestone
+    static let neutral   = AppColor.neutral
+    static let availableOff = AppColor.pending      // "want to work" reads as active/attention (amber)
+    static let openOff      = AppColor.passiveOpen
+    static let lockedOff    = AppColor.locked
+    static let vacation     = AppColor.vacation
+    // Trade-calendar signature: you = blue; peers cycle the categorical ramp.
+    static let mineScheme = AppColor.mine
+    static let peerScheme = AppColor.categorical[1]   // the two-person counterparty seat
+    static let loopTrade  = AppColor.special
+    /// Per-seat trade colors (you are always `mineScheme`). Peers take categorical seats 1…N.
+    static let traderThemes: [Color] = Array(AppColor.categorical.dropFirst())
+    static let highImpact = AppColor.heat             // high-demand date marker
+    static let personalDay = AppColor.milestone
+}
+
+// MARK: - Legend (the ONE comprehensive color key — drives the info sheet + every collapsible legend)
+
+/// Single source of truth for "what does each color/marker mean". Rendered comprehensively in the
+/// info Color Key sheet and, collapsed-by-default, in the inline legends under the trade feeds.
+enum AppLegend {
+    enum Swatch { case fill(Color); case border(Color); case icon(String, Color); case glyph(String) }
+    struct Item: Identifiable { let id = UUID(); let swatch: Swatch; let name: String; let meaning: String }
+    struct Section: Identifiable { let id = UUID(); let title: String; let items: [Item] }
+
+    static let sections: [Section] = [
+        Section(title: "Trade calendars", items: [
+            Item(swatch: .fill(AppColor.mine), name: "You give",
+                 meaning: "Your shift, moving to someone else"),
+            Item(swatch: .fill(AppColor.categorical[1]), name: "You get",
+                 meaning: "Their shift, coming to you"),
+            Item(swatch: .icon("person.2.fill", AppColor.special), name: "Multi-way",
+                 meaning: "In 3+ person trades each person has their own color"),
+        ]),
+        Section(title: "Intent colors", items: [
+            Item(swatch: .fill(WorkingIntentState.dontWantToWork.brickColor), name: "Trade away",
+                 meaning: "A working day you want to give away"),
+            Item(swatch: .fill(OffIntentState.wantToWork.brickColor), name: "Want to work",
+                 meaning: "An off day you'd pick up a shift on"),
+            Item(swatch: .fill(WorkingIntentState.mustWork.brickColor), name: "Blackout (working)",
+                 meaning: "A working day you'll never trade away"),
+            Item(swatch: .fill(OffIntentState.mustBeOff.brickColor), name: "Must be off",
+                 meaning: "An off day you'll never work"),
+            Item(swatch: .fill(OffIntentState.neutralOpen.brickColor), name: "Open",
+                 meaning: "Passively available — no strong preference"),
+            Item(swatch: .fill(AppColor.vacation), name: "Vacation",
+                 meaning: "A day off on approved vacation"),
+            Item(swatch: .fill(AppColor.neutral), name: "Neutral",
+                 meaning: "Nothing marked for this day"),
+        ]),
+        Section(title: "Trade quality & status", items: [
+            Item(swatch: .fill(AppColor.success), name: "Optimal / accepted",
+                 meaning: "Fewest people to cover — or an agreed trade"),
+            Item(swatch: .fill(AppColor.pending), name: "Pending",
+                 meaning: "Waiting on a reply"),
+            Item(swatch: .fill(AppColor.danger), name: "Declined",
+                 meaning: "Rejected, expired, or cancelled"),
+            Item(swatch: .fill(AppColor.special), name: "Circular",
+                 meaning: "A multi-person loop trade"),
+            Item(swatch: .fill(AppColor.heat), name: "High demand",
+                 meaning: "A hot / high-demand date"),
+        ]),
+        Section(title: "Markers & borders", items: [
+            Item(swatch: .border(AppColor.heat), name: "High-demand date",
+                 meaning: "Orange border on the calendar"),
+            Item(swatch: .border(AppColor.milestone), name: "Personal milestone",
+                 meaning: "A protected personal date"),
+            Item(swatch: .icon("note.text", AppColor.primary), name: "Note",
+                 meaning: "Tap the day to read it"),
+            Item(swatch: .glyph("🔥"), name: "Mutual intent",
+                 meaning: "You both want this exact move"),
+            Item(swatch: .glyph("📖"), name: "Bookend",
+                 meaning: "Attaches cleanly to existing work / off"),
+        ]),
+    ]
 }
 
 /// F1: POSITIONAL trade colors, used by every trade surface. You are always `mineScheme` (blue);

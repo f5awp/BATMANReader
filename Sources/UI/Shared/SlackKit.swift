@@ -17,7 +17,7 @@ struct CharCounter: View {
         let s = CharLimit.state(text, limit: limit)
         Text("\(s.used)/\(limit)")
             .font(.caption2)
-            .foregroundStyle(s.over ? Color.red : (s.nearLimit ? Color.orange : Color.secondary))
+            .foregroundStyle(s.over ? AppColor.danger : (s.nearLimit ? AppColor.pending : Color.secondary))
             .monospacedDigit()
             .accessibilityLabel("\(max(0, s.remaining)) characters remaining")
     }
@@ -34,7 +34,8 @@ struct NameWithStatus: View {
     var nameFont: Font = .subheadline.weight(.semibold)
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
-            Text(name ?? participantName(id)).font(nameFont)
+            // 🤖 marks a peer who isn't on the app yet (no active profile) → can't be messaged.
+            Text((name ?? participantName(id)) + botSuffix(id)).font(nameFont)
             if let status = participantStatus(id) {
                 Text(status).font(.caption2).italic()
                     .foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
@@ -46,14 +47,9 @@ struct NameWithStatus: View {
 // MARK: - Style helpers
 
 enum SlackStyle {
-    /// Slack-like avatar palette.
-    static let palette: [Color] = [
-        Color(red: 0.20, green: 0.51, blue: 0.89), Color(red: 0.46, green: 0.31, blue: 0.78),
-        Color(red: 0.86, green: 0.32, blue: 0.55), Color(red: 0.91, green: 0.55, blue: 0.18),
-        Color(red: 0.13, green: 0.63, blue: 0.55), Color(red: 0.24, green: 0.65, blue: 0.34),
-        Color(red: 0.36, green: 0.42, blue: 0.85), Color(red: 0.81, green: 0.28, blue: 0.28),
-        Color(red: 0.17, green: 0.60, blue: 0.73)
-    ]
+    /// Avatar palette — identity only (Tier 2). Draws from the app's single categorical ramp so
+    /// person colors match the trade-seat colors and nothing invents its own hues.
+    static let palette: [Color] = AppColor.categorical
 
     /// Deterministic color from an id (stable across launches).
     static func color(for id: String) -> Color {
@@ -131,6 +127,66 @@ struct SlackMessageRow<Actions: View>: View {
             }
         }
         .padding(.vertical, 3)
+    }
+}
+
+// MARK: - Legend (shared color key — one comprehensive source, two presentations)
+
+/// A single legend swatch (fill / border / SF-symbol / emoji), sized to align in rows.
+struct LegendSwatch: View {
+    let swatch: AppLegend.Swatch
+    var size: CGFloat = 22
+    var body: some View {
+        switch swatch {
+        case .fill(let c):
+            RoundedRectangle(cornerRadius: 5).fill(c.opacity(0.65)).frame(width: size, height: size)
+        case .border(let c):
+            RoundedRectangle(cornerRadius: 5).strokeBorder(c, lineWidth: 2).frame(width: size, height: size)
+        case .icon(let symbol, let c):
+            Image(systemName: symbol).font(.system(size: size * 0.72)).foregroundStyle(c).frame(width: size, height: size)
+        case .glyph(let g):
+            Text(g).font(.system(size: size * 0.8)).frame(width: size, height: size)
+        }
+    }
+}
+
+/// One legend line: swatch · name · meaning. Used by both the info sheet and the inline legend.
+struct LegendRow: View {
+    let item: AppLegend.Item
+    var body: some View {
+        HStack(spacing: 10) {
+            LegendSwatch(swatch: item.swatch)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(item.name).font(.subheadline.weight(.semibold))
+                Text(item.meaning).font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+/// The comprehensive legend, COLLAPSED by default, shown inline under the trade feeds so it's
+/// there to reference but never in the way. Same content as the info Color Key sheet (AppLegend).
+struct CollapsibleLegend: View {
+    @State private var expanded = false
+    var body: some View {
+        DisclosureGroup(isExpanded: $expanded) {
+            VStack(alignment: .leading, spacing: 12) {
+                ForEach(AppLegend.sections) { section in
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(section.title.uppercased()).font(.dsLabel).foregroundStyle(.secondary)
+                        ForEach(section.items) { LegendRow(item: $0) }
+                    }
+                }
+            }
+            .padding(.top, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } label: {
+            Label("Legend & colors", systemImage: "paintpalette")
+                .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+        }
+        .tint(.secondary)
+        .padding(DS.cardPadding)
+        .background(.bar, in: RoundedRectangle(cornerRadius: DS.cardRadius))
     }
 }
 
@@ -251,7 +307,11 @@ struct SlackComposer: View {
     @Binding var text: String
     var showFormatBar = true
     var canSendWhenEmpty = false   // allow send with no text (e.g. an image is attached)
+    /// When non-empty, an "@" button appears that opens a mention picker (channel use). id + name.
+    var mentionPeople: [(id: String, name: String)] = []
     let onSend: () -> Void
+
+    @State private var showMentions = false
 
     private var isEmpty: Bool {
         text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !canSendWhenEmpty
@@ -270,13 +330,18 @@ struct SlackComposer: View {
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(.white)
                         .frame(width: 34, height: 34)
-                        .background(isEmpty ? Color.gray.opacity(0.4) : Color.accentColor, in: Circle())
+                        .background(isEmpty ? AppColor.neutral.opacity(0.4) : Color.accentColor, in: Circle())
                 }
                 .disabled(isEmpty)
             }
             if showFormatBar {
                 HStack(spacing: 14) {
                     FormatBar(text: $text)
+                    if !mentionPeople.isEmpty {
+                        Button { showMentions = true } label: { Image(systemName: "at") }
+                            .buttonStyle(.borderless).font(.subheadline).foregroundStyle(.secondary)
+                            .accessibilityLabel("Mention someone")
+                    }
                     Text("**bold** *italic* ~~strike~~").font(.caption2).foregroundStyle(.tertiary)
                     Spacer()
                 }
@@ -284,30 +349,50 @@ struct SlackComposer: View {
         }
         .padding(.horizontal, 12).padding(.vertical, 8)
         .background(.bar)
+        .sheet(isPresented: $showMentions) {
+            MentionPicker(people: mentionPeople) { name in text = Mentions.insert(name, into: text) }
+        }
     }
 }
 
-// MARK: - User status header (shown atop Home + Trades)
+// MARK: - Mention picker
 
-/// The signed-in dispatcher's avatar + name + public status line.
-struct StatusHeaderBar: View {
-    private var settings = SettingsManager.shared
+/// A searchable list of who you can @-mention in a channel — "@everyone" pinned first, then every active
+/// dispatcher. Picking one inserts "@name " into the composer. Reliable regardless of spaces in names.
+struct MentionPicker: View {
+    let people: [(id: String, name: String)]
+    let onPick: (String) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var query = ""
+
+    private var filtered: [(id: String, name: String)] {
+        let q = query.trimmingCharacters(in: .whitespaces).lowercased()
+        return q.isEmpty ? people : people.filter { $0.name.lowercased().contains(q) }
+    }
 
     var body: some View {
-        let name = settings.displayName.isEmpty ? settings.username : settings.displayName
-        HStack(spacing: 8) {
-            Avatar(name: name, id: settings.username, size: 28)
-            VStack(alignment: .leading, spacing: 0) {
-                Text(name).font(.footnote.weight(.semibold)).lineLimit(1)
-                Text(settings.statusBroadcast.isEmpty ? "Set a status in Trade Settings →" : settings.statusBroadcast)
-                    .font(.caption2)
-                    .foregroundStyle(settings.statusBroadcast.isEmpty ? .tertiary : .secondary)
-                    .lineLimit(1)
+        NavigationStack {
+            List {
+                Button { onPick("everyone"); dismiss() } label: {
+                    Label("everyone", systemImage: "megaphone.fill")
+                        .foregroundStyle(AppColor.primary)
+                }
+                ForEach(filtered, id: \.id) { p in
+                    Button { onPick(p.name); dismiss() } label: {
+                        HStack(spacing: 10) {
+                            Avatar(name: p.name, id: p.id, size: 26)
+                            Text(p.name)
+                        }
+                    }
+                }
             }
-            Spacer()
+            .listStyle(.plain)
+            .searchable(text: $query, prompt: "Search dispatchers")
+            .navigationTitle("Mention")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
+            .presentationDetents([.medium, .large])
         }
-        .padding(.horizontal, 12).padding(.vertical, 5)
-        .background(.bar)
     }
 }
 

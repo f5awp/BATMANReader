@@ -133,20 +133,24 @@ enum TradeEngineTests {
         // overrides the printed shift → genuine day OFF carrying leaveCode "V". A day
         // with no annotation stays as printed. Mirrors the real Keriellen Nov data.
         let vacCSV = """
-        Name (ID) Qualification,,Nov,,Nov,,Nov,
-        ,,05,,06,,07,
-        ,,Thu,,Fri,,Sat,
-        ,"Test, T  (999999) D",21,,21,,21,
-        ,,L,V,L,V,,
+        Name (ID) Qualification,,Nov,,Nov,,Nov,,Nov,
+        ,,05,,06,,07,,08,
+        ,,Thu,,Fri,,Sat,,Sun,
+        ,"Test, T  (999999) D",21,,21,,21,,05,20
+        ,,L,V,L,V,,,L,V
         """
         if let w = try? ScheduleParser().parseAllWorkers(csv: vacCSV).first(where: { $0.id == "999999" }) {
             let v05 = w.shifts.first { $0.id == "2026-11-05" }
             let v06 = w.shifts.first { $0.id == "2026-11-06" }
             let w07 = w.shifts.first { $0.id == "2026-11-07" }
-            check(v05?.isOff == true && v05?.leaveCode == "V" && v05?.isVacation == true, "Vacation: 11-05 L|V → off + leaveCode V + isVacation")
-            check(v06?.isOff == true && v06?.leaveCode == "V", "Vacation: 11-06 L|V → off + leaveCode V")
+            let t08 = w.shifts.first { $0.id == "2026-11-08" }
+            check(v05?.isOff == true && v05?.leaveCode == "V" && v05?.isVacation == true, "Vacation: 11-05 L|V (no desk) → off + leaveCode V + isVacation")
+            check(v06?.isOff == true && v06?.leaveCode == "V", "Vacation: 11-06 L|V (no desk) → off + leaveCode V")
             check(w07?.isOff == false && w07?.startHour == 21 && w07?.leaveCode == nil,
                   "Vacation: 11-07 (no annotation) stays a normal working shift")
+            // Traded BACK into a vacation day: L|V but a real desk (20) is printed → the worked shift wins.
+            check(t08?.isOff == false && t08?.startHour == 5 && t08?.desk == "20" && t08?.leaveCode == nil,
+                  "Vacation: 11-08 L|V WITH a real desk (traded back in) → working shift, not vacation")
         } else {
             check(false, "Vacation: parser failed to return worker 999999")
         }
@@ -836,16 +840,6 @@ enum TradeEngineTests {
         check(!TradeEligibility.canCover(coverDayID: "2026-07-15", coverDay: d15, desk: "10", startHour: 5,
                                          coverMap: restMap, coverQuals: ["D"], coverProfile: openProfile, options: .physicalOnly).eligible,
               "U1-rest: <8h rest (2200→0500) → ineligible")
-        // (b) WEEKLY CAP: a 9h cap with one worked day in the week → +9 = 18 > 9 → fails under .full only.
-        let capProfile = TradeProfile(workerID: "cov", displayName: "Cov", openness: "all",
-                                      blacklistedWeekdays: [], blacklistedDesks: [], blacklistedShiftTypes: [],
-                                      blacklistedRegions: [], seekingDayIDs: [], updatedAt: Date(), maxWeeklyHours: 9)
-        check(!TradeEligibility.canCover(coverDayID: "2026-07-15", coverDay: d15, desk: "10", startHour: 5,
-                                         coverMap: covMap, coverQuals: ["D"], coverProfile: capProfile, options: .full).eligible,
-              "U1-cap: weekly-cap breach → ineligible under .full")
-        check(TradeEligibility.canCover(coverDayID: "2026-07-15", coverDay: d15, desk: "10", startHour: 5,
-                                        coverMap: covMap, coverQuals: ["D"], coverProfile: capProfile, options: .physicalOnly).eligible,
-              "U1-cap: .physicalOnly ignores the weekly cap")
         // (c) BOOKEND: an ISOLATED off day (no adjacent work) → eligible but NOT a bookend.
         let isoMap = ["2026-07-15": rEntry("2026-07-15", off: true)]
         let isoChk = TradeEligibility.canCover(coverDayID: "2026-07-15", coverDay: d15, desk: "10", startHour: 5,
@@ -861,6 +855,62 @@ enum TradeEngineTests {
         check(TradeEligibility.canCover(coverDayID: "2026-07-15", coverDay: d15, desk: "10", startHour: 5,
                                         coverMap: covMap, coverQuals: ["D"], coverProfile: noneProfile, options: .physicalOnly).eligible,
               "U1-soft: .physicalOnly ignores openness")
+
+        // MARK: U1-dispatch — only genuine dispatch shifts trade. A training (TRN) desk or an
+        // irregular start hour is NEVER coverable, regardless of off/qualified/rested. (User: a
+        // permanent-TRN peer like Lee Roper is "not a dispatch shift" → not available for trading.)
+        check(!TradeEligibility.canCover(coverDayID: "2026-07-15", coverDay: d15, desk: "TRN", startHour: 5,
+                                         coverMap: covMap, coverQuals: ["D"], coverProfile: openProfile, options: .physicalOnly).eligible,
+              "U1-dispatch: a training (TRN) desk is never coverable — not a dispatch shift")
+        check(!TradeEligibility.canCover(coverDayID: "2026-07-15", coverDay: d15, desk: "10", startHour: 7,
+                                         coverMap: covMap, coverQuals: ["D"], coverProfile: openProfile, options: .physicalOnly).eligible,
+              "U1-dispatch: an irregular start hour (0700) is never coverable")
+        check(TradeEligibility.canCover(coverDayID: "2026-07-15", coverDay: d15, desk: "10", startHour: 5,
+                                        coverMap: covMap, coverQuals: ["D"], coverProfile: openProfile, options: .physicalOnly).eligible,
+              "U1-dispatch: a regular 0500 dispatch desk still covers (regression)")
+        check(!TradeTiming.isDispatchShift(desk: "TRN", startHour: 5), "U1-dispatch: isDispatchShift false for TRN desk")
+        check(!TradeTiming.isDispatchShift(desk: "10", startHour: 7), "U1-dispatch: isDispatchShift false for irregular hour")
+        check(TradeTiming.isDispatchShift(desk: "10", startHour: 13), "U1-dispatch: isDispatchShift true for 1300 dispatch")
+
+        // MARK: Daily digest copy — plural-correct summary sentence; friendly zero-state.
+        check(NotificationManager.digestBody(pending: 0, unread: 0) == "Nothing needs you right now — tap to browse your matches.",
+              "digest: zero state")
+        check(NotificationManager.digestBody(pending: 1, unread: 0) == "You have 1 pending trade. Tap to review.",
+              "digest: singular pending")
+        check(NotificationManager.digestBody(pending: 3, unread: 2) == "You have 3 pending trades and 2 unread messages. Tap to review.",
+              "digest: both, pluralized")
+
+        // MARK: U-RECV — a day I RECEIVE back must be a clean bookend for me (attaches to my work) or a
+        // day I explicitly marked want-to-work; a random mid-week island is dropped. Bookends rank first.
+        // (User: rank bookends higher even when my openness is open-to-everything.)
+        do {
+            func rleg(_ id: String, _ day: Int, bookend: Bool) -> TwoWayLeg {
+                let date = DateComponents(calendar: .current, year: 2026, month: 9, day: day).date!
+                return TwoWayLeg(dayID: id, date: date, desk: "29", startHour: 5, bookend: bookend, wanted: false)
+            }
+            let island = rleg("2026-09-15", 15, bookend: false)   // Mitchell's random mid-week Sep 15
+            let clean1 = rleg("2026-09-07", 7,  bookend: true)
+            let clean2 = rleg("2026-09-22", 22, bookend: true)
+            // Bookends Only → the island is DROPPED; clean bookends kept, soonest-first.
+            let strict = TradeRouter.cleanReceiveLegs([island, clean2, clean1], wantToWork: [], bookendsOnly: true)
+            check(strict.map(\.dayID) == ["2026-09-07", "2026-09-22"],
+                  "U-RECV: Bookends-Only excludes the non-bookend island")
+            // Open-to-all → the island is KEPT but sorted LAST (bookends preferred).
+            let open = TradeRouter.cleanReceiveLegs([island, clean2, clean1], wantToWork: [], bookendsOnly: false)
+            check(open.map(\.dayID) == ["2026-09-07", "2026-09-22", "2026-09-15"],
+                  "U-RECV: open-to-all keeps the island but ranks bookends first")
+            // A want-to-work day I marked is kept even under Bookends Only.
+            let kept = TradeRouter.cleanReceiveLegs([island], wantToWork: ["2026-09-15"], bookendsOnly: true)
+            check(kept.map(\.dayID) == ["2026-09-15"],
+                  "U-RECV: a want-to-work day I marked is kept even if it isn't a bookend")
+            // Ranking: an all-clean package outranks a dirtier one (hands me an island) even with MORE coverage.
+            var dirtyPkg = TradePackage(id: "dirty", methodology: .greedy, assignments: [], route: nil)
+            dirtyPkg.coverageCount = 4; dirtyPkg.dirtyReceives = 1
+            var cleanPkg = TradePackage(id: "clean", methodology: .greedy, assignments: [], route: nil)
+            cleanPkg.coverageCount = 3; cleanPkg.dirtyReceives = 0
+            check(TradeRouter.rankLess(cleanPkg, dirtyPkg),
+                  "U-RECV: an all-clean package ranks above a dirtier one even with less coverage")
+        }
 
         // MARK: A8 — a peer with NO published profile defaults to Bookends Only (conservative):
         // never offered a non-bookend (split-the-weekend) pickup until they opt into broader trading.

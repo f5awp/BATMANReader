@@ -241,30 +241,40 @@ final class ScheduleParser {
                 let code = field(ann, index + 1).trimmed
                 if !code.isEmpty { leaveCode = code; break }
             }
-            if leaveCode == "V" {
-                // Vacation: shift removed → genuine day off (carries leaveCode for display).
+
+            // Parse the printed shift (start hour + desk) UP FRONT, so a concrete desk assignment can
+            // override a stale vacation annotation (see the traded-back rule below).
+            let startHour = Int(startToken)
+            // Desk sits in the next column — but only if that column isn't itself a
+            // day-number column (guards against the dropped-separator case).
+            let deskColumnIsGap = (index + 1 >= dayRow.count) || dayRow[index + 1].trimmed.isEmpty
+            let desk = deskColumnIsGap ? field(shiftRow, index + 1).trimmed : ""
+
+            // Vacation ("L|V"): the day is OFF **unless** a real shift WITH A DESK is printed — that means
+            // the worker traded BACK into the vacation day (a concrete desk assignment: AM/desk 20, etc.),
+            // so the worked shift wins. A bare rotation time with no desk stays a genuine vacation day OFF.
+            // (S-PARSE-1 + traded-back correction.)
+            let tradedBackIn = leaveCode == "V" && startHour != nil && !desk.isEmpty
+            if leaveCode == "V", !tradedBackIn {
                 shifts.append(Shift(id: id, date: date, startHour: 0, endHour: 0,
                                     role: .off, desk: "", leaveCode: "V", isOff: true))
                 continue
             }
 
             // OFF / blank / non-numeric → day off.
-            guard let startHour = Int(startToken) else {
+            guard let startHour else {
                 shifts.append(Shift(id: id, date: date, startHour: 0, endHour: 0,
                                     role: .off, desk: "", leaveCode: leaveCode, isOff: true))
                 continue
             }
 
-            // Desk sits in the next column — but only if that column isn't itself a
-            // day-number column (guards against the dropped-separator case).
-            let deskColumnIsGap = (index + 1 >= dayRow.count) || dayRow[index + 1].trimmed.isEmpty
-            let desk = deskColumnIsGap ? field(shiftRow, index + 1).trimmed : ""
             let endHour = (startHour + 9) % 24
-
+            // A traded-back-in day is a real working shift now — drop the "V" so nothing treats it as off.
+            let effectiveLeave = tradedBackIn ? nil : leaveCode
             shifts.append(Shift(id: id, date: date,
                                 startHour: startHour, endHour: endHour,
                                 role: Self.role(forDesk: desk),
-                                desk: desk, leaveCode: leaveCode, isOff: false))
+                                desk: desk, leaveCode: effectiveLeave, isOff: false))
         }
     }
 

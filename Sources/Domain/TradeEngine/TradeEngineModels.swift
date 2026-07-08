@@ -853,6 +853,20 @@ enum AppGuide {
     /// Curated version history — milestones, technical, to show the scope of work.
     static let versionHistory: [ReleaseNote] = [
         ReleaseNote(
+            version: "Build 5 — A cleaner app, smarter trades",
+            headline: "A top-to-bottom design pass plus several trade-quality fixes from beta feedback.",
+            points: [
+                "Bookends rank higher — always. Even with openness set to \"all,\" a trade where the day you receive attaches cleanly to your schedule now ranks above scattered mid-week \"island\" days. Set Bookends-Only and island days are hidden entirely.",
+                "No more junk reciprocals: a trade that would hand you a random day you never asked for is pushed to the bottom (or dropped) — across 2-way, multi-person, circular, and the Intents feed.",
+                "Training & irregular shifts excluded: anyone permanently on a TRN/training shift or an off-hours assignment no longer shows up as a tradeable partner.",
+                "Traded back from vacation? It shows correctly now — if you gave up vacation and picked up a real desk, that day reads as the working shift instead of \"vacation.\"",
+                "Removed the weekly-hours cap setting and its matching limit.",
+                "One clean design language: a single color system (one color = one meaning), one rounded button shape app-wide, a unified top bar (you · Inbox · Channel · ⋯), a compact trades stat, uncluttered month headers, and a collapsible in-app color legend.",
+                "🤖 marks dispatchers who aren't on the app yet, and you're told when someone can't receive a message. The moment they sign up it clears — and they can receive requests and notifications right away.",
+                "@-mentions in channels: tap @ to mention a dispatcher or @everyone.",
+                "A once-a-day summary notification of what needs you (toggle in App Settings), a faster Trades tab with a loading indicator, and manual schedule import moved into Developer settings.",
+            ]),
+        ReleaseNote(
             version: "Build 4 — Scoring engine, marketplace & beta polish",
             headline: "The first TestFlight beta: an acceptance model unifies every feed, the Intents marketplace and deep search become first-class, and the Trades tab gets faster and clearer.",
             points: [

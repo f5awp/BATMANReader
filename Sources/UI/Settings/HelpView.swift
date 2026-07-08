@@ -45,7 +45,7 @@ struct WelcomeView: View {
                 .foregroundStyle(.white)
                 .frame(width: 76, height: 76)
                 .background(
-                    LinearGradient(colors: [.indigo, .blue], startPoint: .topLeading, endPoint: .bottomTrailing),
+                    LinearGradient(colors: [AppColor.special, AppColor.primary], startPoint: .topLeading, endPoint: .bottomTrailing),
                     in: RoundedRectangle(cornerRadius: 18))
             Text("Welcome to \(AppGuide.appName)").font(.title.bold())
             Text(AppGuide.tagline).font(.headline).foregroundStyle(.secondary)
@@ -71,7 +71,7 @@ struct WelcomeView: View {
             LazyVGrid(columns: columns, spacing: 12) {
                 ForEach(AppGuide.pillars, id: \.title) { pillar in
                     VStack(alignment: .leading, spacing: 6) {
-                        Image(systemName: pillar.symbol).font(.title3).foregroundStyle(.blue)
+                        Image(systemName: pillar.symbol).font(.title3).foregroundStyle(AppColor.primary)
                         Text(pillar.title).font(.subheadline.weight(.semibold))
                         Text(pillar.blurb).font(.caption).foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -91,7 +91,7 @@ struct WelcomeView: View {
             Text("How it works").font(.headline)
             ForEach(AppGuide.methodology) { topic in
                 HStack(alignment: .top, spacing: 12) {
-                    Image(systemName: topic.symbol).font(.title3).foregroundStyle(.blue)
+                    Image(systemName: topic.symbol).font(.title3).foregroundStyle(AppColor.primary)
                         .frame(width: 28)
                     VStack(alignment: .leading, spacing: 3) {
                         Text(topic.title).font(.subheadline.weight(.semibold))
@@ -168,7 +168,7 @@ struct WelcomeView: View {
                 Text(current.headline).font(.subheadline).foregroundStyle(.secondary)
                 ForEach(current.points.prefix(4), id: \.self) { item in
                     HStack(alignment: .top, spacing: 8) {
-                        Image(systemName: "sparkles").font(.caption).foregroundStyle(.green).padding(.top, 2)
+                        Image(systemName: "sparkles").font(.caption).foregroundStyle(AppColor.success).padding(.top, 2)
                         Text(item).font(.subheadline)
                     }
                 }
@@ -181,13 +181,13 @@ struct WelcomeView: View {
             NavigationLink {
                 MechanismsView()
             } label: {
-                rowLabel("How it works — under the hood", "Every system, explained at engineer depth", "gearshape.2.fill", .indigo)
+                rowLabel("How it works — under the hood", "Every system, explained at engineer depth", "gearshape.2.fill", AppColor.special)
             }
             Divider().padding(.leading, 52)
             NavigationLink {
                 VersionHistoryView()
             } label: {
-                rowLabel("Version history", "The full arc of work, build by build", "clock.arrow.circlepath", .teal)
+                rowLabel("Version history", "The full arc of work, build by build", "clock.arrow.circlepath", AppColor.vacation)
             }
         }
         .padding(.vertical, 4)
@@ -245,7 +245,7 @@ struct VersionHistoryView: View {
                 Section {
                     ForEach(rel.points, id: \.self) { p in
                         HStack(alignment: .top, spacing: 8) {
-                            Circle().fill(Color.blue).frame(width: 6, height: 6).padding(.top, 6)
+                            Circle().fill(AppColor.primary).frame(width: 6, height: 6).padding(.top, 6)
                             Text(p).font(.subheadline)
                         }
                     }

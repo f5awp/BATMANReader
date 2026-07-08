@@ -31,11 +31,11 @@ struct StatusBadge: View {
     }
     private var color: Color {
         switch status {
-        case .pending:   return .orange
-        case .accepted:  return .green
-        case .declined:  return .red
-        case .countered: return .blue
-        case .cancelled: return .gray
+        case .pending:   return AppColor.pending
+        case .accepted:  return AppColor.success
+        case .declined:  return AppColor.danger
+        case .countered: return AppColor.primary
+        case .cancelled: return AppColor.neutral
         case .message:   return .secondary
         }
     }
@@ -54,23 +54,63 @@ extension TradeRequestStatus {
     }
     var tint: Color {
         switch self {
-        case .pending:   return .orange
-        case .accepted:  return .green
-        case .declined:  return .red
-        case .countered: return .blue
-        case .cancelled: return .gray
+        case .pending:   return AppColor.pending
+        case .accepted:  return AppColor.success
+        case .declined:  return AppColor.danger
+        case .countered: return AppColor.primary
+        case .cancelled: return AppColor.neutral
         case .message:   return .secondary
         }
     }
 }
 
-/// Renders message text as Markdown so **bold**, *italic*, and ~~strike~~ work.
+/// Renders message text as Markdown so **bold**, *italic*, and ~~strike~~ work — and highlights
+/// @mentions (@everyone + any active dispatcher's name) in the accent color.
 func mdText(_ s: String) -> Text {
-    if let a = try? AttributedString(markdown: s,
-        options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)) {
-        return Text(a)
+    guard var a = try? AttributedString(markdown: s,
+        options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)) else { return Text(s) }
+    Mentions.highlight(&a, names: Mentions.channelNames())
+    return Text(a)
+}
+
+/// @mention support for the channel + chat. Names can contain spaces/commas ("Lee, Ervin"), so mentions
+/// are inserted via a picker (not fragile inline parsing) and matched for highlighting against the known
+/// set of active-dispatcher names + "everyone". Pure + testable.
+enum Mentions {
+    /// The mention-able names: "everyone" + every ACTIVE (published-profile) dispatcher's resolved name.
+    static func channelNames() -> [String] {
+        ["everyone"] + TradeProfileStore.shared.others.keys.map { participantName($0) }
     }
-    return Text(s)
+
+    /// Insert "@name " into `text`, adding a separating space only when needed.
+    static func insert(_ name: String, into text: String) -> String {
+        let sep = (text.isEmpty || text.hasSuffix(" ") || text.hasSuffix("\n")) ? "" : " "
+        return text + sep + "@\(name) "
+    }
+
+    /// The set of names actually @-mentioned in `text` (matched against the known name list, "everyone"
+    /// first, longest-first so "Lee, Ervin" wins over a shorter partial). Drives highlighting + (future) push.
+    static func mentioned(in text: String, names: [String]) -> Set<String> {
+        var found: Set<String> = []
+        for name in names.sorted(by: { $0.count > $1.count }) where text.contains("@\(name)") {
+            found.insert(name)
+        }
+        return found
+    }
+
+    /// Color every "@name" run in `attr` with the accent, longest names first so a full name isn't
+    /// clipped by a shorter partial match.
+    static func highlight(_ attr: inout AttributedString, names: [String]) {
+        for name in names.sorted(by: { $0.count > $1.count }) {
+            let token = "@\(name)"
+            var cursor = attr.startIndex
+            while cursor < attr.endIndex, let r = attr[cursor...].range(of: token) {
+                attr[r].foregroundColor = AppColor.primary
+                attr[r].inlinePresentationIntent = .stronglyEmphasized
+                cursor = r.upperBound
+            }
+        }
+    }
 }
 
 /// Wraps the whole draft in a Markdown marker (used by the format buttons).
@@ -208,9 +248,9 @@ struct InboxView: View {
                     Label("Delete", systemImage: "trash")   // gone forever
                 }
                 if store.archivedRequestIDs.contains(req.id) {
-                    Button { store.unarchiveRequest(req.id) } label: { Label("Unarchive", systemImage: "tray.and.arrow.up") }.tint(.blue)
+                    Button { store.unarchiveRequest(req.id) } label: { Label("Unarchive", systemImage: "tray.and.arrow.up") }.tint(AppColor.primary)
                 } else {
-                    Button { store.archiveRequest(req.id) } label: { Label("Archive", systemImage: "archivebox") }.tint(.gray)
+                    Button { store.archiveRequest(req.id) } label: { Label("Archive", systemImage: "archivebox") }.tint(AppColor.neutral)
                 }
             }
     }
@@ -228,7 +268,7 @@ struct ECBOfferRow: View {
         return VStack(alignment: .leading, spacing: 3) {
             HStack {
                 Label("\(ecbText(first?.ecbAmount ?? 0)) ECB", systemImage: "star.circle.fill")
-                    .font(.subheadline.bold()).foregroundStyle(.orange)
+                    .font(.subheadline.bold()).foregroundStyle(AppColor.pending)
                 Spacer()
                 Text("\(offer.requests.count) sent").font(.caption2).foregroundStyle(.secondary)
             }
@@ -236,7 +276,7 @@ struct ECBOfferRow: View {
                 Text("Shifts: " + DayFmt.list(f.giveDayIDs)).font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
             Text(count == 0 ? "No acceptances yet" : "^[\(count) accepted](inflect: true) · tap to confirm")
-                .font(.caption.bold()).foregroundStyle(count > 0 ? .green : .secondary)
+                .font(.caption.bold()).foregroundStyle(count > 0 ? AppColor.success : .secondary)
         }
         .padding(.vertical, 2)
     }
@@ -286,7 +326,7 @@ struct ECBOfferView: View {
                             Text("\(idx + 1)")
                                 .font(.caption.bold()).foregroundStyle(.white)
                                 .frame(width: 26, height: 26)
-                                .background(idx == 0 ? Color.green : Color.blue, in: Circle())
+                                .background(idx == 0 ? AppColor.success : AppColor.primary, in: Circle())
                         }
                     }
                 }
@@ -384,7 +424,7 @@ struct RequestRow: View {
                     .font(.caption).foregroundStyle(.secondary)
                 if let chain = request.chain, !chain.isEmpty {
                     Label("\(tradeTypeLabel(distinctPeople: distinctParticipants(in: chain))) · tap to view", systemImage: "arrow.triangle.2.circlepath")
-                        .font(.caption2.weight(.semibold)).foregroundStyle(.indigo)
+                        .font(.caption2.weight(.semibold)).foregroundStyle(AppColor.special)
                 } else if !(request.giveDayIDs.isEmpty && request.takeDayIDs.isEmpty) {
                     // Your side of the deal, in the same give/get language as the cards.
                     TraderChips(name: "You", color: BrickPalette.mineScheme,
@@ -404,16 +444,16 @@ struct RequestRow: View {
                     }
                     if let ecb = request.ecbAmount, request.isECB {
                         Label("\(ecbText(ecb)) ECB", systemImage: "star.circle.fill")
-                            .font(.caption2.bold()).foregroundStyle(.orange)
+                            .font(.caption2.bold()).foregroundStyle(AppColor.pending)
                     }
                     // 🔥 the incoming request hits one of my own marked intents (U6).
                     if !mine, store.matchesMyIntents(request) {
                         Label("Matches your intent", systemImage: "flame.fill")
-                            .font(.caption2.weight(.bold)).foregroundStyle(.orange)
+                            .font(.caption2.weight(.bold)).foregroundStyle(AppColor.heat)
                     }
                     if needsMe {
                         Label("Your move", systemImage: "exclamationmark.circle.fill")
-                            .font(.caption2.weight(.semibold)).foregroundStyle(.orange)
+                            .font(.caption2.weight(.semibold)).foregroundStyle(AppColor.pending)
                     }
                 }
             }
@@ -484,7 +524,7 @@ struct ThreadView: View {
                     }
                     if request.isECB, let ecb = request.ecbAmount {
                         Label("\(ecbText(ecb)) ECB offered", systemImage: "star.circle.fill")
-                            .font(.subheadline.weight(.semibold)).foregroundStyle(.orange)
+                            .font(.subheadline.weight(.semibold)).foregroundStyle(AppColor.pending)
                     }
                     if !request.note.isEmpty {
                         Text(request.note).font(.subheadline)
@@ -514,7 +554,7 @@ struct ThreadView: View {
             }
 
             Section("Conversation") {
-                auditRow(icon: "paperplane.fill", tint: .blue,
+                auditRow(icon: "paperplane.fill", tint: AppColor.primary,
                          who: request.fromName, what: "proposed this trade", when: request.createdAt,
                          note: request.note)
                 ForEach(store.responses(for: request.id).sorted { $0.createdAt < $1.createdAt }) { r in
@@ -556,7 +596,7 @@ struct ThreadView: View {
                 Section {
                     Label("You replied: \(status.label)", systemImage: "checkmark.seal.fill")
                         .font(.subheadline.bold())
-                        .foregroundStyle(status == .declined ? .red : .green)
+                        .foregroundStyle(status == .declined ? AppColor.danger : AppColor.success)
                 }
             }
 
@@ -569,7 +609,7 @@ struct ThreadView: View {
                             Spacer()
                             if let pos = store.myQueuePosition(offerID: offerID, dayID: d) {
                                 Text("#\(pos)").font(.subheadline.bold())
-                                    .foregroundStyle(pos <= MessagingStore.ecbQueueCap ? .green : .orange)
+                                    .foregroundStyle(pos <= MessagingStore.ecbQueueCap ? AppColor.success : AppColor.pending)
                             } else {
                                 Text("not accepted").font(.caption).foregroundStyle(.secondary)
                             }
@@ -584,14 +624,14 @@ struct ThreadView: View {
                 Section("ECB transfer") {
                     if receivedECB {
                         Label("You confirmed receipt of \(ecbText(request.ecbAmount ?? 0)) ECB.", systemImage: "checkmark.seal.fill")
-                            .foregroundStyle(.green)
+                            .foregroundStyle(AppColor.success)
                     } else {
                         Text("\(request.fromName) is submitting the \(ecbText(request.ecbAmount ?? 0))-ECB form. Confirm once it lands in your account.")
                             .font(.subheadline)
                         Button { confirmReceived() } label: {
                             Label("Confirm ECB received", systemImage: "star.circle.fill")
                         }
-                        .buttonStyle(.borderedProminent).tint(.orange)
+                        .buttonStyle(.borderedProminent).tint(AppColor.pending)
                     }
                 }
             }
@@ -606,14 +646,14 @@ struct ThreadView: View {
                     Button { Task { await store.acceptECB(request, days: Array(ecbSelectedDays)); ecbSelectedDays = [] } } label: {
                         Label("Accept selected", systemImage: "checkmark.circle.fill")
                     }
-                    .tint(.green).disabled(ecbSelectedDays.isEmpty)
+                    .tint(AppColor.success).disabled(ecbSelectedDays.isEmpty)
                     Button(role: .destructive) { respond(.declined) } label: { Label("Decline all", systemImage: "xmark.circle") }
                 }
             } else if isIncoming && status == .pending {
                 Section("Respond") {
                     TextField("Optional note…", text: $replyNote, axis: .vertical)
                     Button { respond(.accepted) } label: { Label("Accept", systemImage: "checkmark.circle.fill") }
-                        .tint(.green)
+                        .tint(AppColor.success)
                         .disabled(!staleDays.isEmpty)   // can't accept an invalid swap
                     Button { respond(.countered) } label: { Label("Counter", systemImage: "arrow.uturn.left.circle") }
                     Button(role: .destructive) { respond(.declined) } label: { Label("Decline", systemImage: "xmark.circle") }
@@ -678,9 +718,9 @@ struct ThreadView: View {
     /// Color indicator for a qual-swap leg status (Q3).
     private func qualSwapTint(_ s: QualSwapLegStatus) -> Color {
         switch s {
-        case .waiting:                 return .orange
-        case .offersOpen, .offersFull: return .blue
-        case .finalized:               return .green
+        case .waiting:                 return AppColor.pending
+        case .offersOpen, .offersFull: return AppColor.primary
+        case .finalized:               return AppColor.success
         case .invalid:                 return BrickPalette.critical
         }
     }
@@ -703,7 +743,7 @@ struct ThreadView: View {
                 if role == .bridge {
                     let iAccepted = leg.acceptances.contains { $0.workerID == myID }
                     if iAccepted {
-                        Label("You accepted this qual swap.", systemImage: "checkmark.seal.fill").foregroundStyle(.green)
+                        Label("You accepted this qual swap.", systemImage: "checkmark.seal.fill").foregroundStyle(AppColor.success)
                     } else if leg.acceptIsOpen && !leg.status.isTerminal {
                         if let cand = leg.candidates.first(where: { $0.workerID == myID }) {
                             Text("You'd move onto desk \(leg.giveDesk) (\(leg.giveQual)); your desk \(cand.desk) (\(cand.qual)) goes to \(leg.takerName).")
@@ -711,7 +751,7 @@ struct ThreadView: View {
                         }
                         Button { Task { await store.acceptQualSwapBridge(request) } } label: {
                             Label("Accept qual swap", systemImage: "checkmark.circle.fill")
-                        }.tint(.green)
+                        }.tint(AppColor.success)
                     } else {
                         Label("Qual swap already filled.", systemImage: "lock.fill").foregroundStyle(.secondary)
                     }
@@ -729,10 +769,10 @@ struct ThreadView: View {
                             }
                             Spacer()
                             if leg.chosenWorkerID == a.workerID {
-                                Label("Chosen", systemImage: "checkmark.seal.fill").foregroundStyle(.green)
+                                Label("Chosen", systemImage: "checkmark.seal.fill").foregroundStyle(AppColor.success)
                             } else if !leg.status.isTerminal {
                                 Button("Choose") { Task { await store.finalizeQualSwap(request, chosenWorkerID: a.workerID) } }
-                                    .buttonStyle(.borderedProminent).tint(.green)
+                                    .buttonStyle(.borderedProminent).tint(AppColor.success)
                             }
                         }
                     }
@@ -763,7 +803,7 @@ struct ThreadView: View {
                     } label: {
                         Label("Merge with base trade", systemImage: "arrow.triangle.merge")
                     }
-                    .tint(.indigo)
+                    .tint(AppColor.special)
                     Text("Combines this qual swap with your clean trade on \(prettyDay(leg.giveShiftDayID)) into a single request.")
                         .font(.caption2).foregroundStyle(.secondary)
                 }
@@ -862,6 +902,13 @@ struct ChannelView: View {
         MessagingStore.sortedForChannel(store.broadcasts.filter { $0.channelOrDefault == channel })
     }
 
+    /// Who you can @-mention: every ACTIVE (published-profile) dispatcher, by resolved name.
+    private var mentionPeople: [(id: String, name: String)] {
+        TradeProfileStore.shared.others.keys
+            .map { (id: $0, name: participantName($0)) }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
     /// Per-channel copy. Unknown channels fall back to the trade board. E1.
     private var channelMeta: (title: String, subtitle: String, emptyTitle: String, emptyDesc: String, icon: String) {
         switch channel {
@@ -925,7 +972,8 @@ struct ChannelView: View {
                         Spacer()
                     }
                     .padding(.horizontal, 12).padding(.top, 4)
-                    SlackComposer(placeholder: "Message #\(channel)", text: $draft) {
+                    SlackComposer(placeholder: "Message #\(channel)", text: $draft,
+                                  mentionPeople: mentionPeople) {
                         let text = draft; draft = ""
                         let img = pendingImage; pendingImage = nil; pickerItem = nil
                         Task {
@@ -973,7 +1021,7 @@ struct ChannelView: View {
         return VStack(alignment: .leading, spacing: 6) {
             if post.isPinned {
                 Label("Pinned", systemImage: "pin.fill")
-                    .font(.caption2.weight(.semibold)).foregroundStyle(.orange).padding(.leading, 46)
+                    .font(.caption2.weight(.semibold)).foregroundStyle(AppColor.heat).padding(.leading, 46)
             }
             SlackMessageRow(name: post.authorName, authorID: post.authorID,
                             timestamp: post.createdAt, message: post.text,
@@ -992,7 +1040,7 @@ struct ChannelView: View {
                     Label("^[\(reps.count) reply](inflect: true)", systemImage: "chevron.right")
                         .font(.caption.weight(.semibold))
                 }
-                .buttonStyle(.plain).foregroundStyle(.blue).padding(.leading, 46)
+                .buttonStyle(.plain).foregroundStyle(AppColor.primary).padding(.leading, 46)
             }
 
             if isOpen {
@@ -1130,7 +1178,7 @@ struct ChannelView: View {
         return VStack(alignment: .leading, spacing: 4) {
             SlackMessageRow(name: r.authorID == myID ? "You" : r.authorName, authorID: r.authorID,
                             timestamp: r.createdAt, message: r.isDeleted ? "[Deleted]" : r.text,
-                            meta: (metaText, r.isPublic ? .blue : .orange),
+                            meta: (metaText, r.isPublic ? AppColor.primary : AppColor.pending),
                             avatarSize: 26) {
                 if r.isDeleted {
                     EmptyView()
@@ -1294,42 +1342,61 @@ struct EditPostSheet: View {
 struct MessagingDock: View {
     @Binding var showInbox: Bool
     @Binding var showChannel: Bool
+    @Binding var showKey: Bool               // color key / legend (now inside the ⋯ overflow menu)
+    @Binding var showTradeSettings: Bool
+    @Binding var showAppSettings: Bool
+    @Binding var showDashboard: Bool         // trade-status breakdown (now inside the ⋯ overflow menu)
     private var store = MessagingStore.shared
 
-    init(showInbox: Binding<Bool>, showChannel: Binding<Bool>) {
-        _showInbox = showInbox; _showChannel = showChannel
+    init(showInbox: Binding<Bool>, showChannel: Binding<Bool>, showKey: Binding<Bool>,
+         showTradeSettings: Binding<Bool>, showAppSettings: Binding<Bool>, showDashboard: Binding<Bool>) {
+        _showInbox = showInbox; _showChannel = showChannel; _showKey = showKey
+        _showTradeSettings = showTradeSettings; _showAppSettings = showAppSettings; _showDashboard = showDashboard
     }
 
     var body: some View {
+        // Three controls only: the two primary destinations (Inbox, Channel) + one ⋯ overflow for the
+        // rest. Inbox's badge is the single "needs you" signal (replaces the old 4-counter status row).
         HStack(spacing: 8) {
-            // Inbox badge = replies that need YOU (actionable, red).
-            dockButton(icon: "tray.full.fill", label: "Inbox",
-                       badge: store.pendingIncoming.count, badgeColor: .red) { showInbox = true }
-            // Channel badge = UNREAD posts (clears on open). A2/S-SYNC-1.
-            dockButton(icon: "megaphone.fill", label: "Channel",
-                       badge: store.unreadBroadcastCount, badgeColor: .blue) { showChannel = true }
+            iconButton("tray.full.fill", label: "Inbox",
+                       badge: store.pendingIncoming.count, badgeColor: AppColor.danger) { showInbox = true }
+            iconButton("megaphone.fill", label: "Channel",
+                       badge: store.unreadBroadcastCount, badgeColor: AppColor.primary) { showChannel = true }
+            Menu {
+                Button { showDashboard = true } label: { Label("Trade status", systemImage: "checklist") }
+                Button { showKey = true } label: { Label("Colors & legend", systemImage: "paintpalette") }
+                Divider()
+                Button { showTradeSettings = true } label: { Label("Trade Settings", systemImage: "arrow.left.arrow.right") }
+                Button { showAppSettings = true } label: { Label("App Settings", systemImage: "gearshape") }
+            } label: { iconLabel("ellipsis") }
+            .buttonStyle(.plain)
+            .accessibilityLabel("More")
         }
     }
 
-    private func dockButton(icon: String, label: String, badge: Int,
-                            badgeColor: Color, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 5) {
-                Image(systemName: icon).font(.system(size: 13, weight: .semibold))
-                Text(label).font(.caption.weight(.semibold))
+    /// One uniform rounded-rect icon button (the app's single control shape), with an optional count badge.
+    private func iconButton(_ icon: String, label: String, badge: Int = 0,
+                            badgeColor: Color = .clear, action: @escaping () -> Void) -> some View {
+        Button(action: action) { iconLabel(icon, badge: badge, badgeColor: badgeColor) }
+            .buttonStyle(.plain)
+            .accessibilityLabel(badge > 0 ? "\(label), \(badge)" : label)
+    }
+
+    private func iconLabel(_ icon: String, badge: Int = 0, badgeColor: Color = .clear) -> some View {
+        Image(systemName: icon)
+            .font(.system(size: 15, weight: .semibold))
+            .frame(width: DS.controlSize, height: DS.controlSize)
+            .background(Color(.tertiarySystemFill), in: RoundedRectangle(cornerRadius: DS.controlRadius, style: .continuous))
+            .foregroundStyle(.primary)
+            .overlay(alignment: .topTrailing) {
                 if badge > 0 {
-                    Text("\(badge)")
-                        .font(.dsBadge).foregroundStyle(.white)
-                        .padding(.horizontal, 5).padding(.vertical, 1)
+                    Text("\(min(badge, 99))")
+                        .font(.system(size: 10, weight: .bold)).foregroundStyle(.white)
+                        .padding(.horizontal, 4).padding(.vertical, 1)
                         .background(badgeColor, in: Capsule())
+                        .overlay(Capsule().stroke(Color(.systemBackground), lineWidth: 1.5))
+                        .offset(x: 5, y: -5)
                 }
             }
-            .padding(.horizontal, 12).padding(.vertical, 8)
-            .background(.thinMaterial, in: Capsule())
-            .overlay(Capsule().stroke(.quaternary, lineWidth: 0.5))
-            .foregroundStyle(.primary)
-        }
-        .buttonStyle(.plain)
-        .shadow(radius: 3, y: 1)
     }
 }

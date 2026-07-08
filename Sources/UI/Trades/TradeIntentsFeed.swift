@@ -75,13 +75,6 @@ struct TradeByIntentsFeed: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
-                if whatIf {
-                    Label("What If? on — extended matches (toggle in Trade Search)",
-                          systemImage: "wand.and.stars")
-                        .font(.caption).foregroundStyle(.purple)
-                        .padding(.horizontal).padding(.top, 8)
-                }
-
                 if !loading {
                     luckyBar
                     // Trade size (Max people) is a Lucky-time option — only shown once Lucky is engaged.
@@ -186,7 +179,7 @@ struct TradeByIntentsFeed: View {
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent).controlSize(.small)
-            .tint(searchFilter.isActive ? .orange : nil)
+            .tint(searchFilter.isActive ? AppColor.heat : nil)
             if searchFilter.isActive {
                 HStack(spacing: 6) {
                     chip("One-time generation — tap to change or reset")
@@ -376,96 +369,14 @@ struct MasterFilterSheet: View {
     }
 }
 
-/// A compact legend at the bottom of the Intents feed, mirroring the trade-calendar key.
+/// The Intents-feed legend — now the shared comprehensive, collapsed-by-default color key.
 struct TradeFeedKey: View {
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Key").font(.caption.weight(.bold)).foregroundStyle(.secondary)
-            HStack(spacing: 14) {
-                chip("You give", BrickPalette.mineScheme)
-                chip("You get", BrickPalette.peerScheme)
-                Label("Mutual intent", systemImage: "flame.fill")
-                    .font(.caption2).foregroundStyle(.orange)
-            }
-            HStack(spacing: 10) {
-                pill("Optimal", .green); Text("fewest people").font(.caption2).foregroundStyle(.secondary)
-                pill("Fast", .secondary); Text("quick match").font(.caption2).foregroundStyle(.secondary)
-                pill("Circular", .indigo); Text("loop").font(.caption2).foregroundStyle(.secondary)
-            }
-            .lineLimit(1).minimumScaleFactor(0.7)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(DS.cardPadding)
-        .background(.bar, in: RoundedRectangle(cornerRadius: DS.cardRadius))
-    }
-
-    private func chip(_ label: String, _ color: Color) -> some View {
-        HStack(spacing: DS.xs) {
-            Capsule().fill(color.opacity(DS.pillFill)).frame(width: 16, height: 13)
-                .overlay(Capsule().stroke(color.opacity(0.5), lineWidth: 0.5))
-            Text(label).font(.caption2)
-        }
-    }
-
-    private func pill(_ text: String, _ color: Color) -> some View {
-        Text(text.uppercased())
-            .font(.dsBadge)
-            .padding(.horizontal, 6).padding(.vertical, 2)
-            .background(color.opacity(DS.pillFill), in: Capsule())
-            .foregroundStyle(color)
-    }
+    var body: some View { CollapsibleLegend() }
 }
 
-/// #5: intent-color legend — the SAME hues the calendar uses for each intent, plus the
-/// 🔥 (mutual want) / 📖 (bookend) markers. Reused by the two-way sheet and ECB so a
-/// dispatcher can read what each color means in-context.
+/// The intent-color legend used in the two-way sheet + ECB — the same shared collapsed key.
 struct IntentColorKey: View {
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Key").font(.caption.weight(.bold)).foregroundStyle(.secondary)
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 12) { swatches }
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(spacing: 12) {
-                        swatch("Trade away", WorkingIntentState.dontWantToWork.brickColor)
-                        swatch("Want to work", OffIntentState.wantToWork.brickColor)
-                    }
-                    HStack(spacing: 12) {
-                        swatch("Blackout", WorkingIntentState.mustWork.brickColor)   // B4-1: working-day blackout
-                        swatch("Blackout", OffIntentState.mustBeOff.brickColor)      // B4-1: off-day blackout
-                        markers
-                    }
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(DS.cardPadding)
-        .background(.bar, in: RoundedRectangle(cornerRadius: DS.cardRadius))
-    }
-
-    @ViewBuilder private var swatches: some View {
-        swatch("Trade away", WorkingIntentState.dontWantToWork.brickColor)
-        swatch("Want to work", OffIntentState.wantToWork.brickColor)
-        swatch("Blackout", WorkingIntentState.mustWork.brickColor)   // B4-1: working-day blackout
-        swatch("Blackout", OffIntentState.mustBeOff.brickColor)      // B4-1: off-day blackout
-        markers
-    }
-
-    private var markers: some View {
-        HStack(spacing: 10) {
-            Text("🔥 mutual").font(.caption2)
-            Text("📖 bookend").font(.caption2)
-        }
-        .foregroundStyle(.secondary)
-    }
-
-    private func swatch(_ label: String, _ color: Color) -> some View {
-        HStack(spacing: DS.xs) {
-            RoundedRectangle(cornerRadius: 3).fill(color).frame(width: 16, height: 13)
-                .overlay(RoundedRectangle(cornerRadius: 3).stroke(.secondary.opacity(0.3), lineWidth: 0.5))
-            Text(label).font(.caption2)
-        }
-    }
+    var body: some View { CollapsibleLegend() }
 }
 
 /// Stable per-trader calendar color (you are always blue). Same index → same color
@@ -488,7 +399,7 @@ struct TraderChips: View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 5) {
                 Circle().fill(color).frame(width: 10, height: 10)
-                Text(name).font(.dsCardTitle).foregroundStyle(color).lineLimit(1)
+                Text(name + (id.map(botSuffix) ?? "")).font(.dsCardTitle).foregroundStyle(color).lineLimit(1)
             }
             if let id, let status = participantStatus(id) {
                 Text(status).font(.dsCardMeta).italic().foregroundStyle(.secondary).lineLimit(1)
@@ -636,13 +547,13 @@ struct CompactSwapCard: View {
 
     var body: some View {
         let a = package.assignments.first
-        let peerColor = a.map { TradeColors.color(forParticipant: $0.workerID, myID: myID, orderedPeers: [$0.workerID]) } ?? .blue
+        let peerColor = a.map { TradeColors.color(forParticipant: $0.workerID, myID: myID, orderedPeers: [$0.workerID]) } ?? AppColor.neutral
         VStack(alignment: .leading, spacing: 6) {
             // Header: peer name + their status snapshot · badges · Propose.
             HStack(spacing: 8) {
                 Circle().fill(peerColor).frame(width: 8, height: 8)
                 VStack(alignment: .leading, spacing: 0) {
-                    Text(a?.name ?? "Swap").font(.subheadline.weight(.semibold))
+                    Text((a?.name ?? "Swap") + (a.map { botSuffix($0.workerID) } ?? "")).font(.subheadline.weight(.semibold))
                     if let id = a?.workerID, let status = participantStatus(id), !status.isEmpty {
                         Text(status).font(.caption2).italic().foregroundStyle(.secondary).lineLimit(1)
                     }
@@ -663,7 +574,7 @@ struct CompactSwapCard: View {
             }
             if DevAccess.shared.unlocked {
                 Text(String(format: "TradeScore: %.0f%% · cover %d", package.acceptanceScore * 100, package.coverageCount))
-                    .font(.dsBadge).foregroundStyle(.purple)
+                    .font(.dsBadge).foregroundStyle(AppColor.special)
             }
         }
         .padding(.horizontal, DS.cardPadding).padding(.vertical, 8)
@@ -676,15 +587,15 @@ struct CompactSwapCard: View {
     @ViewBuilder private var badges: some View {
         HStack(spacing: 6) {
             if package.qualSwap != nil {
-                Image(systemName: "q.square.fill").font(.system(size: 12, weight: .bold)).foregroundStyle(.purple)
+                Image(systemName: "q.square.fill").font(.system(size: 12, weight: .bold)).foregroundStyle(AppColor.special)
             }
             if package.fireCount > 0 {
                 Label("\(package.fireCount)", systemImage: "flame.fill")
-                    .font(.system(size: 10, weight: .bold)).foregroundStyle(.orange).labelStyle(.titleAndIcon)
+                    .font(.system(size: 10, weight: .bold)).foregroundStyle(AppColor.heat).labelStyle(.titleAndIcon)
             }
             if package.bookendTotal > 0 {
                 Label("\(package.bookendTotal)", systemImage: "book.fill")
-                    .font(.system(size: 10, weight: .bold)).foregroundStyle(.green).labelStyle(.titleAndIcon)
+                    .font(.system(size: 10, weight: .bold)).foregroundStyle(AppColor.success).labelStyle(.titleAndIcon)
             }
         }
     }
@@ -778,8 +689,8 @@ struct PackageCard: View {
         return "\(days) day\(days == 1 ? "" : "s") · \(kind)"
     }
     private var quality: (text: String, color: Color) {
-        if isCircular { return ("Circular", .indigo) }
-        return package.isOptimal ? ("Optimal", .green) : ("Fast", .secondary)
+        if isCircular { return ("Circular", AppColor.special) }
+        return package.isOptimal ? ("Optimal", AppColor.success) : ("Fast", .secondary)
     }
 
     var body: some View {
@@ -796,7 +707,7 @@ struct PackageCard: View {
                     // does NOT affect ranking. Visible only in developer mode.
                     if DevAccess.shared.unlocked {
                         Text(String(format: "TradeScore: %.0f%% · cover %d", package.acceptanceScore * 100, package.coverageCount))
-                            .font(.dsBadge).foregroundStyle(.purple)
+                            .font(.dsBadge).foregroundStyle(AppColor.special)
                     }
                 }
                 Spacer()
@@ -806,16 +717,16 @@ struct PackageCard: View {
                         if package.qualSwap != nil {
                             // Q-in-a-box: this solution needs a qual swap (Q1).
                             Label("Qual swap", systemImage: "q.square.fill")
-                                .font(.system(size: 10, weight: .bold)).foregroundStyle(.purple)
+                                .font(.system(size: 10, weight: .bold)).foregroundStyle(AppColor.special)
                         }
                         if package.fireCount > 0 {
                             Label("\(package.fireCount)", systemImage: "flame.fill")
-                                .font(.system(size: 10, weight: .bold)).foregroundStyle(.orange)
+                                .font(.system(size: 10, weight: .bold)).foregroundStyle(AppColor.heat)
                         }
                         if package.bookendTotal > 0 {
                             // 📖 = total bookends delivered across all parties (more = more optimal).
                             Label("\(package.bookendTotal)", systemImage: "book.fill")
-                                .font(.system(size: 10, weight: .bold)).foregroundStyle(.green)
+                                .font(.system(size: 10, weight: .bold)).foregroundStyle(AppColor.success)
                         }
                     }
                     .labelStyle(.titleAndIcon)
@@ -863,7 +774,7 @@ struct PackageCard: View {
                         Text("View on schedule").font(.caption.weight(.semibold))
                         Image(systemName: "chevron.right").font(.caption2)
                     }
-                    .foregroundStyle(.blue)
+                    .foregroundStyle(AppColor.primary)
                 }
                 .buttonStyle(.plain)
             }
@@ -1028,12 +939,12 @@ struct PackageDetailView: View {
             Text(name(s.toID)).foregroundStyle(colorFor(s.toID)).font(.caption.weight(.semibold)).lineLimit(1)
             Spacer(minLength: 6)
             Text(SwapChips.chipDay(s.dayID) + (s.desk.map { " · \($0)" } ?? ""))
-                .font(.dsChip).foregroundStyle(.indigo)
+                .font(.dsChip).foregroundStyle(AppColor.special)
         }
         .padding(.vertical, 6).padding(.horizontal, 10)
-        .background(on ? Color.indigo.opacity(0.12) : Color(.secondarySystemBackground),
+        .background(on ? AppColor.special.opacity(0.12) : Color(.secondarySystemBackground),
                     in: RoundedRectangle(cornerRadius: DS.rowRadius))
-        .overlay(RoundedRectangle(cornerRadius: DS.rowRadius).stroke(on ? Color.indigo : .clear, lineWidth: 1.5))
+        .overlay(RoundedRectangle(cornerRadius: DS.rowRadius).stroke(on ? AppColor.special : .clear, lineWidth: 1.5))
     }
 
     /// The two people in the selected step, stacked (giver above, receiver below),
@@ -1113,7 +1024,7 @@ struct ExecutionConfirmationView: View {
                                     .font(.caption).foregroundStyle(.secondary)
                             }
                             Spacer()
-                            Image(systemName: "arrow.right.circle").foregroundStyle(.indigo)
+                            Image(systemName: "arrow.right.circle").foregroundStyle(AppColor.special)
                         }
                     }
                 } header: {
@@ -1186,6 +1097,17 @@ func participantStatus(_ id: String) -> String? {
     let s = TradeProfileStore.shared.profile(forWorker: id)?.statusBroadcast
     return (s?.isEmpty ?? true) ? nil : s
 }
+
+/// Is this peer actually ON the app? True only if they've published a trade profile (you are always on).
+/// Profileless roster peers still appear in matches (behavior inferred) but can't receive messages.
+func participantHasProfile(_ id: String) -> Bool {
+    if id == SettingsManager.shared.username { return true }
+    return TradeProfileStore.shared.profile(forWorker: id) != nil
+}
+
+/// Robot suffix (🤖) for peers not on the app — appended to their NAME in displays so it's obvious
+/// they can't be messaged yet. Empty for active users. Display-only; never used as a stored name.
+func botSuffix(_ id: String) -> String { participantHasProfile(id) ? "" : " 🤖" }
 
 func prettyDay(_ iso: String) -> String {
     guard let d = TradeMatcher.dayDate(fromISO: iso) else { return iso }

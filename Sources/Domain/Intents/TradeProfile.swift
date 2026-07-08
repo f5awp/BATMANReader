@@ -84,8 +84,6 @@ struct TradeProfile: Sendable, Hashable, Codable, Identifiable {
     var phone: String? = nil
     // v2 trade rules (all optional so older records still decode).
     var statusBroadcast: String? = nil
-    var maxWeeklyHours: Int? = nil
-    var minWeeklyHours: Int? = nil
     var isMercenaryMode: Bool? = nil
     // Per-day availability pills, published so matching is pill-based cross-user.
     // Each entry is "ISO|TYPE", e.g. "2026-07-04|AM". Optional so old records decode.
@@ -120,7 +118,7 @@ struct TradeProfile: Sendable, Hashable, Codable, Identifiable {
          blacklistedShiftTypes: Set<String>, blacklistedRegions: Set<String>,
          seekingDayIDs: Set<String>, updatedAt: Date,
          personalEmail: String? = nil, aaEmail: String? = nil, phone: String? = nil,
-         statusBroadcast: String? = nil, maxWeeklyHours: Int? = nil, minWeeklyHours: Int? = nil,
+         statusBroadcast: String? = nil,
          isMercenaryMode: Bool? = nil, availabilitySlots: [String]? = nil, bookendDays: [String]? = nil,
          mustBeOffDayIDs: Set<String>? = nil, keepDayIDs: Set<String>? = nil, wantToWorkDayIDs: Set<String>? = nil) {
         self.workerID = workerID; self.displayName = displayName; self.openness = openness
@@ -128,7 +126,7 @@ struct TradeProfile: Sendable, Hashable, Codable, Identifiable {
         self.blacklistedShiftTypes = blacklistedShiftTypes; self.blacklistedRegions = blacklistedRegions
         self.seekingDayIDs = seekingDayIDs; self.updatedAt = updatedAt
         self.personalEmail = personalEmail; self.aaEmail = aaEmail; self.phone = phone
-        self.statusBroadcast = statusBroadcast; self.maxWeeklyHours = maxWeeklyHours; self.minWeeklyHours = minWeeklyHours
+        self.statusBroadcast = statusBroadcast
         self.isMercenaryMode = isMercenaryMode; self.availabilitySlots = availabilitySlots; self.bookendDays = bookendDays
         self.mustBeOffDayIDs = mustBeOffDayIDs; self.keepDayIDs = keepDayIDs; self.wantToWorkDayIDs = wantToWorkDayIDs
     }
@@ -366,8 +364,6 @@ final class TradeProfileStore {
             aaEmail:               s.aaEmail.isEmpty ? nil : s.aaEmail,
             phone:                 s.phone.isEmpty ? nil : s.phone,
             statusBroadcast:       s.statusBroadcast.isEmpty ? nil : s.statusBroadcast,
-            maxWeeklyHours:        s.maxWeeklyHours,
-            minWeeklyHours:        s.minWeeklyHours,
             isMercenaryMode:       s.isMercenaryMode,
             availabilitySlots:     DayIntentStore.shared.offAvailability.flatMap { day, types in
                 types.map { "\(day)|\($0.rawValue)" }

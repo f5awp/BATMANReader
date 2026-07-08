@@ -23,6 +23,10 @@ struct ContentView: View {
     @State private var selectedTab = 0
     @State private var showInbox = false
     @State private var showChannel = false
+    @State private var showKey = false            // color key / legend (moved into the dock)
+    @State private var showTradeSettings = false  // settings (moved into the dock, on every tab)
+    @State private var showAppSettings = false
+    @State private var showDashboard = false       // trade-status dashboard (from the top-bar status strip)
     @State private var showChangelog = false   // Z2: startup "What's New"
     @State private var launchLoading = true     // spinner during the initial sync so it never looks frozen
     @State private var pendingTab: Int? = nil   // C1 phase-2: tab the user wants to leave Home for
@@ -30,6 +34,7 @@ struct ContentView: View {
     private var dev = DevAccess.shared
     private var settings = SettingsManager.shared
     private var intents = DayIntentStore.shared
+    private var messaging = MessagingStore.shared
 
     /// Leaving Home (tab 0) with unsaved intent edits is intercepted so the user must
     /// Save or Discard first — marks never silently leak between sessions.
@@ -47,31 +52,32 @@ struct ContentView: View {
     }
 
     var body: some View {
-        TabView(selection: tabSelection) {
-            HomeView()
-                .tabItem { Label("Home", systemImage: "calendar") }
-                .tag(0)
+        VStack(spacing: 0) {
+            // One clean, shared top bar (identity + utilities) — replaces the old floating dock that
+            // overlapped the status header. Laid out above the tabs, so nothing overlaps.
+            AppTopBar(showInbox: $showInbox, showChannel: $showChannel, showKey: $showKey,
+                      showTradeSettings: $showTradeSettings, showAppSettings: $showAppSettings,
+                      showDashboard: $showDashboard)
+            TabView(selection: tabSelection) {
+                HomeView()
+                    .tabItem { Label("Home", systemImage: "calendar") }
+                    .tag(0)
 
-            TradesView()
-                .tabItem { Label("Trades", systemImage: "arrow.left.arrow.right") }
-                .tag(1)
-        }
-        // Floating Inbox + Channel dock — top-right, below the nav bar, on every tab.
-        .overlay(alignment: .topTrailing) {
-            MessagingDock(showInbox: $showInbox, showChannel: $showChannel)
-                .padding(.top, 52)
-                .padding(.trailing, 10)
+                TradesView()
+                    .tabItem { Label("Trades", systemImage: "arrow.left.arrow.right") }
+                    .tag(1)
+            }
         }
         // Developer mode: a thick red border so it's obvious you have moderation powers.
         .overlay {
             if dev.unlocked {
                 ZStack(alignment: .bottom) {
                     Rectangle()
-                        .strokeBorder(Color.red, lineWidth: 14)
+                        .strokeBorder(AppColor.danger, lineWidth: 14)
                     Text("DEVELOPER MODE")
                         .font(.caption2.bold()).foregroundStyle(.white)
                         .padding(.horizontal, 12).padding(.vertical, 3)
-                        .background(Color.red, in: Capsule())
+                        .background(AppColor.danger, in: Capsule())
                         .padding(.bottom, 2)
                 }
                 .ignoresSafeArea()
@@ -93,6 +99,17 @@ struct ContentView: View {
         } message: { Text("You have unsaved marks. Save them so your trades update, or discard to revert.") }
         .fullScreenCover(isPresented: $showInbox) { InboxView() }
         .fullScreenCover(isPresented: $showChannel) { ChannelView() }
+        .sheet(isPresented: $showKey) { IntentKeySheet() }
+        .sheet(isPresented: $showTradeSettings) { TradeSettingsSheet() }
+        .sheet(isPresented: $showAppSettings) { SettingsView() }
+        .sheet(isPresented: $showDashboard) { TradeDashboardSheet() }
+        .alert("Not on the app yet", isPresented: Binding(
+            get: { messaging.blockedRecipient != nil },
+            set: { if !$0 { messaging.blockedRecipient = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("\(messaging.blockedRecipient ?? "This dispatcher") doesn't have an active BATMAN Watcher profile, so they can't receive trade requests or messages yet. They still show in your matches — reach out another way, or wait until they set up trading in the app.")
+        }
         .sheet(isPresented: $showChangelog) {
             WelcomeView {
                 settings.lastSeenChangelogBuild = AppInfo.build   // mark seen on dismiss
@@ -115,12 +132,66 @@ struct ContentView: View {
             await TradeProfileStore.shared.syncMyStatus()      // public status across your devices (A3 #12)
             await CloudPush.setup()                            // register push subscriptions
             WidgetData.update()
+            // Refresh the once-a-day summary notification with the latest counts (default ON).
+            let c = DashboardCounts.from(requests: messaging.requests, responses: messaging.responses,
+                                         unread: messaging.pendingIncoming.count,
+                                         pendingLedger: TradeHistoryStore.shared.pendingCount)
+            await NotificationManager.shared.scheduleDailyDigest(
+                enabled: settings.dailyDigestEnabled, hour: settings.dailyDigestHour,
+                pending: c.pending, unread: c.unread)
             // Z2: show "What's New" on EVERY launch (per user request) — but not over onboarding.
             // (Was once-per-build via ChangeLog.shouldShow; intentionally every restart now.)
             if !settings.username.trimmingCharacters(in: .whitespaces).isEmpty {
                 showChangelog = true
             }
         }
+    }
+}
+
+// MARK: - App top bar (shared identity + utilities, replaces the floating dock)
+
+/// The single header bar at the very top of the app, on every tab. Left: the signed-in
+/// dispatcher's avatar + name (and their live status, only if they've set one — no "set a
+/// status" nudge). Right: just three controls — Inbox · Channel · ⋯ (overflow: Trade status,
+/// Colors & legend, Trade/App Settings). One row, laid out (not floating), never overlapping.
+struct AppTopBar: View {
+    @Binding var showInbox: Bool
+    @Binding var showChannel: Bool
+    @Binding var showKey: Bool
+    @Binding var showTradeSettings: Bool
+    @Binding var showAppSettings: Bool
+    @Binding var showDashboard: Bool
+    private var settings = SettingsManager.shared
+
+    init(showInbox: Binding<Bool>, showChannel: Binding<Bool>, showKey: Binding<Bool>,
+         showTradeSettings: Binding<Bool>, showAppSettings: Binding<Bool>, showDashboard: Binding<Bool>) {
+        _showInbox = showInbox; _showChannel = showChannel; _showKey = showKey
+        _showTradeSettings = showTradeSettings; _showAppSettings = showAppSettings
+        _showDashboard = showDashboard
+    }
+
+    var body: some View {
+        let name = settings.displayName.isEmpty ? settings.username : settings.displayName
+        let status = settings.statusBroadcast.trimmingCharacters(in: .whitespaces)
+        // ONE clean row: identity on the left, three controls on the right (Inbox · Channel · ⋯).
+        // The old second status row is gone — its "needs you" signal is the Inbox badge, and the full
+        // Accepted/Pending/Denied breakdown lives in the dashboard (⋯ → Trade status).
+        HStack(spacing: 10) {
+            Avatar(name: name, id: settings.username, size: 30)
+            VStack(alignment: .leading, spacing: 0) {
+                Text(name).font(.subheadline.weight(.semibold)).lineLimit(1)
+                if !status.isEmpty {
+                    Text(status).font(.caption2).italic().foregroundStyle(.secondary).lineLimit(1)
+                }
+            }
+            Spacer(minLength: 8)
+            MessagingDock(showInbox: $showInbox, showChannel: $showChannel, showKey: $showKey,
+                          showTradeSettings: $showTradeSettings, showAppSettings: $showAppSettings,
+                          showDashboard: $showDashboard)
+        }
+        .padding(.horizontal, 14).padding(.vertical, 8)
+        .background(.bar)
+        .overlay(alignment: .bottom) { Divider() }
     }
 }
 
@@ -244,7 +315,7 @@ struct OnboardingView: View {
                 Section {
                     if signedIn {
                         Label("Signed in with Apple", systemImage: "checkmark.seal.fill")
-                            .foregroundStyle(.green)
+                            .foregroundStyle(AppColor.success)
                     } else {
                         SignInWithAppleButton(.signIn) { request in
                             request.requestedScopes = [.fullName]
@@ -351,7 +422,8 @@ struct OnboardingView: View {
                 settings.personalEmail = personalEmail.trimmingCharacters(in: .whitespaces)
                 settings.aaEmail = aaEmail.trimmingCharacters(in: .whitespaces)
                 settings.phone = phone.trimmingCharacters(in: .whitespaces)
-                await TradeProfileStore.shared.publishMine()
+                await TradeProfileStore.shared.publishMine()   // active profile now exists → 🤖 clears for others
+                await CloudPush.setup()                        // register push NOW (launch task ran before signup)
                 _ = await RosterStore.shared.syncMasterIfNewer()
                 WidgetData.update()
                 working = false   // cover auto-dismisses once username + appleUserID are set

@@ -4,6 +4,7 @@
 
 import SwiftUI
 import EventKit
+import UniformTypeIdentifiers
 
 struct SettingsView: View {
 
@@ -24,6 +25,9 @@ struct SettingsView: View {
     @State private var showTesterGuide = false
     @State private var showWelcome = false
     @State private var rosterProbe: String?   // dev: roster date-span + last-60d readout
+    @State private var showImporter = false   // dev: manual master schedule CSV import (moved off Home)
+    @State private var importResult: String?
+    @State private var importError: String?
     private var dev = DevAccess.shared
     @Environment(\.dismiss) private var dismiss
 
@@ -42,6 +46,11 @@ struct SettingsView: View {
                     Button { showTesterGuide = true } label: {
                         Label("Tester guide", systemImage: "checklist")
                     }
+                    NavigationLink {
+                        VersionHistoryView()
+                    } label: {
+                        Label("Update history", systemImage: "clock.arrow.circlepath")
+                    }
                 }
 
                 // ── Appearance ───────────────────────────────────────
@@ -54,6 +63,24 @@ struct SettingsView: View {
                 } footer: {
                     Text("“Automatic” follows your device's light/dark (day-night) setting.")
                 }
+
+                // ── Daily summary ────────────────────────────────────
+                Section {
+                    Toggle(isOn: $settings.dailyDigestEnabled) {
+                        Label("Daily summary notification", systemImage: "bell.badge")
+                    }
+                    if settings.dailyDigestEnabled {
+                        Picker(selection: $settings.dailyDigestHour) {
+                            ForEach(0..<24, id: \.self) { h in Text(Self.hourLabel(h)).tag(h) }
+                        } label: {
+                            Label("Time", systemImage: "clock")
+                        }
+                    }
+                } footer: {
+                    Text("Once a day, a notification summarises what needs you — pending trades and unread messages. On-device only.")
+                }
+                .onChange(of: settings.dailyDigestEnabled) { _, _ in rescheduleDigest() }
+                .onChange(of: settings.dailyDigestHour) { _, _ in rescheduleDigest() }
 
                 // ── Account ──────────────────────────────────────────
                 Section {
@@ -84,7 +111,7 @@ struct SettingsView: View {
                             Text("Not signed in").foregroundStyle(.secondary)
                         } else {
                             Label("Signed in", systemImage: "checkmark.seal.fill")
-                                .foregroundStyle(.green)
+                                .foregroundStyle(AppColor.success)
                         }
                     }
                 } header: {
@@ -139,7 +166,7 @@ struct SettingsView: View {
                 Section {
                     LabeledContent("Calendar access") {
                         Text(calendarStatusText)
-                            .foregroundStyle(ekManager.isAuthorized ? .green : .red)
+                            .foregroundStyle(ekManager.isAuthorized ? AppColor.success : AppColor.danger)
                     }
                     LabeledContent("Writes to") {
                         Text(ekManager.personalCalendarName)
@@ -190,7 +217,7 @@ struct SettingsView: View {
                                 Spacer()
                                 if !settings.sharedCalendarIdentifier.isEmpty {
                                     Image(systemName: "checkmark")
-                                        .foregroundStyle(.green)
+                                        .foregroundStyle(AppColor.success)
                                 }
                             }
                         }
@@ -249,7 +276,7 @@ struct SettingsView: View {
                     if let diff = store.lastDiff, diff.hasChanges {
                         LabeledContent("Last changes") {
                             Text(diff.summary)
-                                .foregroundStyle(.orange)
+                                .foregroundStyle(AppColor.pending)
                                 .font(.caption)
                         }
                     }
@@ -361,6 +388,9 @@ struct SettingsView: View {
                         Button { Task { rosterProbe = await Self.probeRoster() } } label: {
                             Label("Roster date-span probe", systemImage: "calendar.badge.clock")
                         }
+                        Button { showImporter = true } label: {
+                            Label("Import schedule CSV", systemImage: "square.and.arrow.down")
+                        }
                     } else {
                         Button { showDebugPrompt = true } label: {
                             Label("Developer access", systemImage: "lock.fill")
@@ -369,7 +399,7 @@ struct SettingsView: View {
                 } header: {
                     Text("Developer")
                 } footer: {
-                    Text("Unlocks moderation in the broadcast channel (delete any post or reply).")
+                    Text("Unlocks moderation in the broadcast channel (delete any post or reply), the roster probe, and manual master schedule import.")
                 }
 
                 // ── Support the project ──────────────────────────────
@@ -416,6 +446,17 @@ struct SettingsView: View {
             .alert("Roster probe", isPresented: Binding(get: { rosterProbe != nil }, set: { if !$0 { rosterProbe = nil } })) {
                 Button("OK", role: .cancel) {}
             } message: { Text(rosterProbe ?? "") }
+            .fileImporter(isPresented: $showImporter,
+                          allowedContentTypes: [.commaSeparatedText, .plainText, .text],
+                          allowsMultipleSelection: false) { handleImport($0) }
+            .alert("Import Error", isPresented: Binding(
+                get: { importError != nil }, set: { if !$0 { importError = nil } })) {
+                Button("OK", role: .cancel) {}
+            } message: { Text(importError ?? "") }
+            .alert("Schedule Imported", isPresented: Binding(
+                get: { importResult != nil }, set: { if !$0 { importResult = nil } })) {
+                Button("OK", role: .cancel) {}
+            } message: { Text(importResult ?? "") }
             .sheet(isPresented: $showWelcome) { WelcomeView() }
             .sheet(isPresented: $showHelp) { HelpView() }
             .sheet(isPresented: $showTesterGuide) { TesterGuideView() }
@@ -468,6 +509,80 @@ struct SettingsView: View {
     private func weekdayName(_ weekday: Int) -> String {
         let symbols = Calendar.current.weekdaySymbols   // ["Sunday" … "Saturday"]
         return symbols[(weekday - 1) % symbols.count]
+    }
+
+    /// 12-hour label for the digest time picker (e.g. "8 AM", "1 PM").
+    private static func hourLabel(_ h: Int) -> String {
+        let ampm = h < 12 ? "AM" : "PM"
+        let twelve = h % 12 == 0 ? 12 : h % 12
+        return "\(twelve) \(ampm)"
+    }
+
+    /// Re-schedule the daily digest with the latest counts + current settings (on toggle/time change).
+    private func rescheduleDigest() {
+        let m = MessagingStore.shared
+        let c = DashboardCounts.from(requests: m.requests, responses: m.responses,
+                                     unread: m.pendingIncoming.count,
+                                     pendingLedger: TradeHistoryStore.shared.pendingCount)
+        Task {
+            await NotificationManager.shared.scheduleDailyDigest(
+                enabled: settings.dailyDigestEnabled, hour: settings.dailyDigestHour,
+                pending: c.pending, unread: c.unread)
+        }
+    }
+
+    /// DEV-only manual import of a schedule/roster CSV (moved off the Home toolbar). When the file
+    /// holds many workers, it loads the whole roster for matching and — if dev-unlocked — publishes it
+    /// as the MASTER everyone syncs. Identical import pipeline as before; just gated behind dev access.
+    private func handleImport(_ result: Result<[URL], Error>) {
+        guard case .success(let urls) = result, let url = urls.first else {
+            if case .failure(let error) = result { importError = error.localizedDescription }
+            return
+        }
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        guard let data = try? Data(contentsOf: url),
+              let csv = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1) else {
+            importError = "Could not read the file as text."
+            return
+        }
+        let username = settings.username
+        Task {
+            do {
+                let workers = try await Task.detached { try ScheduleParser().parseAllWorkers(csv: csv) }.value
+                var lines: [String] = []
+                let mine = workers.first(where: { $0.id == username }) ?? (workers.count == 1 ? workers.first : nil)
+                if let mine {
+                    let diff = await ShiftStore.shared.save(mine.shifts)
+                    await AvailabilityManager.shared.buildFromSchedule()
+                    await NotificationManager.shared.scheduleAll(for: mine.shifts)
+                    let restored = EventKitManager.shared.resyncPersonalEvents(for: mine.shifts)
+                    lines.append("\(mine.shifts.filter { !$0.isOff }.count) of your working shifts imported. \(diff.summary)")
+                    if restored > 0 { lines.append("\(restored) calendar events restored.") }
+                }
+                if workers.count > 1 {
+                    let rows = await RosterStore.shared.importRoster(workers)
+                    lines.append("Roster: \(workers.count) dispatchers loaded for matching (\(rows) rows).")
+                    // G4: post-import sanity check — surface malformed/partial imports instead of shipping them.
+                    let report = ImportAudit.validate(workers: workers.map { ($0.id, $0.name) }, selfID: username)
+                    lines.append(report.ok ? "Import check: looks good ✓"
+                                           : "⚠️ Import check: " + report.warnings.joined(separator: " "))
+                    if DevAccess.shared.unlocked {
+                        let ok = await RosterStore.shared.publishMaster(csv: csv)
+                        lines.append(ok ? "Published as MASTER roster — all users get this on their next launch."
+                                        : "(Not published as master — turn on iCloud Trade Sync first.)")
+                    }
+                }
+                if lines.isEmpty {
+                    importError = "Couldn't find your employee ID (\(username)) in this file, and there's no roster to load."
+                } else {
+                    importResult = lines.joined(separator: "\n")
+                }
+                WidgetData.update()
+            } catch {
+                importError = error.localizedDescription
+            }
+        }
     }
 
     /// DEV: confirm the roster's actual date span + whether the last-60-day (backward) window that B4-5

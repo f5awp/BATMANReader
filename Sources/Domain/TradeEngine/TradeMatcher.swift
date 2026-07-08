@@ -154,6 +154,19 @@ enum TradeTiming {
     /// The only start hours (24h) that any trade considers.
     static let validStartHours: Set<Int> = [5, 13, 21]
     static func isTradeable(startHour: Int) -> Bool { validStartHours.contains(startHour) }
+
+    /// A training slot (e.g. "TRN" / "TRNG"), NOT a real dispatch desk. Someone permanently
+    /// in a training shift is not doing coverable dispatch work.
+    static func isTrainingDesk(_ desk: String) -> Bool {
+        desk.uppercased().trimmingCharacters(in: .whitespaces).hasPrefix("TRN")
+    }
+
+    /// A genuine, tradeable dispatch shift: a regular start hour (0500/1300/2100) on a real
+    /// dispatch desk — never a training (TRN) slot or an irregular start time. "Not a dispatch
+    /// shift" (e.g. a permanent trainee like a TRN-only roster) is never coverable/tradeable.
+    static func isDispatchShift(desk: String, startHour: Int, isOff: Bool = false) -> Bool {
+        !isOff && isTradeable(startHour: startHour) && !isTrainingDesk(desk)
+    }
 }
 
 // MARK: - Qual swaps (same-day desk swap, Q-series)
@@ -458,7 +471,7 @@ enum TradeMatcher {
             let check = TradeEligibility.canCover(
                 coverDayID: pe.day, coverDay: day, desk: pe.desk, startHour: pe.startHour,
                 coverMap: myMap, coverQuals: myQuals, coverProfile: myProfile,
-                options: EligibilityOptions(enforceWeeklyCap: true, applySoftGates: !ignoreOwnBlacklist), cal: cal)
+                options: EligibilityOptions(applySoftGates: !ignoreOwnBlacklist), cal: cal)
             guard check.eligible else { continue }
             // GIVER-side bookend: don't ask a bookends-only peer to give away a mid-week day that would
             // leave them an isolated day off (unless they explicitly marked it trade-away). Symmetric to
@@ -642,16 +655,6 @@ enum TradeMatcher {
         return map
     }
 
-    /// Worked hours in the Sun–Sat week containing `day` (each shift = 9h).
-    static func weeklyWorkedHours(map: [String: RosterEntry], around day: Date, cal: Calendar) -> Int {
-        guard let week = cal.dateInterval(of: .weekOfYear, for: day) else { return 0 }
-        var hours = 0
-        for entry in map.values where !entry.isOff {
-            if let d = dateFromISO(entry.day), week.contains(d) { hours += 9 }
-        }
-        return hours
-    }
-
     /// 8-hour rest before/after a shift on `day` vs the map owner's adjacent shifts.
     private static func rested(map: [String: RosterEntry], day: Date, startHour: Int, cal: Calendar) -> Bool {
         guard let coverStart = cal.date(byAdding: .hour, value: startHour, to: cal.startOfDay(for: day)) else { return false }
@@ -798,23 +801,18 @@ extension TradeMatcher {
     /// Parse an ISO "yyyy-MM-dd" day string to a start-of-day Date.
     static func dayDate(fromISO s: String) -> Date? { dateFromISO(s) }
 
-    /// Weekly worked hours around a day (exposed for the unified eligibility predicate).
-    static func weeklyHours(map: [String: RosterEntry], around day: Date, cal: Calendar = .current) -> Int {
-        weeklyWorkedHours(map: map, around: day, cal: cal)
-    }
 }
 
 // MARK: - Unified eligibility predicate (U1 — shared by Search / Intents / ECB)
 
 /// Toggles for the unified cover predicate. The hard PHYSICAL gates (off · qualified ·
-/// 8h-rest) are ALWAYS applied; these switch on the policy gates.
+/// 8h-rest) are ALWAYS applied; this switches on the soft/policy gates.
 struct EligibilityOptions: Sendable, Hashable {
-    var enforceWeeklyCap: Bool
     var applySoftGates: Bool   // wouldPickUp: openness · blacklist · pills · must-be-off · want-to-work
     /// Active searcher / raw physical capacity — hard gates only.
-    static let physicalOnly = EligibilityOptions(enforceWeeklyCap: false, applySoftGates: false)
+    static let physicalOnly = EligibilityOptions(applySoftGates: false)
     /// Full policy — Search two-way, Intents, ECB broadcast filter.
-    static let full = EligibilityOptions(enforceWeeklyCap: true, applySoftGates: true)
+    static let full = EligibilityOptions(applySoftGates: true)
 }
 
 /// Result of a cover check: eligible + whether covering this day is a bookend for the coverer.
@@ -835,6 +833,10 @@ enum TradeEligibility {
                          coverMap: [String: RosterEntry], coverQuals: [String],
                          coverProfile: TradeProfile, options: EligibilityOptions,
                          cal: Calendar = .current) -> CoverCheck {
+        // Global gate (SSOT): only a genuine dispatch shift ever trades — never a training (TRN)
+        // desk or an irregular start hour. This is a property of the shift itself, so it's checked
+        // before any coverer property. Keeps permanent-TRN / off-hour rosters out of every path.
+        guard TradeTiming.isDispatchShift(desk: desk, startHour: startHour) else { return .no }
         // Relief dispatcher: their schedule isn't real past the horizon, so they can't cover then.
         if coverProfile.scheduleUnknown(on: coverDay, cal: cal) { return .no }
         // Hard PHYSICAL gates (always): coverer is off that day, qualified for the desk, 8h-rested.
@@ -845,11 +847,6 @@ enum TradeEligibility {
         // Bookend = covering this day attaches to the coverer's existing work (no floating island).
         let bookend = TradeMatcher.isAnchored(day: coverDay, map: coverMap, plan: [coverDayID], cal: cal)
 
-        // Hard policy: weekly-hour cap (a 9h shift would push them over).
-        if options.enforceWeeklyCap, let cap = coverProfile.maxWeeklyHours,
-           TradeMatcher.weeklyHours(map: coverMap, around: coverDay, cal: cal) + 9 > cap {
-            return CoverCheck(eligible: false, isBookend: bookend)
-        }
         // Soft policy: openness / blacklist / pills / must-be-off / want-to-work, via the SSOT.
         if options.applySoftGates {
             let weekday = cal.component(.weekday, from: coverDay)

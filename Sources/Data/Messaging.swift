@@ -482,6 +482,9 @@ final class MessagingStore {
     private(set) var responses: [TradeResponse] = []
     private(set) var replies: [BroadcastReply] = []
     private(set) var hidden: Set<String> = []
+    /// Set when a send is denied because the recipient has no active profile (not on the app). The UI
+    /// observes this to show a "can't message" alert, then clears it.
+    var blockedRecipient: String? = nil
 
     /// When the user last OPENED the broadcast channel. Drives the UNREAD badge so it
     /// clears on read — the old badge showed total post count and never cleared (A2/S-SYNC-1).
@@ -770,6 +773,12 @@ final class MessagingStore {
         let now = Date()
         // Sender-side "Perfect Match": does this hit the recipient's published intents? (U6 push)
         let recipient = TradeProfileStore.shared.profile(forWorker: toID)
+        // GATE: a peer with no active profile isn't on the app and can't receive anything. Deny the
+        // send and surface it to the UI (they still appear in matches — behavior is just inferred).
+        guard toID == myID || recipient != nil else {
+            blockedRecipient = toName
+            return
+        }
         let isECB = ecbValue != nil && take.isEmpty
         let perfect = MessagingStore.requestPerfectMatch(
             give: give, take: take, isECB: isECB,

@@ -79,6 +79,38 @@ final class NotificationManager {
         print("✅ NotificationManager: scheduled \(count) shift notifications (\(leadHours)h lead).")
     }
 
+    // MARK: - Daily digest (once-a-day summary of what needs you)
+
+    private let digestID = "batman.digest.daily"
+
+    /// Schedule (or clear) the once-a-day summary at `hour`. The body reflects the counts known NOW and
+    /// repeats daily; callers re-run this on launch so it stays reasonably current between opens. No
+    /// server needed — a plain repeating local notification.
+    func scheduleDailyDigest(enabled: Bool, hour: Int, pending: Int, unread: Int) async {
+        center.removePendingNotificationRequests(withIdentifiers: [digestID])
+        guard enabled else { return }
+        let content = UNMutableNotificationContent()
+        content.title = "BATMAN Watcher — daily check-in"
+        content.body = Self.digestBody(pending: pending, unread: unread)
+        content.sound = .default
+        let total = pending + unread
+        if total > 0 { content.badge = NSNumber(value: total) }
+        var comps = DateComponents(); comps.hour = max(0, min(23, hour)); comps.minute = 0
+        let trigger = UNCalendarNotificationTrigger(dateMatching: comps, repeats: true)
+        let request = UNNotificationRequest(identifier: digestID, content: content, trigger: trigger)
+        do { try await center.add(request) } catch { print("⚠️ Could not schedule daily digest: \(error)") }
+    }
+
+    /// PURE, testable: the digest sentence for the given counts.
+    static func digestBody(pending: Int, unread: Int) -> String {
+        func plural(_ n: Int, _ noun: String) -> String { "\(n) \(noun)\(n == 1 ? "" : "s")" }
+        var parts: [String] = []
+        if pending > 0 { parts.append(plural(pending, "pending trade")) }
+        if unread > 0  { parts.append(plural(unread, "unread message")) }
+        if parts.isEmpty { return "Nothing needs you right now — tap to browse your matches." }
+        return "You have " + parts.joined(separator: " and ") + ". Tap to review."
+    }
+
     // MARK: - Cancel
 
     func removeAllShiftNotifications() async {

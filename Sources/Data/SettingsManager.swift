@@ -148,13 +148,6 @@ final class SettingsManager {
     }
 
     // ── v2 trade rules ───────────────────────────────────────────────
-    /// Weekly-hour caps used as hard limits by the matcher. nil = no cap.
-    var maxWeeklyHours: Int? {
-        didSet { defaults.set(maxWeeklyHours, forKey: Keys.maxWeeklyHours) }
-    }
-    var minWeeklyHours: Int? {
-        didSet { defaults.set(minWeeklyHours, forKey: Keys.minWeeklyHours) }
-    }
     /// Max people in a trade the NORMAL feed will search for (2 = pairs only, 3, or 4 = unbound).
     /// The score-floor + N-penalty keep small trades on top regardless; this caps the search depth.
     var normalMaxPeople: Int {
@@ -189,6 +182,14 @@ final class SettingsManager {
     /// The app build whose "What's New" sheet the user has already seen (Z2).
     var lastSeenChangelogBuild: String {
         didSet { defaults.set(lastSeenChangelogBuild, forKey: Keys.lastSeenChangelog) }
+    }
+    /// Once-a-day on-device summary of what needs you (pending trades + unread). Default ON.
+    var dailyDigestEnabled: Bool {
+        didSet { defaults.set(dailyDigestEnabled, forKey: Keys.dailyDigestEnabled) }
+    }
+    /// Hour of day (0–23) the daily digest fires. Default 8am.
+    var dailyDigestHour: Int {
+        didSet { defaults.set(dailyDigestHour, forKey: Keys.dailyDigestHour) }
     }
     /// Private 2000-char scratch notes — synced privately across YOUR devices (A3).
     var privateNotes: String {
@@ -248,8 +249,8 @@ final class SettingsManager {
         opennessOverrides        = (defaults.data(forKey: Keys.opennessOverrides))
             .flatMap { try? JSONDecoder().decode([OpennessOverride].self, from: $0) } ?? []
         useCloudKit              = defaults.bool(forKey: Keys.useCloudKit)
-        maxWeeklyHours           = defaults.object(forKey: Keys.maxWeeklyHours) as? Int
-        minWeeklyHours           = defaults.object(forKey: Keys.minWeeklyHours) as? Int
+        dailyDigestEnabled       = (defaults.object(forKey: Keys.dailyDigestEnabled) as? Bool) ?? true   // default ON
+        dailyDigestHour          = (defaults.object(forKey: Keys.dailyDigestHour) as? Int) ?? 8
         normalMaxPeople          = (defaults.object(forKey: Keys.normalMaxPeople) as? Int) ?? 3   // default: pairs + 3-way
         isMercenaryMode          = defaults.bool(forKey: Keys.isMercenaryMode)
         statusBroadcast          = defaults.string(forKey: Keys.statusBroadcast) ?? ""
@@ -281,9 +282,9 @@ final class SettingsManager {
         static let tradeOpenness = "batman.tradeOpenness"
         static let opennessOverrides = "batman.opennessOverrides"
         static let useCloudKit   = "batman.useCloudKit"
-        static let maxWeeklyHours = "batman.maxWeeklyHours"
+        static let dailyDigestEnabled = "batman.dailyDigestEnabled"
+        static let dailyDigestHour = "batman.dailyDigestHour"
         static let normalMaxPeople = "batman.normalMaxPeople"
-        static let minWeeklyHours = "batman.minWeeklyHours"
         static let isMercenaryMode = "batman.isMercenaryMode"
         static let statusBroadcast = "batman.statusBroadcast"
         static let statusUpdatedAt = "batman.statusUpdatedAt"

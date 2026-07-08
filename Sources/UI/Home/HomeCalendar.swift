@@ -132,11 +132,13 @@ struct IntentCalendarView: View {
                     Section {
                         monthGrid(month)
                     } header: {
+                        // Plain black header (matches the calendar background) — no elevated band
+                        // slicing the view. Opaque so pinned scrolling still occludes rows cleanly.
                         Text(Self.monthF.string(from: month))
                             .font(.title3.weight(.semibold))
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal).padding(.vertical, 6)
-                            .background(.bar)
+                            .padding(.horizontal).padding(.top, 10).padding(.bottom, 6)
+                            .background(Color(.systemBackground))
                     }
                 }
             }
@@ -453,7 +455,7 @@ struct DayIntentEditor: View {
                         .lineLimit(1...3)
                     if let reason {
                         HStack(spacing: 6) {
-                            Image(systemName: "sparkles").foregroundStyle(.purple)
+                            Image(systemName: "sparkles").foregroundStyle(AppColor.special)
                             Text("Tagged as \(reason.label)").font(.caption).foregroundStyle(.secondary)
                         }
                     }
@@ -534,7 +536,6 @@ struct TradeSettingsSheet: View {
     @Bindable private var settings = SettingsManager.shared
     @Environment(\.dismiss) private var dismiss
     @State private var tab = 0
-    @State private var capWeeklyHours: Bool = SettingsManager.shared.maxWeeklyHours != nil
     @State private var myQuals: [String] = []
     @State private var showOverrideEditor = false
     @State private var editingNotes = false
@@ -744,16 +745,6 @@ struct TradeSettingsSheet: View {
         } footer: {
             Text("Temporarily change your openness for a specific span — e.g. base “Bookends”, but “Open to all” for a slow week. Active until you delete it.")
         }
-        Section("Weekly hours") {
-            Toggle("Cap weekly hours", isOn: $capWeeklyHours)
-            if capWeeklyHours {
-                Stepper("Max: \(settings.maxWeeklyHours ?? 40)h",
-                        value: Binding(get: { settings.maxWeeklyHours ?? 40 },
-                                       set: { settings.maxWeeklyHours = $0 }), in: 9...80, step: 9)
-            } else {
-                Color.clear.frame(height: 0).onAppear { settings.maxWeeklyHours = nil }
-            }
-        }
         Section {
             TextField("e.g. 29, 82", text: deskText)
                 .autocorrectionDisabled().textInputAutocapitalization(.characters)
@@ -811,7 +802,7 @@ struct TradeSettingsSheet: View {
         } footer: {
             Text("Relief dispatchers only get their schedule ~45 days out; the master roster pads the rest of the year with placeholder AMs. Set the last real date — your shifts after it are hidden from your calendar and from trading (for everyone), and stay hidden across roster updates.")
         }
-        .listRowBackground(Color.teal.opacity(0.20))   // E3: relief box visually distinct (higher contrast)
+        .listRowBackground(AppColor.vacation.opacity(0.20))   // E3: relief box visually distinct (higher contrast)
     }
 
     // MARK: Qual-swap preferences (Q4)
@@ -840,7 +831,7 @@ struct TradeSettingsSheet: View {
         } footer: {
             Text("When a trade needs a qual swap, you'll be asked to move onto a different desk. You'll accept only if that desk's qual is ranked EQUAL OR HIGHER than the qual of the desk you're already working that day.\n\n• Open = no preference (you'll take it).\n• Won't work (0) = never swap into that qual.\n• 1 = least preferred … higher = more preferred.")
         }
-        .listRowBackground(Color.indigo.opacity(0.20))   // E3: qual-swap section distinct from blacklists above
+        .listRowBackground(AppColor.special.opacity(0.20))   // E3: qual-swap section distinct from blacklists above
 
         Section {
             TextField("e.g. 64, 65", text: qualSwapDeskText)
@@ -850,7 +841,7 @@ struct TradeSettingsSheet: View {
         } footer: {
             Text("Specific desk numbers you'll never qual-swap into — blocked regardless of qual preference.")
         }
-        .listRowBackground(Color.indigo.opacity(0.20))   // E3
+        .listRowBackground(AppColor.special.opacity(0.20))   // E3
     }
 }
 

@@ -29,6 +29,7 @@ import UIKit
 struct FindCandidatesSection: View {
 
     @Binding var whatIf: Bool
+    var onReady: () -> Void = {}   // fired once the cold roster load settles (drops the Trades spinner)
 
     private let store    = ShiftStore.shared
     private let settings = SettingsManager.shared
@@ -103,6 +104,7 @@ struct FindCandidatesSection: View {
         }
         .onDisappear { searchTask?.cancel() }   // A1: leaving cancels any in-flight Lucky search
         .task {
+            defer { onReady() }   // clear the Trades spinner however this task exits (incl. early return)
             if allDispatchers.isEmpty { await loadAllDispatchers() }
             // U-PERF: restore prior results on tab return; only re-search if intents/settings changed
             // while away (and we'd already searched). Keeps Trade Solutions loaded across tab switches.
@@ -200,7 +202,7 @@ struct FindCandidatesSection: View {
                                 loadingQual = false
                             }
                         } label: { Image(systemName: "arrow.triangle.swap") }
-                        .buttonStyle(.borderedProminent).controlSize(.small).tint(.green)
+                        .buttonStyle(.borderedProminent).controlSize(.small).tint(AppColor.success)
                         .disabled(isSearching)
                         .accessibilityLabel("Qual swap for international desks")
                     }
@@ -220,7 +222,7 @@ struct FindCandidatesSection: View {
                             } label: { Label("Clear selection", systemImage: "xmark.circle") }
                         }
                         Button { showFilter = true } label: { Label(luckyTitle, systemImage: "wand.and.stars") }
-                        Toggle(isOn: $whatIf) { Label("What If? — show every legal option", systemImage: "sparkles") }
+                        // What If? hidden for now — it doesn't affect the new package-based results yet.
                         if !allDispatchers.isEmpty {
                             Menu {
                                 ForEach(allDispatchers, id: \.id) { p in
@@ -235,7 +237,7 @@ struct FindCandidatesSection: View {
                             .disabled(selectedIDs.isEmpty)
                     } label: {
                         Image(systemName: "ellipsis.circle").font(.title3)
-                            .foregroundStyle(searchFilter.isActive ? .orange : .secondary)   // orange = a Lucky filter is on
+                            .foregroundStyle(searchFilter.isActive ? AppColor.primary : .secondary)   // orange = a Lucky filter is on
                     }
                     .accessibilityLabel("More trade options")
                 }
@@ -324,7 +326,7 @@ struct FindCandidatesSection: View {
             Toggle(isOn: $bookendsOnly) {
                 Label("Bookends", systemImage: "book.fill").font(.caption2)
             }
-            .toggleStyle(.button).controlSize(.mini).tint(Color(red: 0.16, green: 0.46, blue: 0.22))
+            .toggleStyle(.button).controlSize(.mini).tint(AppColor.success)
 
             Spacer()
             Text("\(displayed.count) matched").font(.caption).foregroundStyle(.secondary)
@@ -574,7 +576,7 @@ struct ECBTradesView: View {
             } else {
                 Stepper(value: $ecb, in: 5...25, step: 0.5) {
                     HStack(spacing: 8) {
-                        Label("ECB offered", systemImage: "star.circle.fill").foregroundStyle(.orange)
+                        Label("ECB offered", systemImage: "star.circle.fill").foregroundStyle(AppColor.pending)
                         Text(ecbText(ecb)).font(.headline.monospacedDigit())
                         Spacer()
                     }
@@ -633,7 +635,7 @@ struct ECBTradesView: View {
                         Label("Bookends (\(bookendCandidates.count))", systemImage: "book.fill")
                             .frame(maxWidth: .infinity)
                     }
-                    .buttonStyle(.bordered).tint(.green)
+                    .buttonStyle(.bordered).tint(AppColor.success)
                     .disabled(bookendCandidates.isEmpty)
                     Button { Task { await requestAll(bookendsOnly: false) } } label: {
                         Label("All \(candidates.count)", systemImage: "paperplane.fill")
@@ -739,8 +741,8 @@ struct PlanCandidateCell: View {
     @Environment(\.horizontalSizeClass) private var hSize
     @State private var showMatchDates = false
 
-    private let bookendGreen = Color(red: 0.16, green: 0.46, blue: 0.22)
-    private let seekingGold  = Color(red: 0.80, green: 0.60, blue: 0.10)
+    private let bookendGreen = AppColor.success
+    private let seekingGold  = AppColor.pending
 
     /// The traded-away shifts this candidate covers as a clean bookend — the
     /// dates the 📖 badge is counting.
@@ -760,7 +762,7 @@ struct PlanCandidateCell: View {
         }
         .padding(.horizontal, 10).padding(.vertical, 9)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(isSelected ? Color.blue.opacity(0.10) : Color(.secondarySystemBackground))
+        .background(isSelected ? AppColor.primary.opacity(0.10) : Color(.secondarySystemBackground))
         .clipShape(RoundedRectangle(cornerRadius: DS.rowRadius))
         .overlay(
             RoundedRectangle(cornerRadius: DS.rowRadius)
@@ -774,7 +776,7 @@ struct PlanCandidateCell: View {
     private var compactRow: some View {
         HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 3) {
-                Text(candidate.name).font(.dsCardTitle).lineLimit(1)
+                Text(candidate.name + botSuffix(candidate.workerID)).font(.dsCardTitle).lineLimit(1)
                 HStack(spacing: 10) {
                     if !candidate.quals.isEmpty {
                         Text(candidate.quals.joined(separator: " "))
@@ -814,7 +816,7 @@ struct PlanCandidateCell: View {
             }
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 4) {
-                    Text(candidate.name).font(.dsCardTitle).lineLimit(1)
+                    Text(candidate.name + botSuffix(candidate.workerID)).font(.dsCardTitle).lineLimit(1)
                     flameOrUnknown
                 }
                 Text(candidate.quals.joined(separator: " "))
@@ -880,14 +882,14 @@ struct PlanCandidateCell: View {
 
     @ViewBuilder private var selectionCheck: some View {
         if isSelected {
-            Image(systemName: "checkmark.circle.fill").font(.title3).foregroundStyle(.blue)
+            Image(systemName: "checkmark.circle.fill").font(.title3).foregroundStyle(AppColor.primary)
         }
     }
 
     private var enterButton: some View {
         Button(action: onEnter) {
             Image(systemName: "arrow.right.circle.fill")
-                .font(.title3).foregroundStyle(.blue.opacity(0.85))
+                .font(.title3).foregroundStyle(AppColor.primary.opacity(0.85))
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Find two-way swaps with \(candidate.name)")
@@ -957,8 +959,8 @@ struct TwoWaySheet: View {
 
     private var glanceBaseHeight: CGFloat { 720 }   // two full-width calendars, stacked
 
-    private let bookendGreen = Color(red: 0.16, green: 0.46, blue: 0.22)
-    private let seekingGold  = Color(red: 0.80, green: 0.60, blue: 0.10)
+    private let bookendGreen = AppColor.success
+    private let seekingGold  = AppColor.pending
     private let cal = Calendar.current
     private let windowMonths = 4
     private static let dayF:   DateFormatter = { let f = DateFormatter(); f.dateFormat = "EEE, MMM d"; return f }()
@@ -1161,7 +1163,7 @@ struct TwoWaySheet: View {
                     Label("Show my blacklisted shifts (override)", systemImage: "eye.slash")
                         .font(.caption.weight(.semibold))
                 }
-                .tint(.orange)
+                .tint(AppColor.pending)
                 if mutualN > 0 { mutualSection }
                 discoverySection
                 VStack(spacing: 4) {
@@ -1246,7 +1248,7 @@ struct TwoWaySheet: View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 4) {
                 Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 11)).foregroundStyle(isSelected ? .blue : .secondary)
+                    .font(.system(size: 11)).foregroundStyle(isSelected ? AppColor.primary : .secondary)
                 Text(leg.wanted ? "🔥" : "📖").font(.caption)
                 Text(Self.dayF.string(from: leg.date)).font(.caption).bold().lineLimit(1)
             }
@@ -1258,11 +1260,11 @@ struct TwoWaySheet: View {
         }
         .padding(8)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(isSelected ? Color.blue.opacity(0.14)
+        .background(isSelected ? AppColor.primary.opacity(0.14)
                                : (leg.wanted ? seekingGold.opacity(0.12) : Color(.secondarySystemBackground)))
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay(RoundedRectangle(cornerRadius: 8)
-            .stroke(isSelected ? Color.blue : (leg.wanted ? seekingGold : .clear), lineWidth: 1.5))
+            .stroke(isSelected ? AppColor.primary : (leg.wanted ? seekingGold : .clear), lineWidth: 1.5))
     }
 
     private func load() async {
@@ -1448,11 +1450,11 @@ struct QualSwapDaysSheet: View {
                 .font(.subheadline.weight(.semibold))
             if !solvedDays.isEmpty {
                 Label("Options for: \(dayList(solvedDays.sorted()))", systemImage: "checkmark.circle.fill")
-                    .font(.caption).foregroundStyle(.green)
+                    .font(.caption).foregroundStyle(AppColor.success)
             }
             if !unsolvedQualDays.isEmpty {
                 Label("No bridge found for: \(dayList(unsolvedQualDays))", systemImage: "exclamationmark.triangle.fill")
-                    .font(.caption).foregroundStyle(.orange)
+                    .font(.caption).foregroundStyle(AppColor.heat)
             }
             if !normalDays.isEmpty {
                 Label("Normal days (trade in Find): \(dayList(normalDays))", systemImage: "arrow.left.arrow.right")
@@ -1545,7 +1547,7 @@ struct QualSwapPickerSheet: View {
                                 }
                                 Spacer()
                                 Image(systemName: selected.contains(c.workerID) ? "checkmark.circle.fill" : "circle")
-                                    .foregroundStyle(selected.contains(c.workerID) ? .green : .secondary)
+                                    .foregroundStyle(selected.contains(c.workerID) ? AppColor.success : .secondary)
                             }
                         }
                     }
@@ -1563,29 +1565,11 @@ struct QualSwapPickerSheet: View {
     }
 }
 
-/// One thin key bar under the trade calendars. Each calendar is in that person's
-/// own color; the cue is the same for everyone: border = trades away, fill = takes.
+/// The key under the trade calendars — now the shared comprehensive, collapsed-by-default
+/// color key. (In the calendars themselves: border = trades away, fill = takes, each in that
+/// person's own color — spelled out inside the legend.)
 struct MiniScheduleLegend: View {
-    var body: some View {
-        HStack(spacing: 12) {
-            swatch("Trades a shift away") { RoundedRectangle(cornerRadius: 3).stroke(.secondary, lineWidth: 2.5) }
-            swatch("Takes a shift") { RoundedRectangle(cornerRadius: 3).fill(Color.secondary.opacity(0.5)) }
-            Text("· each calendar is in that person's color")
-                .foregroundStyle(.secondary)
-        }
-        .font(.caption2)
-        .lineLimit(1).minimumScaleFactor(0.65)
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 6).padding(.horizontal, 12)
-        .background(.bar, in: Capsule())
-    }
-
-    private func swatch<S: View>(_ label: String, @ViewBuilder _ shape: () -> S) -> some View {
-        HStack(spacing: 4) {
-            shape().frame(width: 13, height: 13)
-            Text(label)
-        }
-    }
+    var body: some View { CollapsibleLegend() }
 }
 
 /// A full-width Sunday-first month grid with large day cells (day# over shift+desk).
@@ -1598,7 +1582,7 @@ struct MiniScheduleGrid: View {
     let title: String
     let days: [String: String]           // ISO → "AM 82" label ("" = off)
     let month: Date
-    var accent: Color = .blue            // THIS calendar owner's signature color (You=blue, peer=red)
+    var accent: Color = AppColor.primary            // THIS calendar owner's signature color (You=blue, peer=red)
     var giveDays: Set<String> = []       // owner GIVES these away → own-color border
     var takeDays: Set<String> = []       // owner RECEIVES these → own-color fill
     var loopDays: Set<String> = []       // circular handoff between OTHERS → violet fill+border
@@ -1611,8 +1595,8 @@ struct MiniScheduleGrid: View {
     @State private var openEvent: String?
 
     private let cal = Calendar.current
-    private let blue = Color.blue
-    private let goldBorder = Color(red: 0.85, green: 0.62, blue: 0.05)
+    private let blue = AppColor.primary
+    private let goldBorder = AppColor.pending
     private static let headers = ["Su", "M", "T", "W", "Th", "F", "Sa"]
     private static let isoF: DateFormatter = {
         let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; return f
@@ -1748,7 +1732,7 @@ struct CoverageStrip: View {
     let shifts: [Shift]
     let covered: Set<String>
 
-    private let coverGreen = Color(red: 0.16, green: 0.46, blue: 0.22)
+    private let coverGreen = AppColor.success
     private static let dayF: DateFormatter = { let f = DateFormatter(); f.dateFormat = "d"; return f }()
 
     var body: some View {
@@ -1799,7 +1783,7 @@ struct MiniSchedule: View {
                 }
                 .frame(width: 18)
                 .padding(.vertical, 1)
-                .background(cell.isTarget ? Color.yellow.opacity(0.85) : Color.clear)
+                .background(cell.isTarget ? AppColor.pending.opacity(0.85) : Color.clear)
                 .clipShape(RoundedRectangle(cornerRadius: 4))
             }
         }

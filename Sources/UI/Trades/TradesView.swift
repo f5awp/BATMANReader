@@ -9,29 +9,16 @@ import SwiftUI
 struct TradesView: View {
 
     private var messaging = MessagingStore.shared
-    private var history   = TradeHistoryStore.shared
     private var intents   = DayIntentStore.shared
 
     @State private var segment = 1   // default to Trade Search (middle). S-UIUX U-TRADES-1
-    @State private var showDashboard = false
     @State private var whatIf = false
-    @State private var showTradeSettings = false
-    @State private var showAppSettings = false
-
-    private var counts: DashboardCounts {
-        DashboardCounts.from(requests: messaging.requests,
-                             responses: messaging.responses,
-                             unread: messaging.pendingIncoming.count,
-                             pendingLedger: history.pendingCount)
-    }
+    @State private var loading = true   // spinner on first entry so the tab never looks frozen
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                StatusHeaderBar()
-                StatusAnchorButton(counts: counts) { showDashboard = true }
-                    .padding(.horizontal).padding(.vertical, 8)
-
+                // The trade-status counters now live in the shared top bar (AppTopBar) on every tab.
                 TradesSegmentBar(segment: $segment, intentCount: intents.tradeIntentCount)
                     .padding(.horizontal).padding(.bottom, 8)
 
@@ -41,60 +28,22 @@ struct TradesView: View {
 
                 switch segment {
                 case 0: TradeByIntentsFeed(whatIf: $whatIf)
-                case 1: FindCandidatesSection(whatIf: $whatIf)
+                case 1: FindCandidatesSection(whatIf: $whatIf) { loading = false }   // drop spinner when cold load settles
                 default: ECBTradesView()
                 }
             }
+            .loadingOverlay(loading, label: "Loading trades…")
             .navigationTitle("Trades")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Menu {
-                        Button { showTradeSettings = true } label: { Label("Trade Settings", systemImage: "arrow.left.arrow.right") }
-                        Button { showAppSettings = true } label: { Label("App Settings", systemImage: "gearshape") }
-                    } label: {
-                        Image(systemName: "gearshape")
-                    }
-                }
+            .toolbar(.hidden, for: .navigationBar)   // the shared AppTopBar is the header now
+            .task {
+                await messaging.refresh()
+                // Safety net: if the landing segment isn't the one that reports readiness, still
+                // drop the spinner after the first frame so it can never get stuck on.
+                await Task.yield()
+                if segment != 1 { loading = false }
             }
-            .sheet(isPresented: $showDashboard) { TradeDashboardSheet() }
-            .sheet(isPresented: $showTradeSettings) { TradeSettingsSheet() }
-            .sheet(isPresented: $showAppSettings) { SettingsView() }
-            .task { await messaging.refresh() }
         }
-    }
-}
-
-// MARK: - Status anchor button (the four live counters)
-
-struct StatusAnchorButton: View {
-    let counts: DashboardCounts
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 12) {
-                badge(counts.accepted, BrickPalette.clear, "checkmark.seal.fill", "Accepted")
-                badge(counts.pending, BrickPalette.caution, "clock.fill", "Pending")
-                badge(counts.denied, BrickPalette.critical, "xmark.octagon.fill", "Denied")
-                badge(counts.unread, BrickPalette.info, "bubble.left.fill", "Unread")
-                Spacer()
-                Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary)
-            }
-            .padding(.horizontal, 14).padding(.vertical, 10)
-            .background(.bar, in: RoundedRectangle(cornerRadius: DS.cardRadius))
-        }
-        .buttonStyle(.plain)
-    }
-
-    private func badge(_ n: Int, _ tint: Color, _ symbol: String, _ label: String) -> some View {
-        HStack(spacing: 5) {
-            Image(systemName: symbol).font(.system(size: 13, weight: .semibold)).foregroundStyle(tint)
-            Text("\(n)").font(.headline.monospacedDigit())
-                .foregroundStyle(n > 0 ? .primary : .secondary)
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(label): \(n)")
     }
 }
 
@@ -119,7 +68,7 @@ struct TradesSegmentBar: View {
                             Text("\(intentCount)")
                                 .font(.caption2.bold()).monospacedDigit().foregroundStyle(.white)
                                 .frame(minWidth: 18, minHeight: 18)
-                                .background(Circle().fill(.orange))
+                                .background(Circle().fill(AppColor.heat))
                         }
                     }
                     .frame(maxWidth: .infinity).padding(.vertical, 7)
@@ -220,7 +169,7 @@ private struct AcceptedZone: View {
                         Label("Done: Confirmed on Official Board", systemImage: "link")
                             .frame(maxWidth: .infinity)
                     }
-                    .buttonStyle(.borderedProminent).tint(.green).controlSize(.small)
+                    .buttonStyle(.borderedProminent).tint(AppColor.success).controlSize(.small)
                 }
                 .padding(.vertical, 4)
             }
@@ -288,12 +237,12 @@ private struct HistoryZone: View {
                             Text("PENDING").font(.caption2.bold())
                                 .padding(.horizontal, 6).padding(.vertical, 2)
                                 .background(BrickPalette.caution.opacity(0.25), in: Capsule())
-                                .foregroundStyle(.orange)
+                                .foregroundStyle(AppColor.pending)
                         } else {
                             Text("DONE").font(.caption2.bold())
                                 .padding(.horizontal, 6).padding(.vertical, 2)
                                 .background(BrickPalette.clear.opacity(0.22), in: Capsule())
-                                .foregroundStyle(.green)
+                                .foregroundStyle(AppColor.success)
                         }
                     }
                     Text("\(e.participants.joined(separator: " · ")) — \(e.completedAt.formatted(date: .abbreviated, time: .omitted))")
