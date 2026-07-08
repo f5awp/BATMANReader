@@ -1190,6 +1190,7 @@ struct BroadcastReplyComposer: View {
     @State private var isPublic = true
     @State private var pickerItem: PhotosPickerItem?
     @State private var pendingImage: UIImage?
+    @State private var showPicker = false   // B4-13: drive the picker via the isPresented modifier
 
     private var canSend: Bool {
         !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || pendingImage != nil
@@ -1219,9 +1220,10 @@ struct BroadcastReplyComposer: View {
                 }
                 .pickerStyle(.segmented).fixedSize()
                 FormatBar(text: $draft)
-                PhotosPicker(selection: $pickerItem, matching: .images) {
+                Button { showPicker = true } label: {
                     Image(systemName: "photo").font(.subheadline).foregroundStyle(.secondary)
                 }
+                .buttonStyle(.plain)
                 Spacer()
                 Button {
                     let t = draft, img = pendingImage
@@ -1236,6 +1238,7 @@ struct BroadcastReplyComposer: View {
             }
         }
         .padding(.vertical, 4)
+        .photosPicker(isPresented: $showPicker, selection: $pickerItem, matching: .images)
         .onChange(of: pickerItem) { _, item in
             guard let item else { return }
             Task { if let data = try? await item.loadTransferable(type: Data.self) { pendingImage = UIImage(data: data) } }
