@@ -139,7 +139,6 @@ enum TradeRouter {
         let profilesByID: [String: TradeProfile]
         let universe: [MatchCandidate]
         let priors: [String: Double]                               // worker → acceptance log-odds
-        let inferred: [String: (shiftTypes: Set<String>, regions: Set<String>)]   // B4-5: profileless prefs
 
         /// My own schedule entries in the window (the preload `twoWayExplore` reuses).
         var mineEntries: [RosterEntry] { Array((maps[selfID] ?? [:]).values) }
@@ -147,13 +146,10 @@ enum TradeRouter {
         var qualsDict: [String: [String]] { rosterMeta.mapValues { $0.quals } }
 
         /// A8: a roster peer with no published profile defaults to Bookends-Only, never invisible.
-        /// B4-5: if we inferred what they actually work (last 60d), the default only accepts those
-        /// shift types / regions. A real published profile always wins.
+        /// (B4-5 inferred-prefs default was REVERTED here — as a hard blacklist it over-pruned multi-day
+        /// and multi-person covers. `InferredPrefs` core is kept for a future SOFT re-introduction.)
         func profile(for id: String, name: String) -> TradeProfile {
-            if let p = profilesByID[id] { return p }
-            return TradeProfile.defaultForUnpublished(workerID: id, name: name,
-                                                      inferredShiftTypes: inferred[id]?.shiftTypes,
-                                                      inferredRegions: inferred[id]?.regions)
+            profilesByID[id] ?? TradeProfile.defaultForUnpublished(workerID: id, name: name)
         }
 
         static func build(selfID: String) async -> MatchContext {
@@ -170,20 +166,9 @@ enum TradeRouter {
                 roster: rosterMeta.map { (id: $0.key, name: $0.value.name, quals: $0.value.quals) },
                 profiles: profilesByID, selfID: selfID)
             let priors = MessagingStore.shared.acceptancePriorMap()
-            // B4-5: infer profileless peers' worked shift types/regions from the recent past (60d).
-            // ONE extra windowed fetch; used only to shape the A8 default (never the match window).
-            let lookbackStart = start.addingTimeInterval(-60 * 86_400)
-            var recentByWorker: [String: [RosterEntry]] = [:]
-            for e in await RosterStore.shared.entries(from: lookbackStart, to: start) {
-                recentByWorker[e.workerID, default: []].append(e)
-            }
-            var inferred: [String: (shiftTypes: Set<String>, regions: Set<String>)] = [:]
-            for (wid, entries) in recentByWorker where profilesByID[wid] == nil {   // only profileless peers
-                if let inf = InferredPrefs.from(entries: entries, asOf: start) { inferred[wid] = inf }
-            }
             return MatchContext(start: start, end: end, selfID: selfID, maps: maps,
                                 rosterMeta: rosterMeta, profilesByID: profilesByID,
-                                universe: universe, priors: priors, inferred: inferred)
+                                universe: universe, priors: priors)
         }
     }
 

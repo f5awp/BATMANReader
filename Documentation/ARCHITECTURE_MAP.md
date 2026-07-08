@@ -72,7 +72,7 @@
 | Feature | File | Key symbols | Spec |
 |---|---|---|---|
 | Profile value type | `TradeProfile.swift` | `TradeProfile`, `wouldPickUp(...)` (gates `mustBeOffDayIDs` first), `passesBlacklist(...)`, `availabilityMap`; `defaultForUnpublished(...,inferredShiftTypes:,inferredRegions:)` (A8 + B4-5 inferred blacklist); **has** `mustBeOffDayIDs`/`keepDayIDs` | S-DATA-2, S-ENG-9 ✅, B4-5 |
-| **Profileless prefs inference (B4-5)** | `TradeEngineModels.swift` | `InferredPrefs.from(entries:asOf:lookbackDays:60)` — worked shift types/regions from recent past; wired in `TradeRouter.MatchContext` (recent-window load → `inferred` → `profile(for:)`). Main matching universe only | B4-5 |
+| **Profileless prefs inference (B4-5)** | `TradeEngineModels.swift` | `InferredPrefs.from(...)` + `defaultForUnpublished(inferredShiftTypes:inferredRegions:)` — pure core + tests only. **NOT wired into matching** (reverted: hard blacklist over-pruned multi-day/multi-person). For a future soft signal | B4-5 ⏪ |
 | Profile store + service | `TradeProfile.swift` (store), `CloudKitTradeProfileService.swift`, `LocalTradeProfileService` | `TradeProfileStore.shared`, `myProfile()`, `publishMine()`, `refreshOthers()`, `availableDispatchers(on:type:)` | S-SYNC-2 |
 | CloudKit config | `TradeProfile.swift` | `CloudKitConfig.containerID = "iCloud.com.ervinlee.batmanreader"` | — |
 

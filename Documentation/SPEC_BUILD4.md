@@ -148,7 +148,12 @@ reflects via B4-3; publishes to profile.
   the user set manually — test it only touches 1 & 7).
 - Depends on B4-3 (do B4-3 first).
 
-#### B4-5 — Profileless users: infer accept-prefs from last 60 days worked  · M · ✅
+#### B4-5 — Profileless users: infer accept-prefs from last 60 days worked  · M · ⏪ REVERTED from matching
+**Shipped then reverted (2026-07-07):** applied as a hard blacklist on profileless peers, it over-pruned
+multi-day and multi-person covers (most peers are profileless) — user saw 3-way + multi-day trades vanish.
+`MatchContext.profile(for:)` is back to the plain A8 bookends default. `InferredPrefs` core + tests are
+kept for a future **soft** re-introduction (a ranking nudge, not a hard gate; or a much larger window /
+region-only). Do NOT re-wire as a hard blacklist.
 **Decision applied:** **60-day** lookback, **soft** default (a real published profile always wins;
 empty/short history → fall back to A8 bookends).
 

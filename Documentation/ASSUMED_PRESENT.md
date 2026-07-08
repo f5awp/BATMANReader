@@ -114,6 +114,10 @@
   names resolved via `TradeNames` (G2a).
 
 ## Build 4 assumptions (flag if wrong)
+- **B4-5 REVERTED from matching (2026-07-07).** As a hard blacklist on profileless peers it over-pruned
+  multi-day + multi-person covers (they vanished on-device). `MatchContext.profile(for:)` reverted to the
+  plain A8 bookends default; `InferredPrefs` core + tests kept for a future SOFT signal only. Original
+  (now-void) assumption below.
 - **B4-5 scope + tunables.** Inference (60-day lookback, min 3 shifts) shapes the A8 default ONLY for
   profileless peers in the **main matching universe** (`TradeRouter.MatchContext.profile(for:)`). Other
   `defaultForUnpublished` call sites (two-way sheet load, qual-bridge, `qualSwapOptions.openProfile`) keep
