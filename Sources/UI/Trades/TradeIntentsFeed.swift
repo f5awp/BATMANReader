@@ -661,12 +661,10 @@ struct CompactSwapCard: View {
                 swapLine("They get", days: a?.giveDayIDs ?? [], color: peerColor)
                 Spacer(minLength: 0)
             }
-            // Mini-calendar snapshot of the trade month: the counterparty receives my gives (fill) and
-            // gives their takes (border). No per-card schedule fetch (keeps the feed fast); full in-context
-            // schedule is on tap → PackageDetailView.
-            if let a, let month = tradeMonth(a) {
-                MiniScheduleGrid(title: "", days: [:], month: month, accent: peerColor,
-                                 giveDays: Set(a.takeDayIDs), takeDays: Set(a.giveDayIDs))
+            // Mini-calendar: the TRADER's week, with the shift you're giving them highlighted. Loads only
+            // that peer's week lazily (after the feed renders), so search stays fast. Tap → full calendar.
+            if let a, !a.giveDayIDs.isEmpty {
+                TraderWeekStrip(workerID: a.workerID, giveDayIDs: a.giveDayIDs, peerColor: peerColor)
                     .padding(.top, 2)
             }
             if DevAccess.shared.unlocked {
@@ -697,20 +695,75 @@ struct CompactSwapCard: View {
         }
     }
 
-    /// The calendar month (first of month) of the earliest day in the swap — anchors the mini-calendar.
-    private func tradeMonth(_ a: PackageAssignment) -> Date? {
-        guard let earliest = (a.giveDayIDs + a.takeDayIDs).min(),
-              let d = TradeMatcher.dayDate(fromISO: earliest) else { return nil }
-        let cal = Calendar.current
-        return cal.date(from: cal.dateComponents([.year, .month], from: d))
-    }
-
     private func swapLine(_ label: String, days: [String], color: Color) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 4) {
             Text(label).font(.caption2.weight(.bold)).foregroundStyle(color)
             Text(days.isEmpty ? "—" : DayFmt.list(days)).font(.caption)
                 .lineLimit(1).minimumScaleFactor(0.75)
         }
+    }
+}
+
+/// The counterparty's WEEK containing the shift you're giving them, that day highlighted (in their color)
+/// with YOUR shift label — so you can see how the pickup lands in their week (bookend vs split). Loads
+/// only this peer's schedule lazily (after the feed renders; cached in RosterStore), keeping search fast.
+/// Tapping the parent card opens the full calendar. (B4-14 mini-calendar.)
+struct TraderWeekStrip: View {
+    let workerID: String
+    let giveDayIDs: [String]
+    let peerColor: Color
+    @State private var peerLabels: [String: String] = [:]
+    @State private var loaded = false
+
+    private let cal = Calendar.current
+    private static let wd = ["Su", "M", "T", "W", "Th", "F", "Sa"]
+    private static let isoF: DateFormatter = { let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; return f }()
+
+    private var giveSet: Set<String> { Set(giveDayIDs) }
+    /// Sun–Sat of the week that holds the earliest give-day.
+    private var weekDays: [Date] {
+        guard let first = giveDayIDs.min(), let d = TradeMatcher.dayDate(fromISO: first),
+              let wk = cal.dateInterval(of: .weekOfYear, for: d) else { return [] }
+        return (0..<7).compactMap { cal.date(byAdding: .day, value: $0, to: wk.start) }
+    }
+
+    var body: some View {
+        HStack(spacing: 3) {
+            ForEach(weekDays, id: \.self) { date in
+                let key = Self.isoF.string(from: date)
+                let isGive = giveSet.contains(key)
+                let label = isGive ? myShiftLabel(key) : (peerLabels[key] ?? "")
+                VStack(spacing: 1) {
+                    Text(Self.wd[cal.component(.weekday, from: date) - 1])
+                        .font(.system(size: 8, weight: .semibold)).foregroundStyle(.secondary)
+                    Text("\(cal.component(.day, from: date))")
+                        .font(.system(size: 11, weight: isGive ? .bold : .regular))
+                        .foregroundStyle(isGive ? .white : .primary)
+                    Text(label.isEmpty ? "·" : label)
+                        .font(.system(size: 8, weight: .semibold)).lineLimit(1).minimumScaleFactor(0.6)
+                        .foregroundStyle(isGive ? .white : .secondary)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 3)
+                .background(isGive ? peerColor : Color(.tertiarySystemFill).opacity(0.5),
+                            in: RoundedRectangle(cornerRadius: 5))
+            }
+        }
+        .task { if !loaded { await load() } }
+    }
+
+    /// YOUR shift on a give-day (what they'll be working) — read from your own schedule (synchronous).
+    private func myShiftLabel(_ dayID: String) -> String {
+        guard let s = ShiftStore.shared.shifts.first(where: { $0.id == dayID && !$0.isOff }) else { return "shift" }
+        return "\(ShiftAvailabilityType.infer(fromStartHour: s.startHour).rawValue) \(s.desk)"
+    }
+
+    private func load() async {
+        var m: [String: String] = [:]
+        for e in await RosterStore.shared.schedule(forWorker: workerID) where !e.isOff {
+            m[e.day] = "\(ShiftAvailabilityType.infer(fromStartHour: e.startHour).rawValue) \(e.desk)"
+        }
+        peerLabels = m; loaded = true
     }
 }
 

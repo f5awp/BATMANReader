@@ -108,6 +108,8 @@ final class RosterStore {
     private func cacheNames(_ entries: [RosterEntry]) {
         for e in entries where nameCache[e.workerID] == nil { nameCache[e.workerID] = e.workerName }
     }
+    /// Per-worker full-schedule cache (mini-calendar week strips fetch this per card). Cleared on import.
+    private var scheduleCache: [String: [RosterEntry]] = [:]
 
     private init() {
         // The roster is LOCAL per-device data. Explicitly opt out of SwiftData's
@@ -179,6 +181,7 @@ final class RosterStore {
     func importRoster(_ workers: [ParsedWorker]) async -> Int {
         do {
             try await actor.replaceRoster(with: workers)
+            nameCache.removeAll(); scheduleCache.removeAll()   // roster changed → drop stale caches
             return (try? await actor.totalRows()) ?? 0
         } catch {
             print("⚠️ RosterStore: import failed: \(error)")
@@ -201,8 +204,11 @@ final class RosterStore {
     }
 
     func schedule(forWorker workerID: String) async -> [RosterEntry] {
+        if let cached = scheduleCache[workerID] { return cached }
         let r = (try? await actor.schedule(forWorker: workerID)) ?? []
-        cacheNames(r); return r
+        cacheNames(r)
+        if !r.isEmpty { scheduleCache[workerID] = r }
+        return r
     }
 
     func entries(from lower: Date, to upper: Date) async -> [RosterEntry] {
