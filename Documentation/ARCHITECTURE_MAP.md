@@ -42,12 +42,14 @@
 
 | Feature | File | Key symbols | Spec |
 |---|---|---|---|
-| **Per-day intent store (SOT)** | `DayIntentStore.swift` | `DayIntentStore.shared`; maps `workingIntents`/`offIntents`/`topologies`/`notes`/`offAvailability`/`manualOffDays`; `seekingDayIDs` (derived) | — |
+| **Per-day intent store (SOT)** | `DayIntentStore.swift` | `DayIntentStore.shared`; maps `workingIntents`/`offIntents`/`topologies`/`notes`/`offAvailability`/`manualOffDays`; `seekingDayIDs` (derived); **B4-2 sync:** `IntentSnapshot`, `exportSnapshotJSON`, `applyRemoteSnapshot` (INV-9 guarded), `intentsUpdatedAt` (LWW) | B4-2 |
+| **Intents cross-device sync (B4-2)** | `CloudKitMessagingService.swift` | `PrivateStateStore.syncIntentsOnLaunch()`/`publishLocalIntents()` + `CloudKitPrivateStateService.publishIntents`/`fetchIntents` (private `PrivateState` record, fields `intents`/`intentsUpdatedAt` — needs deploy); published on Save (`HomeView.saveIntents`, ContentView leave-guard) | B4-2 (deploy pending) |
 | Set/clear marks | `DayIntentStore.swift` | `setWorkingIntent`, `setOffIntent`, `toggleAvailability`, `setNote`, `setTopology`, `clearIntent` | — |
 | Openness / mercenary bulk apply | `DayIntentStore.swift` | `applyOpenness(_:shifts:)`, `applyMercenary(_:openness:shifts:)`, `bookendGatedDays(...)` | S-ENG-6 |
 | **Re-import preservation (SOT)** | `DayIntentStore.swift` | `reconcileTargets(diff:)` (pure), `reconcile(diff:)` | S-PARSE-2, EngineTests "reconcile:" |
 | reconcile trigger (once/fetch) | `HomeView.swift` | `reconcileSnapshot()` + `@AppStorage lastReconciledFetch` | S-PARSE-2 |
-| Intent value types | `TradeEngineModels.swift` | `WorkingIntentState`, `OffIntentState`, `DayTopology`, `IntentReason`, `DayNote`, `SolutionTier`, `NWayRoute/Leg` | — |
+| Intent value types | `TradeEngineModels.swift` | `WorkingIntentState`, `OffIntentState`, `DayTopology`, `IntentReason`, `DayNote`, `SolutionTier`, `NWayRoute/Leg`. **B4-1:** `.mustWork`/`.mustBeOff` `label` both display **"Blackout"** (cases/raw values unchanged) | B4-1 ✅ |
+| **Blackout blacklist predicate (SOT)** | `TradeEngineModels.swift` | `Blackout.isBlacklisted(desk:startHour:weekday:desks:shiftTypes:regions:weekdays:)` SSOT; `WeekendBlackout` (B4-4 Sat/Sun toggle). Painted on **Home** via `HomeCalendar.blackoutTint`/`background` (intent wins); toggle in HomeCalendar trade-settings sheet | B4-3 ✅, B4-4 ✅ |
 | Legacy (migrating away) | `TradeIntentStore.swift` | `seekingDayIDs` | — |
 
 ## 4. Trade engine (matching)
@@ -55,7 +57,7 @@
 | Feature | File | Key symbols | Spec |
 |---|---|---|---|
 | Hard gates / candidates / two-way | `TradeMatcher.swift` | `TradeOpenness`, `DeskRules.region/requiredQual/qualified`, `candidatesForTrades`, `twoWayExplore`, `goldCount`, `anchored(...)` (bookend), `rested(...)` | S-ENG-1, S-ENG-2, S-ENG-10 |
-| Packages / circular / tiers | `TradeRouter.swift` | `packages(forGiveShifts:excluding:)`, `tieredSolutions()`, `nWayRoutes()`, `TradePackage`, `PackageAssignment` | S-ENG-3, S-ENG-4, S-ENG-5 |
+| Packages / circular / tiers | `TradeRouter.swift` | `MatchContext` (built once/search: roster maps + universe + priors), `packages(forGiveShifts:excluding:)`, `intentSolutions(...)`, `nWayRoutes(...,preloadedMaps:)`, `legFeatures`, `packageLogProb`, `finalize`, `TradePackage`, `PackageAssignment` | S-ENG-3/4/5, unified scoring, U-PERF |
 | Fewest-people reciprocal | `OptimalMatcher.swift` | `minPeopleReciprocal(giveDayIDs:peers:contiguous:)`, `Cand`, `Assignment` | S-ENG-3 |
 | Min-cost flow | `MinCostFlow.swift` | `MinCostFlow`, `addEdge`, `run(from:to:)` | — |
 | Holidays (high-demand) | `Holidays.swift` | `Holidays.map(year:)`, `isHighDemand`, `name(forDay:)` | — |
@@ -68,7 +70,8 @@
 
 | Feature | File | Key symbols | Spec |
 |---|---|---|---|
-| Profile value type | `TradeProfile.swift` | `TradeProfile`, `wouldPickUp(...)` (gates `mustBeOffDayIDs` first), `passesBlacklist(...)`, `availabilityMap`; **has** `mustBeOffDayIDs`/`keepDayIDs` (from `DayIntentStore.mustBeOffDayIDs`/`keepDayIDs` via `myProfile()`); **add** `qualRanking`/qual-swap blacklist | S-DATA-2, S-ENG-9 ✅(must-be-off) |
+| Profile value type | `TradeProfile.swift` | `TradeProfile`, `wouldPickUp(...)` (gates `mustBeOffDayIDs` first), `passesBlacklist(...)`, `availabilityMap`; `defaultForUnpublished(...,inferredShiftTypes:,inferredRegions:)` (A8 + B4-5 inferred blacklist); **has** `mustBeOffDayIDs`/`keepDayIDs` | S-DATA-2, S-ENG-9 ✅, B4-5 |
+| **Profileless prefs inference (B4-5)** | `TradeEngineModels.swift` | `InferredPrefs.from(entries:asOf:lookbackDays:60)` — worked shift types/regions from recent past; wired in `TradeRouter.MatchContext` (recent-window load → `inferred` → `profile(for:)`). Main matching universe only | B4-5 |
 | Profile store + service | `TradeProfile.swift` (store), `CloudKitTradeProfileService.swift`, `LocalTradeProfileService` | `TradeProfileStore.shared`, `myProfile()`, `publishMine()`, `refreshOthers()`, `availableDispatchers(on:type:)` | S-SYNC-2 |
 | CloudKit config | `TradeProfile.swift` | `CloudKitConfig.containerID = "iCloud.com.ervinlee.batmanreader"` | — |
 
@@ -76,7 +79,7 @@
 
 | Feature | File | Key symbols | Spec |
 |---|---|---|---|
-| Models | `Messaging.swift` | `BroadcastPost(channel?)`, `BroadcastReply`, `TradeRequest(chain?,ecb?)`, `TradeLeg`, `TradeResponse`, `TradeRequestStatus`; **add** reactions/attachments/edited/deleted/pinned/moderation, `QualSwapStep` | S-DATA-3, Q3–Q6 |
+| Models | `Messaging.swift` | `BroadcastPost(channel?,imageBase64?)`, `BroadcastReply(imageBase64?)`, `TradeRequest(chain?,ecb?)`, `TradeLeg`, `TradeResponse(imageBase64?,reactions?,editedAt?,deleted?)`, `TradeRequestStatus`, `FetchMerge.keepCacheOnEmpty`; `MessagingStore.acceptancePriorMap()` | S-DATA-3, Q3–Q6, #28 |
 | Store (SOT facade) | `Messaging.swift` | `MessagingStore.shared`, `post(...)`, `sendRequest` (`ecbValue:`), `respond`, `postMessage`, ECB queue, `reconcileECBLedger()`; **unread:** `unreadCount(...)` (pure) / `unreadBroadcastCount` / `markBroadcastsSeen()` | A2 ✅ |
 | ECB value | `Messaging.swift` | `TradeRequest.ecbValue`/`ecbAmount`/`isValidECB`/`clampECB`; `ecbText(_:)` | A4/S-ENG-8 ✅ |
 | Service | `CloudKitMessagingService.swift`, `LocalMessagingService` | generic `save<T>/fetch<T>`, record types per model | S-SYNC-3 |
@@ -90,13 +93,13 @@
 | Root tabs + dock + onboarding + launch task | `ContentView.swift` | `ContentView`, `OnboardingView`, `MessagingDock` overlay, `AppAppearance` | — |
 | App entry | `BATMANReaderApp.swift` | `@main`, perms, `.modelContainer` | — |
 | Home (calendar/intents/import) | `HomeView.swift`, `HomeCalendar.swift` | `HomeView`, intent calendar, `MarkIntentsToolbar`, `handleImport`, `reconcileSnapshot`; metrics header → **U-HOME-1** | U-HOME |
-| Trades (search/intents/ECB) | `TradesView.swift`, `TradeIntentsFeed.swift` | `TradesView` segments, `PackageDetailView`, `HandoffChain`, `TraderChips`; default=Search → **U-TRADES-1** | U-TRADES, U-CARD |
+| Trades (search/intents/ECB) | `TradesView.swift`, `TradeIntentsFeed.swift` | `TradesView` segments, `PackageCard`, **`CompactSwapCard`** (2-person → thin ECB-style card; gate `TradePackage.usesCompactCard`, B4-14), `PackageDetailView`, `HandoffChain`, `TraderChips`, `IntentTallyBar`, `IntentColorKey`; default=Search → **U-TRADES-1** | U-TRADES, U-CARD, B4-14 |
 | Availability / two-way / ECB | `AvailabilityView.swift` | Find Candidates, `TwoWaySheet`, `MiniScheduleGrid/Legend`, ECB flow | U-SEARCH, U-SWAPS |
 | Day pickers / strips | `ShiftSelectCalendar.swift`; `AvailabilityView.swift` | `ShiftSelectCalendar` (multi-select; shows intent bar + note dot, C3); `CoverageStrip` | C3 ✅ |
 | Inbox / channels / chat | `MessagingViews.swift` | `InboxView`, `ThreadView`, `ChannelView`, `MessagingDock`, `StatusBadge` | U-INBOX, U-MSG |
-| Slack-style atoms | `SlackKit.swift` | `Avatar`, `SlackMessageRow`, `SlackComposer`, `ChannelHeader` | U-MSG |
+| Slack-style atoms | `SlackKit.swift` | `Avatar`, `SlackMessageRow`, `SlackComposer` (`canSendWhenEmpty`), `ChannelHeader`, **`ExpandableImage`/`ZoomableImageViewer`** (tap-to-zoom, B4-11) | U-MSG, B4-11 |
 | Settings | `SettingsView.swift` | account/contact/notif/calendars/iCloud toggle/dev tools; qual-swap section → **U-SETTINGS-1** | U-SETTINGS |
-| Help / tester guide | `HelpView.swift` | `HelpView`, `TesterGuideView` | I1 |
+| Welcome / help / tester guide | `HelpView.swift` | `WelcomeView` (startup: hero + pillars + What's-New + links), `MechanismsView` (engineer tour), `VersionHistoryView`, `ChangeLogView`, `HelpView`, `TesterGuideView`; content in `AppGuide` (`TradeEngineModels.swift`) | I1, Z2 |
 | Design tokens + colors | `DispatchPalette.swift` | `DS` tokens, font ramp, `mineScheme/peerScheme/loopTrade/traderThemes/highImpact`; add `qualSwap/vacation/urgentAlert` | U-GLOBAL, S-UIUX-NEW |
 
 ## 8. System / platform

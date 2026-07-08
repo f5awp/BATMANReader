@@ -81,6 +81,7 @@ struct ContentView: View {
             Button("Save") {
                 intents.markIntentsSaved()
                 Task { await TradeProfileStore.shared.publishMine() }
+                Task { await PrivateStateStore.shared.publishLocalIntents() }   // B4-2
                 if let t = pendingTab { selectedTab = t }; pendingTab = nil
             }
             Button("Discard", role: .destructive) {

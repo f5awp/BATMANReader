@@ -113,6 +113,34 @@
 - **Required-person dropdown = distinct roster** over the next 12 months (`RosterStore.entries`),
   names resolved via `TradeNames` (G2a).
 
+## Build 4 assumptions (flag if wrong)
+- **B4-5 scope + tunables.** Inference (60-day lookback, min 3 shifts) shapes the A8 default ONLY for
+  profileless peers in the **main matching universe** (`TradeRouter.MatchContext.profile(for:)`). Other
+  `defaultForUnpublished` call sites (two-way sheet load, qual-bridge, `qualSwapOptions.openProfile`) keep
+  the plain bookends A8 default. Cores tested; the matching-behavior change (a profileless peer is no
+  longer offered a shift type/region they haven't worked in 60d) is **build-verified via composition**
+  (inferred profile tested + matcher-respects-blacklist tested), not a roster fixture. Device-verify; flag
+  if 60d/min-3 needs tuning or if inference should apply to the other default sites too.
+- **B4-2 needed a schema field (CORRECTED).** My earlier "full fidelity via the existing PrivateState
+  payload, no deploy" was WRONG — `PrivateState` has discrete fields, not a `payload`. Full-fidelity intent
+  sync adds `intents` + `intentsUpdatedAt` to the private `PrivateState` record → **one small Prod deploy**
+  (no index; see CLOUDKIT_DEPLOY.md, PENDING). Code is built + snapshot round-trip tested; **live sync is
+  inert until the deploy**. Discharge: deploy, then 2-device verify (DEP5-style).
+- **B4-2 adopt-vs-edit safety.** Remote adoption (`applyRemoteSnapshot`) refuses when
+  `hasUnsavedChanges` (INV-9) so a mid-edit sync can't clobber unsaved marks. Launch sync runs before any
+  edit, so normal launches adopt cleanly.
+- **B4-3 painting precedence (built on this default; flag to change).** An **explicit per-day intent
+  color wins** — the Blackout tint shows only on days with **no** explicit working/off intent
+  (`HomeCalendar.background` checks `intentTint` before `blackoutTint`). One-line reversible.
+- **B4-3 off-day Blackout (built on this default).** **Weekday** blacklist applies to any date incl. days
+  off (so "Blackout weekends" tints Sat/Sun even when off); **desk/type/region** apply only to **working**
+  shifts (off days have no desk). See `HomeCalendar.blackoutTint`.
+- **B4-3 scope = Home calendar only (decision).** Painting is on the **Home** calendar (the user's
+  schedule overview — what items 2/12/7 mean by "your calendar"). The **give-day pickers**
+  (`ShiftSelectCalendar`, ECB/trade pickers in `AvailabilityView`) are intentionally **excluded**: they
+  select your OWN shifts to give away, where the *accept*-blacklist is irrelevant and would confuse.
+  Flag if you want Blackout on the pickers too.
+
 ## How I'll stop doing this (process change)
 
 **New rule: I never say "already there." I prove it.** Concretely:

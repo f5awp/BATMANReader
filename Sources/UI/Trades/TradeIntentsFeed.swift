@@ -106,10 +106,16 @@ struct TradeByIntentsFeed: View {
                 } else {
                     sectionHeader("Intent Matches", "Most mutual intent first — your marked days matched with theirs (🔥 = both sides marked)")
                     ForEach(displayed) { pkg in
-                        PackageCard(package: pkg,
-                                    onPropose: { Task { await propose(pkg) } },
-                                    onExecute: { if let r = pkg.route { execRoute = r } },
-                                    onOpen: { detailPackage = pkg })
+                        if pkg.usesCompactCard {   // B4-14: 2-person → compact ECB-style card
+                            CompactSwapCard(package: pkg,
+                                            onPropose: { Task { await propose(pkg) } },
+                                            onOpen: { detailPackage = pkg })
+                        } else {
+                            PackageCard(package: pkg,
+                                        onPropose: { Task { await propose(pkg) } },
+                                        onExecute: { if let r = pkg.route { execRoute = r } },
+                                        onOpen: { detailPackage = pkg })
+                        }
                     }
                     TradeFeedKey().padding(.horizontal).padding(.top, 8)
                 }
@@ -415,8 +421,8 @@ struct IntentColorKey: View {
                         swatch("Want to work", OffIntentState.wantToWork.brickColor)
                     }
                     HStack(spacing: 12) {
-                        swatch("Keep", WorkingIntentState.mustWork.brickColor)
-                        swatch("Must be off", OffIntentState.mustBeOff.brickColor)
+                        swatch("Blackout", WorkingIntentState.mustWork.brickColor)   // B4-1: working-day blackout
+                        swatch("Blackout", OffIntentState.mustBeOff.brickColor)      // B4-1: off-day blackout
                         markers
                     }
                 }
@@ -430,8 +436,8 @@ struct IntentColorKey: View {
     @ViewBuilder private var swatches: some View {
         swatch("Trade away", WorkingIntentState.dontWantToWork.brickColor)
         swatch("Want to work", OffIntentState.wantToWork.brickColor)
-        swatch("Keep", WorkingIntentState.mustWork.brickColor)
-        swatch("Must be off", OffIntentState.mustBeOff.brickColor)
+        swatch("Blackout", WorkingIntentState.mustWork.brickColor)   // B4-1: working-day blackout
+        swatch("Blackout", OffIntentState.mustBeOff.brickColor)      // B4-1: off-day blackout
         markers
     }
 
@@ -606,6 +612,79 @@ struct SwapChips: View {
 }
 
 // MARK: - Package card (one card per deal)
+
+/// B4-14: compact ECB-style card for two-person swaps — thin (more results per screen), shows the
+/// counterparty's name + status snapshot, "You get" / "They get" **once each** (no PackageCard
+/// duplication), badges (🔥/📖/Q), and Propose. Tapping opens their schedule. 3+-person and circular
+/// keep `PackageCard`. Presentation-only: the same 2-way packages, in the same order (INV-2).
+struct CompactSwapCard: View {
+    let package: TradePackage
+    let onPropose: () -> Void
+    var onOpen: () -> Void = {}
+
+    private var myID: String { SettingsManager.shared.username }
+
+    var body: some View {
+        let a = package.assignments.first
+        let peerColor = a.map { TradeColors.color(forParticipant: $0.workerID, myID: myID, orderedPeers: [$0.workerID]) } ?? .blue
+        VStack(alignment: .leading, spacing: 6) {
+            // Header: peer name + their status snapshot · badges · Propose.
+            HStack(spacing: 8) {
+                Circle().fill(peerColor).frame(width: 8, height: 8)
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(a?.name ?? "Swap").font(.subheadline.weight(.semibold))
+                    if let id = a?.workerID, let status = participantStatus(id), !status.isEmpty {
+                        Text(status).font(.caption2).italic().foregroundStyle(.secondary).lineLimit(1)
+                    }
+                }
+                Spacer()
+                badges
+                Button(action: onPropose) {
+                    Label("Propose", systemImage: "paperplane.fill").labelStyle(.iconOnly).font(.subheadline)
+                }
+                .buttonStyle(.borderedProminent).controlSize(.small)
+                .accessibilityLabel("Propose")
+            }
+            // What each side gets — shown ONCE each (no duplication).
+            swapLine("You get",  days: a?.takeDayIDs ?? [], color: BrickPalette.mineScheme)
+            swapLine("They get", days: a?.giveDayIDs ?? [], color: peerColor)
+            if DevAccess.shared.unlocked {
+                Text(String(format: "TradeScore: %.0f%%", exp(package.acceptanceScore) * 100))
+                    .font(.dsBadge).foregroundStyle(.purple)
+            }
+        }
+        .padding(.horizontal, DS.cardPadding).padding(.vertical, 8)
+        .background(.bar, in: RoundedRectangle(cornerRadius: DS.cardRadius))
+        .padding(.horizontal)
+        .contentShape(Rectangle())
+        .onTapGesture(perform: onOpen)
+    }
+
+    @ViewBuilder private var badges: some View {
+        HStack(spacing: 6) {
+            if package.qualSwap != nil {
+                Image(systemName: "q.square.fill").font(.system(size: 12, weight: .bold)).foregroundStyle(.purple)
+            }
+            if package.fireCount > 0 {
+                Label("\(package.fireCount)", systemImage: "flame.fill")
+                    .font(.system(size: 10, weight: .bold)).foregroundStyle(.orange).labelStyle(.titleAndIcon)
+            }
+            if package.bookendTotal > 0 {
+                Label("\(package.bookendTotal)", systemImage: "book.fill")
+                    .font(.system(size: 10, weight: .bold)).foregroundStyle(.green).labelStyle(.titleAndIcon)
+            }
+        }
+    }
+
+    private func swapLine(_ label: String, days: [String], color: Color) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            Text(label).font(.caption2.weight(.bold)).foregroundStyle(color).frame(width: 56, alignment: .leading)
+            Text(days.isEmpty ? "—" : DayFmt.list(days)).font(.caption)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+    }
+}
 
 struct PackageCard: View {
     let package: TradePackage

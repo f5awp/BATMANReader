@@ -24,7 +24,7 @@
 | `MetricEvent` | Public | `payload` String |
 | `RosterPackage` | Public | `csv` Asset · `version` Date/Time |
 | `AccountClaim` | Public | `employeeID` String · `appleUserID` String · `displayName` String |
-| `PrivateState` | **Private** | `privateNotes` String · `updatedAt` Date/Time |
+| `PrivateState` | **Private** | `privateNotes` String · `updatedAt` Date/Time · **`intents` String (B4-2)** · **`intentsUpdatedAt` Date/Time (B4-2)** |
 
 ## Indexes (all Queryable)
 
@@ -49,4 +49,7 @@ A Production query on an undeployed/un-indexed field **errors**, returning an em
 fetch was the root of the P0 data-wipe (now also guarded in code by `FetchMerge.keepCacheOnEmpty`).
 
 ## Status
-Deployed to Production on 2026-06-20.
+- Deployed to Production on 2026-06-20 (initial 5).
+- **PENDING (B4-2):** add `intents` (String) + `intentsUpdatedAt` (Date/Time) to the **private** `PrivateState`
+  record, then deploy Dev→Prod. No index needed (fetched by fixed record name `private_state`). Full intent
+  sync across a user's devices stays local-only until this ships.

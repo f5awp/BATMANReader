@@ -89,7 +89,7 @@ enum WorkingIntentState: String, Codable, Sendable, CaseIterable, Identifiable {
 
     var label: String {
         switch self {
-        case .mustWork:       return "Want to Keep"
+        case .mustWork:       return "Blackout"   // B4-1: working-day blackout (never trade away). Case unchanged.
         case .wantToWork:     return "Want to Work"
         case .neutralOpen:    return "Open"
         case .dontWantToWork: return "Want to Trade Away"
@@ -109,7 +109,7 @@ enum OffIntentState: String, Codable, Sendable, CaseIterable, Identifiable {
 
     var label: String {
         switch self {
-        case .mustBeOff:   return "Must Be Off"
+        case .mustBeOff:   return "Blackout"   // B4-1: off-day blackout (never scheduled). Case unchanged.
         case .neutralOpen: return "Open"
         case .wantToWork:  return "Want to Work"
         }
@@ -566,6 +566,55 @@ enum ChangeLog {
     /// so there is no separate "current release notes" copy that could drift out of sync.
     static func shouldShow(currentBuild: String, lastSeen: String) -> Bool {
         !currentBuild.isEmpty && currentBuild != lastSeen
+    }
+}
+
+// MARK: - Blackout matching (B4-3) — a shift the user won't accept per their trade blacklist
+
+/// SSOT for "does this shift match the user's trade blacklist?" — used both by matching (already, via
+/// `wouldPickUp`) and to PAINT the shift as blacked-out on the calendar (B4-3). Pure + testable: it takes
+/// the shift's dimensions and the four blacklist sets and returns true if ANY dimension is blacklisted.
+enum Blackout {
+    static func isBlacklisted(desk: String, startHour: Int, weekday: Int,
+                              desks: Set<String>, shiftTypes: Set<String>,
+                              regions: Set<String>, weekdays: Set<Int>) -> Bool {
+        if desks.contains(desk) { return true }
+        if weekdays.contains(weekday) { return true }
+        if shiftTypes.contains(ShiftAvailabilityType.infer(fromStartHour: startHour).rawValue) { return true }
+        if regions.contains(DeskRules.region(forDesk: desk).rawValue) { return true }
+        return false
+    }
+}
+
+/// B4-5: infer what a profileless dispatcher actually works from their recent shifts, so their A8
+/// default only accepts shift types / regions they've been working. Pure + deterministic (pass `asOf`).
+enum InferredPrefs {
+    /// From a worker's recent WORKED shifts within [asOf − lookbackDays, asOf], the shift types +
+    /// regions they work. Returns nil when there's too little history (→ fall back to the plain A8 default).
+    static func from(entries: [RosterEntry], asOf: Date, lookbackDays: Int = 60,
+                     minSample: Int = 3) -> (shiftTypes: Set<String>, regions: Set<String>)? {
+        let cutoff = asOf.addingTimeInterval(-Double(lookbackDays) * 86_400)
+        let recent = entries.filter { e in
+            guard !e.isOff, let d = TradeMatcher.dayDate(fromISO: e.day) else { return false }
+            return d >= cutoff && d <= asOf
+        }
+        guard recent.count >= minSample else { return nil }   // too little history → don't over-restrict
+        var types = Set<String>(), regions = Set<String>()
+        for e in recent {
+            types.insert(ShiftAvailabilityType.infer(fromStartHour: e.startHour).rawValue)
+            regions.insert(DeskRules.region(forDesk: e.desk).rawValue)
+        }
+        return (types, regions)
+    }
+}
+
+/// B4-4: one-tap "Blackout weekends" — Sat (7) + Sun (1). Pure so the toggle only ever touches those
+/// two weekdays and never disturbs weekdays the user blacklisted individually.
+enum WeekendBlackout {
+    static let days: Set<Int> = [1, 7]   // 1 = Sun … 7 = Sat (Calendar weekday)
+    static func isOn(_ weekdays: Set<Int>) -> Bool { days.isSubset(of: weekdays) }
+    static func apply(on: Bool, to weekdays: Set<Int>) -> Set<Int> {
+        on ? weekdays.union(days) : weekdays.subtracting(days)
     }
 }
 

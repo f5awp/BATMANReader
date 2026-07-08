@@ -134,6 +134,78 @@ struct SlackMessageRow<Actions: View>: View {
     }
 }
 
+// MARK: - Expandable image (B4-11)
+
+/// An inline image that expands to a full-screen, pinch-to-zoom viewer on tap. Shared by channel
+/// posts, replies, and 1:1 chat so all three get the same behavior (B4-11).
+struct ExpandableImage: View {
+    let image: UIImage
+    var maxHeight: CGFloat = 180
+    var cornerRadius: CGFloat = 8
+    @State private var showFull = false
+
+    var body: some View {
+        Image(uiImage: image).resizable().scaledToFit()
+            .frame(maxHeight: maxHeight)
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
+            .contentShape(Rectangle())
+            .onTapGesture { showFull = true }
+            .accessibilityAddTraits(.isButton)
+            .accessibilityLabel("Expand image")
+            .fullScreenCover(isPresented: $showFull) { ZoomableImageViewer(image: image) }
+    }
+}
+
+/// Full-screen zoom/pan image viewer: pinch to zoom (1–6×), drag when zoomed, double-tap to toggle,
+/// tap the ✕ to close.
+struct ZoomableImageViewer: View {
+    let image: UIImage
+    @Environment(\.dismiss) private var dismiss
+    @State private var scale: CGFloat = 1
+    @State private var lastScale: CGFloat = 1
+    @State private var offset: CGSize = .zero
+    @State private var lastOffset: CGSize = .zero
+
+    var body: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+            Image(uiImage: image).resizable().scaledToFit()
+                .scaleEffect(scale)
+                .offset(offset)
+                .gesture(
+                    MagnificationGesture()
+                        .onChanged { v in scale = max(1, min(lastScale * v, 6)) }
+                        .onEnded { _ in
+                            lastScale = scale
+                            if scale <= 1 { withAnimation { offset = .zero; lastOffset = .zero } }
+                        }
+                )
+                .simultaneousGesture(
+                    DragGesture()
+                        .onChanged { v in
+                            guard scale > 1 else { return }
+                            offset = CGSize(width: lastOffset.width + v.translation.width,
+                                            height: lastOffset.height + v.translation.height)
+                        }
+                        .onEnded { _ in lastOffset = offset }
+                )
+                .onTapGesture(count: 2) {
+                    withAnimation {
+                        if scale > 1 { scale = 1; lastScale = 1; offset = .zero; lastOffset = .zero }
+                        else { scale = 2; lastScale = 2 }
+                    }
+                }
+        }
+        .overlay(alignment: .topTrailing) {
+            Button { dismiss() } label: {
+                Image(systemName: "xmark.circle.fill").font(.title).foregroundStyle(.white.opacity(0.9))
+                    .padding()
+            }
+            .accessibilityLabel("Close")
+        }
+    }
+}
+
 // MARK: - Composer
 
 /// A pinned Slack-style composer: bordered rounded field, formatting bar, send.

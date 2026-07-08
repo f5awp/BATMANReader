@@ -536,8 +536,7 @@ struct ThreadView: View {
                                 }
                             }
                             if !r.isDeleted, let b64 = r.imageBase64, let ui = PostImage.decode(b64) {
-                                Image(uiImage: ui).resizable().scaledToFit()
-                                    .frame(maxHeight: 180).clipShape(RoundedRectangle(cornerRadius: 8))
+                                ExpandableImage(image: ui, maxHeight: 180)   // B4-11: tap to zoom
                                     .padding(.leading, 34)
                             }
                             if !r.isDeleted {
@@ -974,8 +973,7 @@ struct ChannelView: View {
                 postMenu(post)
             }
             if let b64 = post.imageBase64, let ui = PostImage.decode(b64) {
-                Image(uiImage: ui).resizable().scaledToFit()
-                    .frame(maxHeight: 220).clipShape(RoundedRectangle(cornerRadius: 10))
+                ExpandableImage(image: ui, maxHeight: 220, cornerRadius: 10)   // B4-11: tap to zoom
                     .padding(.leading, 46)
             }
             reactionsBar(post)
@@ -1142,8 +1140,7 @@ struct ChannelView: View {
                 }
             }
             if !r.isDeleted, let b64 = r.imageBase64, let ui = PostImage.decode(b64) {
-                Image(uiImage: ui).resizable().scaledToFit()
-                    .frame(maxHeight: 180).clipShape(RoundedRectangle(cornerRadius: 8))
+                ExpandableImage(image: ui, maxHeight: 180)   // B4-11: tap to zoom
                     .padding(.leading, 34)
             }
             if !r.isDeleted {

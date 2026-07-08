@@ -298,10 +298,16 @@ struct FindCandidatesSection: View {
                         .padding(.top, 12)
                 } else {
                     ForEach(shown) { pkg in
-                        PackageCard(package: pkg,
-                                    onPropose: { Task { await propose(pkg) } },
-                                    onExecute: { if let r = pkg.route { execRoute = r } },
-                                    onOpen: { detailPackage = pkg })
+                        if pkg.usesCompactCard {   // B4-14: 2-person → compact ECB-style card
+                            CompactSwapCard(package: pkg,
+                                            onPropose: { Task { await propose(pkg) } },
+                                            onOpen: { detailPackage = pkg })
+                        } else {
+                            PackageCard(package: pkg,
+                                        onPropose: { Task { await propose(pkg) } },
+                                        onExecute: { if let r = pkg.route { execRoute = r } },
+                                        onOpen: { detailPackage = pkg })
+                        }
                     }
                 }
             }

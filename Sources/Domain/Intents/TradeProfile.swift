@@ -137,11 +137,22 @@ struct TradeProfile: Sendable, Hashable, Codable, Identifiable {
     /// **Bookends Only** (conservative) so a profileless dispatcher is never offered a
     /// non-bookend (split-the-weekend) pickup until they opt into broader trading. `updatedAt`
     /// is the epoch so any real published profile always wins last-write-wins.
-    static func defaultForUnpublished(workerID: String, name: String) -> TradeProfile {
-        TradeProfile(workerID: workerID, displayName: name,
+    static func defaultForUnpublished(workerID: String, name: String,
+                                      inferredShiftTypes: Set<String>? = nil,
+                                      inferredRegions: Set<String>? = nil) -> TradeProfile {
+        // B4-5: if we've inferred what they actually work (last 60d), blacklist the COMPLEMENT so a
+        // profileless peer is only offered shift types / regions they've been working. Soft: `updatedAt`
+        // stays epoch, so any real published profile always wins LWW.
+        let blShiftTypes = inferredShiftTypes.map {
+            Set(ShiftAvailabilityType.allCases.map(\.rawValue)).subtracting($0)
+        } ?? []
+        let blRegions = inferredRegions.map {
+            Set(DeskRegion.allCases.map(\.rawValue)).subtracting($0)
+        } ?? []
+        return TradeProfile(workerID: workerID, displayName: name,
                      openness: TradeOpenness.bookends.rawValue,
                      blacklistedWeekdays: [], blacklistedDesks: [],
-                     blacklistedShiftTypes: [], blacklistedRegions: [],
+                     blacklistedShiftTypes: blShiftTypes, blacklistedRegions: blRegions,
                      seekingDayIDs: [], updatedAt: Date(timeIntervalSince1970: 0))
     }
 

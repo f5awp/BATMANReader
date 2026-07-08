@@ -1344,6 +1344,92 @@ enum TradeEngineTests {
         check(decodes(TradeProfile.self, #"{"workerID":"A","displayName":"A","openness":"all","blacklistedWeekdays":[],"blacklistedDesks":[],"blacklistedShiftTypes":[],"blacklistedRegions":[],"seekingDayIDs":[],"updatedAt":0}"#),
               "P0: a v1 TradeProfile (no qualValues/reliefThrough) still decodes")
 
+        // MARK: B4-14 — compact ECB-style card gate (2-person only; 3+/circular keep PackageCard).
+        do {
+            func pa2(_ id: String) -> PackageAssignment {
+                PackageAssignment(workerID: id, name: id, giveDayIDs: ["2026-07-01"], takeDayIDs: ["2026-07-02"])
+            }
+            let two = TradePackage(id: "t2", methodology: .greedy, assignments: [pa2("A")], route: nil)
+            let three = TradePackage(id: "t3", methodology: .greedy, assignments: [pa2("A"), pa2("B")], route: nil)
+            let r3 = NWayRoute(participants: ["me", "A", "B"], legs: [], tier: .matchingIntents, score: 0, usesBookends: false)
+            let circ3 = TradePackage(id: "c3", methodology: .circular, assignments: [pa2("A"), pa2("B")], route: r3)
+            let qsLeg = QualSwapLegData(giveShiftDayID: "2026-07-01", giveDesk: "82", giveQual: "L",
+                                        takerID: "A", takerName: "A", candidates: [])
+            let qs2 = TradePackage(id: "qs2", methodology: .greedy,
+                                   assignments: [PackageAssignment(workerID: "A", name: "A", giveDayIDs: ["2026-07-01"], takeDayIDs: [])],
+                                   route: nil, qualSwap: qsLeg)
+            check(two.usesCompactCard, "B4-14: a two-person swap uses the compact card")
+            check(qs2.usesCompactCard, "B4-14: a 2-way qual-swap uses the compact card")
+            check(!three.usesCompactCard, "B4-14: a 3-person package keeps PackageCard")
+            check(!circ3.usesCompactCard, "B4-14: a circular (3) package keeps PackageCard")
+        }
+
+        // MARK: B4-2 — intent snapshot round-trips (marks + notes + topology survive cross-device sync).
+        do {
+            let snap = DayIntentStore.IntentSnapshot(
+                working: ["2026-07-01": .dontWantToWork, "2026-07-02": .mustWork],
+                off: ["2026-07-03": .wantToWork, "2026-07-04": .mustBeOff],
+                topologies: ["2026-07-05": .personalMilestone],
+                notes: ["2026-07-01": DayNote(dayID: "2026-07-01", message: "swap wk", reason: .personalEvent)],
+                availability: ["2026-07-03": [.am, .pm]],
+                manualOff: ["2026-07-04"])
+            let enc = try? JSONEncoder().encode(snap)
+            check(enc != nil, "B4-2: intent snapshot encodes")
+            let back = enc.flatMap { try? JSONDecoder().decode(DayIntentStore.IntentSnapshot.self, from: $0) }
+            check(back == snap, "B4-2: intent snapshot round-trips (marks + notes + topology intact)")
+        }
+
+        // MARK: B4-4 — "Blackout weekends" only ever touches Sat(7)+Sun(1).
+        do {
+            check(WeekendBlackout.apply(on: true, to: [3]) == [1, 3, 7], "B4-4: on adds Sat+Sun, keeps existing")
+            check(WeekendBlackout.apply(on: false, to: [1, 3, 7]) == [3], "B4-4: off removes only Sat+Sun, keeps others")
+            check(WeekendBlackout.isOn([1, 7, 4]) && !WeekendBlackout.isOn([1, 4]), "B4-4: isOn requires BOTH weekend days")
+        }
+
+        // MARK: B4-5 — infer profileless prefs from recent shifts; smarter A8 default blacklists the complement.
+        do {
+            let asOf = TradeMatcher.dayDate(fromISO: "2026-03-01")!
+            func e(_ day: String, off: Bool = false, hour: Int = 5, desk: String = "10") -> RosterEntry {
+                RosterEntry(workerID: "W", workerName: "W", quals: ["D"], day: day, startHour: hour, desk: desk, isOff: off)
+            }
+            let amType = ShiftAvailabilityType.infer(fromStartHour: 5).rawValue
+            let reg10 = DeskRules.region(forDesk: "10").rawValue
+            let recent = [e("2026-02-20"), e("2026-02-25"), e("2026-02-27"), e("2026-02-10", off: true), e("2025-01-01")]
+            let inf = InferredPrefs.from(entries: recent, asOf: asOf)
+            check(inf?.shiftTypes == [amType], "B4-5: infers only worked shift types (AM); off/old excluded")
+            check(inf?.regions == [reg10], "B4-5: infers only worked regions")
+            check(InferredPrefs.from(entries: [e("2026-02-20")], asOf: asOf) == nil, "B4-5: too little history → nil (no over-restriction)")
+            let prof = TradeProfile.defaultForUnpublished(workerID: "W", name: "W", inferredShiftTypes: [amType], inferredRegions: [reg10])
+            check(!prof.blacklistedShiftTypes.contains(amType)
+                  && prof.blacklistedShiftTypes.count == ShiftAvailabilityType.allCases.count - 1,
+                  "B4-5: inferred default blacklists every shift type EXCEPT worked")
+            let plain = TradeProfile.defaultForUnpublished(workerID: "W", name: "W")
+            check(plain.blacklistedShiftTypes.isEmpty && plain.blacklistedRegions.isEmpty, "B4-5: plain A8 default unchanged")
+        }
+
+        // MARK: B4-3 — Blackout blacklist predicate (paints blacklisted shifts on the calendar).
+        do {
+            let amType = ShiftAvailabilityType.infer(fromStartHour: 5).rawValue
+            let region82 = DeskRules.region(forDesk: "82").rawValue
+            check(Blackout.isBlacklisted(desk: "82", startHour: 5, weekday: 3, desks: ["82"], shiftTypes: [], regions: [], weekdays: []),
+                  "B4-3: a blacklisted desk is blacked out")
+            check(Blackout.isBlacklisted(desk: "10", startHour: 5, weekday: 7, desks: [], shiftTypes: [], regions: [], weekdays: [7]),
+                  "B4-3: a blacklisted weekday is blacked out")
+            check(Blackout.isBlacklisted(desk: "10", startHour: 5, weekday: 3, desks: [], shiftTypes: [amType], regions: [], weekdays: []),
+                  "B4-3: a blacklisted shift type is blacked out")
+            check(Blackout.isBlacklisted(desk: "82", startHour: 5, weekday: 3, desks: [], shiftTypes: [], regions: [region82], weekdays: []),
+                  "B4-3: a blacklisted region is blacked out")
+            check(!Blackout.isBlacklisted(desk: "10", startHour: 5, weekday: 3, desks: ["82"], shiftTypes: ["ZZ"], regions: ["ZZ"], weekdays: []),
+                  "B4-3: a shift matching NO blacklist dimension is not blacked out")
+        }
+
+        // MARK: B4-1 — "Blackout" rename (labels unified; enum cases + gates unchanged).
+        check(WorkingIntentState.mustWork.label == "Blackout", "B4-1: keep (working) day label reads 'Blackout'")
+        check(OffIntentState.mustBeOff.label == "Blackout", "B4-1: must-be-off day label reads 'Blackout'")
+        // Cases/keys are unchanged (no data migration) — raw values must stay stable.
+        check(WorkingIntentState.mustWork.rawValue == "mustWork", "B4-1: mustWork raw value unchanged (no migration)")
+        check(OffIntentState.mustBeOff.rawValue == "mustBeOff", "B4-1: mustBeOff raw value unchanged (no migration)")
+
         // MARK: Z2 — changelog show-once.
         check(ChangeLog.shouldShow(currentBuild: "12", lastSeen: "11"), "Z2: a newer build shows the changelog")
         check(!ChangeLog.shouldShow(currentBuild: "12", lastSeen: "12"), "Z2: same build → no re-show")

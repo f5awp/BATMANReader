@@ -276,6 +276,7 @@ struct HomeView: View {
     private func saveIntents() {
         intents.markIntentsSaved()
         Task { await TradeProfileStore.shared.publishMine() }
+        Task { await PrivateStateStore.shared.publishLocalIntents() }   // B4-2: sync full intents across devices
     }
 
     /// Leaving the Mark Intents section: if there are unsaved edits, force Save-or-Discard;
@@ -631,7 +632,7 @@ struct IntentKeySheet: View {
             List {
                 Section("Working shifts") {
                     keyRow(BrickPalette.change, "Trade away", "You want to give this shift away")
-                    keyRow(BrickPalette.clear, "Keep", "You want to work this shift")
+                    keyRow(BrickPalette.clear, "Blackout", "Protected — never traded away")
                     keyRow(BrickPalette.neutral, "Neutral / open", "No strong preference")
                 }
                 Section("Days off") {

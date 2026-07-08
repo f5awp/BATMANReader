@@ -516,6 +516,77 @@
 
 ---
 
+## Build 4 (2026-07-07)
+
+### B4-1 — "Blackout" replaces "Want to Keep" + "Must Be Off"  [B4-1 · Auto ✅ labels; device-check]
+1. On Home, open the **Mark Intents** working-shift picker and the day-off intent options.
+   - **Expect:** the protect-this-day options read **"Blackout"** (no more "Want to Keep" / "Must Be Off").
+2. Open the trade **color key** (Intents feed / two-way sheet / ECB) and the Home legend.
+   - **Expect:** two **"Blackout"** swatches — one for a working day, one for an off day — in their
+     existing colors.
+3. Behavior unchanged: mark a **working** day Blackout → it's never offered to give away; mark an **off**
+   day Blackout → you're never offered to work it.
+- **Break it:** confirm previously-marked Keep/Must-Be-Off days still behave identically (only the wording
+  changed; no marks were lost).
+
+### B4-14 — 2-person swaps show as a thin ECB-style card  [B4-14 · Auto ✅ gate; device-check]
+1. Trades → **Trade Solutions** (and **Intents**) → run a search that returns two-person swaps.
+   - **Expect:** each two-person result is a **thin card** (more fit on screen than the old tall card):
+     the other person's **name + status snapshot**, a **"You get: …"** line and a **"They get: …"** line
+     (each shown once — no duplication), badges (🔥/📖/purple **Q**), and a **Propose** button.
+2. Tap the card.
+   - **Expect:** it opens the counterparty's **schedule** (same detail view as before).
+3. A **3+-person** or **circular** result.
+   - **Expect:** still the **full package card** (unchanged).
+4. A two-person **qual-swap** result.
+   - **Expect:** compact card with the **Q** badge; **Propose** opens the bridge blast picker.
+- **Break it:** confirm the SAME two-person trades appear in the SAME order as before (only the card
+  style changed); check large Dynamic Type doesn't clip the name or the "You get"/"They get" lines.
+
+### B4-11 — Tap any image to expand/zoom  [B4-11 · build-verified; device-check]
+1. In a **channel post**, a **reply**, and a **1:1 chat** message that has an image, **tap the image**.
+   - **Expect:** it opens **full-screen** on a black backdrop. **Pinch to zoom** (up to ~6×), **drag** when
+     zoomed, **double-tap** to toggle zoom, tap the **✕** to close.
+2. Compose previews (the small thumbnail before you send) are unaffected — those still just show/remove.
+- **Break it:** a corrupt/undecodable image simply doesn't render (no crash); closing returns you exactly
+  where you were.
+
+### B4-3 — Blacklist choices paint your Home calendar as Blackout  [B4-3 · Auto ✅ predicate; device-check]
+1. Trade Settings → add a **blacklisted desk** (e.g. 82), a **shift type** (e.g. PM), and a **region**.
+2. Open **Home**.
+   - **Expect:** your working days that match any of those show a **Blackout tint**. A day you've given an
+     **explicit intent** (Trade-away/Want-to-work/Blackout) keeps its **intent** color (intent wins).
+3. The **give-day pickers** (Trade Solutions/ECB day pickers) are intentionally **not** painted — they're
+   for choosing your own shifts to give away.
+- **Break it:** clear a blacklist entry → the tint disappears live (no relaunch).
+
+### B4-4 — One-tap "Blackout weekends"  [B4-4 · Auto ✅; device-check]
+1. Trade Settings → toggle **"Blackout weekends"** on.
+   - **Expect:** every **Saturday and Sunday** shows Blackout on Home and is never offered in trades.
+2. Toggle off.
+   - **Expect:** weekends return to normal — and any **other** weekdays you'd blacklisted individually are
+     untouched.
+
+### B4-2 — Intents (marks + notes) follow you across devices  [B4-2 · Auto ✅ round-trip; 2-device check — needs deploy]
+*(Requires the `intents`/`intentsUpdatedAt` fields deployed to the private `PrivateState` record.)*
+1. iCloud Trade Sync ON, same Apple ID on two devices. On **Device A**, mark several intents
+   (trade-away / blackout / want-to-work) AND add a **day note** with a reason; **Save**.
+2. Launch on **Device B**.
+   - **Expect:** the same marks **and** the note/reason appear (latest save wins). Never visible to others.
+3. Edit on B + Save, relaunch A → A shows B's version.
+- **Break it:** start editing on B (don't save) while a newer remote exists → your in-progress edits are
+  **not** clobbered on launch (unsaved session is protected); save or discard, then it reconciles.
+
+### B4-5 — Profileless dispatchers only get offers matching what they recently work  [B4-5 · Auto ✅ core; device-check]
+1. Find a dispatcher who has **not** set up a trade profile and who, over the **last ~60 days**, only
+   works (say) **AM / domestic** shifts. Run Trade Solutions / Intents involving them.
+   - **Expect:** they're only offered **AM/domestic-like** pickups — never a **MID** or **international**
+     they haven't been working.
+2. A profileless peer with **little/no** recent history.
+   - **Expect:** falls back to the current bookends-only default (no over-restriction).
+3. A peer WITH a published profile.
+   - **Expect:** unaffected — their real profile always wins.
+
 ### Notes for the tester
 - If something here fails, tell me the item number (e.g. "T5 ⚠️") and what you saw.
 - "Auto ✅" means the logic is unit-guarded, but **your device check is still the real proof** — the

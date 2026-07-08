@@ -56,6 +56,7 @@ final class DayIntentStore {
         intentsRevision += 1
         savedBaseline = captureBaseline()
         hasUnsavedChanges = false
+        intentsUpdatedAt = Date()   // B4-2: stamp the save as the LWW clock, then publish (call site)
     }
 
     /// DISCARD: reverts every intent map to the last saved baseline and clears the dirty flag.
@@ -94,6 +95,10 @@ final class DayIntentStore {
     /// Off days the user customized by hand — the openness shortcut won't overwrite these.
     private(set) var manualOffDays: Set<String> {
         didSet { UserDefaults.standard.set(Array(manualOffDays), forKey: Keys.manualOff) }
+    }
+    /// B4-2: last time the intents were SAVED locally — the LWW clock for cross-device sync.
+    private(set) var intentsUpdatedAt: Date {
+        didSet { UserDefaults.standard.set(intentsUpdatedAt, forKey: Keys.updatedAt) }
     }
 
     // MARK: Derived (drop-in replacement for TradeIntentStore.seekingDayIDs)
@@ -143,6 +148,7 @@ final class DayIntentStore {
         notes           = Self.load(Keys.notes) ?? [:]
         offAvailability = Self.load(Keys.availability) ?? [:]
         manualOffDays   = Set(UserDefaults.standard.stringArray(forKey: Keys.manualOff) ?? [])
+        intentsUpdatedAt = (UserDefaults.standard.object(forKey: Keys.updatedAt) as? Date) ?? .distantPast
         migrateFromTradeIntentStoreIfNeeded()
         savedBaseline = captureBaseline()   // on-disk state is the saved baseline at launch
     }
@@ -338,6 +344,47 @@ final class DayIntentStore {
         return wiped
     }
 
+    // MARK: - B4-2 cross-device sync (full fidelity via the private-DB PrivateState record)
+
+    /// The complete intent state, serialized for cross-device sync. All fields are the store's own
+    /// stored maps, so a round-trip restores marks AND notes/reasons/topology exactly.
+    struct IntentSnapshot: Codable, Equatable {
+        var working: [String: WorkingIntentState]
+        var off: [String: OffIntentState]
+        var topologies: [String: DayTopology]
+        var notes: [String: DayNote]
+        var availability: [String: Set<ShiftAvailabilityType>]
+        var manualOff: Set<String>
+    }
+
+    /// Current state as a JSON blob for publishing.
+    func exportSnapshotJSON() -> String? {
+        let snap = IntentSnapshot(working: workingIntents, off: offIntents, topologies: topologies,
+                                  notes: notes, availability: offAvailability, manualOff: manualOffDays)
+        guard let data = try? JSONEncoder().encode(snap) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    /// Adopt a remote snapshot (the newer side, decided by the caller via `intentsUpdatedAt`).
+    /// **INV-9:** never clobber an in-progress editing session — refuses when there are unsaved local
+    /// edits. On success it replaces the maps, adopts the remote clock, and re-captures the baseline so
+    /// the adopted state IS the new saved truth (not a dirty edit). Returns whether it applied.
+    @discardableResult
+    func applyRemoteSnapshot(_ json: String, at: Date) -> Bool {
+        guard !hasUnsavedChanges else { return false }
+        guard let data = json.data(using: .utf8),
+              let snap = try? JSONDecoder().decode(IntentSnapshot.self, from: data) else { return false }
+        workingIntents  = snap.working
+        offIntents      = snap.off
+        topologies      = snap.topologies
+        notes           = snap.notes
+        offAvailability = snap.availability
+        manualOffDays   = snap.manualOff
+        intentsUpdatedAt = at
+        savedBaseline = captureBaseline()
+        return true
+    }
+
     // MARK: Persistence
 
     private enum Keys {
@@ -348,6 +395,7 @@ final class DayIntentStore {
         static let availability = "batman.v2.offAvailability"
         static let manualOff = "batman.v2.manualOffDays"
         static let migrated = "batman.v2.intentMigrated"
+        static let updatedAt = "batman.v2.intentsUpdatedAt"
     }
 
     private func persist<T: Encodable>(_ value: T, _ key: String) {

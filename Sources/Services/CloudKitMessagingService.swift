@@ -164,9 +164,16 @@ final class PrivateStateStore {
     static let shared = PrivateStateStore()
     private let cloud = CloudKitPrivateStateService()
 
-    /// On launch: reconcile local vs remote private notes (newer wins).
+    /// On launch: reconcile private notes AND intents (each newer-wins). The two are independent —
+    /// intents must sync even when no notes record exists yet (B4-2 bug fix).
     func syncOnLaunch() async {
         guard SettingsManager.shared.useCloudKit else { return }
+        await syncNotesOnLaunch()
+        await syncIntentsOnLaunch()   // B4-2 — ALWAYS runs, regardless of the notes record
+    }
+
+    /// Reconcile local vs remote private notes (newer wins).
+    private func syncNotesOnLaunch() async {
         let s = SettingsManager.shared
         guard let remote = await cloud.fetch() else {
             if !s.privateNotes.isEmpty { await cloud.publish(notes: s.privateNotes, updatedAt: s.privateNotesUpdatedAt) }
@@ -184,6 +191,30 @@ final class PrivateStateStore {
         guard SettingsManager.shared.useCloudKit else { return }
         let s = SettingsManager.shared
         await cloud.publish(notes: s.privateNotes, updatedAt: s.privateNotesUpdatedAt)
+    }
+
+    /// B4-2: reconcile the full intent set (marks + notes/reasons/topology) across the user's devices,
+    /// LWW by `intentsUpdatedAt`. Adopt refuses if there are unsaved local edits (INV-9).
+    func syncIntentsOnLaunch() async {
+        guard SettingsManager.shared.useCloudKit else { return }
+        let store = DayIntentStore.shared
+        guard let remote = await cloud.fetchIntents() else {
+            if let json = store.exportSnapshotJSON(), store.intentsUpdatedAt > .distantPast {
+                await cloud.publishIntents(json, updatedAt: store.intentsUpdatedAt)
+            }
+            return
+        }
+        if remote.updatedAt > store.intentsUpdatedAt {
+            _ = store.applyRemoteSnapshot(remote.json, at: remote.updatedAt)   // remote newer → adopt
+        } else if store.intentsUpdatedAt > remote.updatedAt, let json = store.exportSnapshotJSON() {
+            await cloud.publishIntents(json, updatedAt: store.intentsUpdatedAt)   // local newer → push
+        }
+    }
+
+    /// Push the local intents up (call after the user SAVES intents).
+    func publishLocalIntents() async {
+        guard SettingsManager.shared.useCloudKit, let json = DayIntentStore.shared.exportSnapshotJSON() else { return }
+        await cloud.publishIntents(json, updatedAt: DayIntentStore.shared.intentsUpdatedAt)
     }
 }
 
@@ -209,6 +240,25 @@ actor CloudKitPrivateStateService {
               let notes = record["privateNotes"] as? String,
               let updatedAt = record["updatedAt"] as? Date else { return nil }
         return (notes, updatedAt)
+    }
+
+    /// B4-2: intents blob lives on the SAME private_state record, in its own fields (no index — fetched
+    /// by fixed record name). Requires the `intents`/`intentsUpdatedAt` fields deployed (see CLOUDKIT_DEPLOY.md).
+    func publishIntents(_ json: String, updatedAt: Date) async {
+        let record: CKRecord
+        if let existing = try? await db.record(for: id) { record = existing }
+        else { record = CKRecord(recordType: Self.recordType, recordID: id) }
+        record["intents"] = json as CKRecordValue
+        record["intentsUpdatedAt"] = updatedAt as CKRecordValue
+        do { _ = try await db.save(record) }
+        catch { print("⚠️ intents publish failed: \(error.localizedDescription)") }
+    }
+
+    func fetchIntents() async -> (json: String, updatedAt: Date)? {
+        guard let record = try? await db.record(for: id),
+              let json = record["intents"] as? String,
+              let updatedAt = record["intentsUpdatedAt"] as? Date else { return nil }
+        return (json, updatedAt)
     }
 }
 

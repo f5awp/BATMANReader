@@ -221,7 +221,7 @@ struct IntentCalendarView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 6)
-        .background(background(dayID: dayID, isToday: isToday, isWorking: isWorking, hasShift: hasShift))
+        .background(background(dayID: dayID, isToday: isToday, isWorking: isWorking, hasShift: hasShift, date: date, shift: shift))
         .clipShape(RoundedRectangle(cornerRadius: 7))
         .overlay(
             RoundedRectangle(cornerRadius: 7)
@@ -315,10 +315,32 @@ struct IntentCalendarView: View {
         }
     }
 
-    private func background(dayID: String, isToday: Bool, isWorking: Bool, hasShift: Bool) -> Color {
-        if layers.intentOverlays, let tint = intentTint(dayID: dayID, isWorking: isWorking) { return tint }
+    private func background(dayID: String, isToday: Bool, isWorking: Bool, hasShift: Bool,
+                            date: Date, shift: Shift?) -> Color {
+        if layers.intentOverlays {
+            // Explicit per-day intent wins over the blacklist Blackout tint (B4-3 precedence).
+            if let tint = intentTint(dayID: dayID, isWorking: isWorking) { return tint }
+            if let bo = blackoutTint(date: date, shift: shift) { return bo }
+        }
         if !hasShift { return Color(.systemGray6) }
         return isWorking ? Color.accentColor.opacity(0.20) : Color(.systemGray5)
+    }
+
+    /// B4-3: tint a day that matches the user's trade blacklist (never traded/worked). Working shifts
+    /// match on desk/type/region/weekday; off days match on **weekday only** (no desk). Only reached
+    /// when the day has no explicit intent (intent wins). Assumptions flagged in ASSUMED_PRESENT.
+    private func blackoutTint(date: Date, shift: Shift?) -> Color? {
+        let weekday = cal.component(.weekday, from: date)
+        let s = SettingsManager.shared
+        let hit: Bool
+        if let shift, !shift.isOff {
+            hit = Blackout.isBlacklisted(desk: shift.desk, startHour: shift.startHour, weekday: weekday,
+                                         desks: s.blacklistedDesks, shiftTypes: s.blacklistedShiftTypes,
+                                         regions: s.blacklistedRegions, weekdays: s.blacklistedWeekdays)
+        } else {
+            hit = s.blacklistedWeekdays.contains(weekday)   // off day: weekday dimension only
+        }
+        return hit ? WorkingIntentState.mustWork.brickColor.opacity(0.28) : nil
     }
 
     /// Dispatch "brick" intent fill, or nil when the day has no explicit intent.
@@ -420,7 +442,7 @@ struct DayIntentEditor: View {
                             get: { working == .wantToWork ? .mustWork : (working ?? .neutralOpen) },
                             set: { working = $0 })) {
                             ForEach(WorkingIntentState.allCases.filter { $0 != .wantToWork }) {
-                                Text($0 == .mustWork ? "Keep" : $0.label).tag($0)
+                                Text($0.label).tag($0)   // B4-1: .mustWork label is now "Blackout"
                             }
                         }
                     }
@@ -763,6 +785,13 @@ struct TradeSettingsSheet: View {
             Text("Blacklisted regions")
         } footer: {
             Text("High-Demand and Personal Milestone dates are set by long-pressing a date on the calendar.")
+        }
+        Section {
+            Toggle("Blackout weekends", isOn: Binding(   // B4-4
+                get: { WeekendBlackout.isOn(settings.blacklistedWeekdays) },
+                set: { on in settings.blacklistedWeekdays = WeekendBlackout.apply(on: on, to: settings.blacklistedWeekdays) }))
+        } footer: {
+            Text("Blacks out every Saturday and Sunday — they won't be offered in trades and show as Blackout on your calendar.")
         }
 
         qualSwapSettings
