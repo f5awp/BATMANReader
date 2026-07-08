@@ -58,7 +58,7 @@
 | Feature | File | Key symbols | Spec |
 |---|---|---|---|
 | Hard gates / candidates / two-way | `TradeMatcher.swift` | `TradeOpenness`, `DeskRules.region/requiredQual/qualified`, `candidatesForTrades`, `twoWayExplore`, `goldCount`, `anchored(...)` (bookend), `rested(...)` | S-ENG-1, S-ENG-2, S-ENG-10 |
-| Packages / circular / tiers | `TradeRouter.swift` | `MatchContext` (built once/search: roster maps + universe + priors), `packages(forGiveShifts:excluding:)`, `intentSolutions(...)`, `nWayRoutes(...,preloadedMaps:)`, `legFeatures`, `packageLogProb`, `finalize`, `TradePackage`, `PackageAssignment` | S-ENG-3/4/5, unified scoring, U-PERF |
+| Packages / circular / tiers | `TradeRouter.swift` | `MatchContext`, `packages(...)`, `intentSolutions(...)`, `nWayRoutes(...,preloadedMaps:)`, `legFeatures`, **`packageQuality(for:)`** (avg leg quality), **`myGiveCoverage`**, **`finalize`+`rankLess`** = coverage → fewest-people → bookends → quality; floor on AVG leg quality (`TradeScore.packageQuality`, per-PERSON penalty) | S-ENG-3/4/5, coverage-first ranking |
 | Fewest-people reciprocal | `OptimalMatcher.swift` | `minPeopleReciprocal(giveDayIDs:peers:contiguous:)`, `Cand`, `Assignment` | S-ENG-3 |
 | Min-cost flow | `MinCostFlow.swift` | `MinCostFlow`, `addEdge`, `run(from:to:)` | — |
 | Holidays (high-demand) | `Holidays.swift` | `Holidays.map(year:)`, `isHighDemand`, `name(forDay:)` | — |

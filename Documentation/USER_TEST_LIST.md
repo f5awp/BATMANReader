@@ -612,6 +612,16 @@
 - **Break it:** expand several threads, tap Photo — none should collapse; cancel the picker → you're
   still where you were.
 
+### B4-15 — Coverage-first ranking (full-covers surface at the top)  [B4-15 · Auto ✅ core; device-check]
+1. Mark several give-days (e.g. Aug 7, 8, 9) → Trade Solutions → Find.
+   - **Expect:** a **single person who can cover all of them** (clean/bookend) ranks **at or near the top** —
+     no longer buried under single-day trades. Order is: most of your days covered → fewest people →
+     bookends → acceptance likelihood.
+2. Dev mode: a card shows `TradeScore: NN% · cover N` (N = how many of your days it covers).
+- **Was the bug:** the old score multiplied per-leg probabilities and penalized per-leg, so a 3-day cover
+  (6 legs) always lost to a 1-day (2 legs) and could even fall below the floor. Now the floor uses the
+  **average** leg quality and the sort leads with **coverage**.
+
 ### Notes for the tester
 - If something here fails, tell me the item number (e.g. "T5 ⚠️") and what you saw.
 - "Auto ✅" means the logic is unit-guarded, but **your device check is still the real proof** — the

@@ -394,6 +394,18 @@ enum TradeScore {
     static func packageLogProb(_ legs: [LegFeatures]) -> Double {
         legs.map { log(legProb($0)) }.reduce(0.0, +) + Double(max(0, legs.count - 2)) * log(nPenalty)
     }
+
+    /// Average per-leg acceptance QUALITY (geometric mean of legProb), scaled down per extra **person**
+    /// (NOT per day) — so covering more days with one clean person is not penalized. In (0,1]. This is
+    /// the ranking-floor signal: a clean full-cover scores like a clean single-day, and coverage/fewest-
+    /// people are handled by the sort (not by punishing multi-day trades). Fixes the "single-day always
+    /// wins" bug where the joint PRODUCT + per-leg N-penalty buried full covers.
+    static func packageQuality(_ legs: [LegFeatures], people: Int) -> Double {
+        guard !legs.isEmpty else { return 0 }
+        let meanLogLeg = legs.map { log(legProb($0)) }.reduce(0.0, +) / Double(legs.count)   // geometric mean
+        let peoplePenalty = Double(max(0, people - 2)) * log(nPenalty)                        // per PERSON, not leg
+        return exp(meanLogLeg + peoplePenalty)
+    }
     /// Admissible upper bound on a partial route's final log-prob: the running sum (remaining legs
     /// can only add ≤ 0). Prune mid-DFS when this drops below log(threshold) — never drops a valid route.
     static func upperBoundLogProb(partial legs: [LegFeatures]) -> Double { packageLogProb(legs) }

@@ -68,20 +68,23 @@ struct TradePackage: Sendable, Hashable, Identifiable {
     // H2: avg of the counterparties' learned acceptance priors (logit). A late ranking tiebreaker so,
     // all else equal, partners who historically accept float up. 0 = neutral / no history.
     var partnerPrior: Double = 0
-    // TradeScore instrumentation: the model's package acceptance log-prob. COMPUTED + recorded for
-    // dev-mode display + future model-fitting — NEVER a ranking input (does not affect any trade).
+    // TradeScore: the model's average per-leg acceptance QUALITY (0…1). Ranking tiebreak + floor signal.
     var acceptanceScore: Double = 0
+    // How many of YOUR requested give-days this package covers — the PRIMARY ranking key (most coverage
+    // first, so one person covering all your days floats to the top). Set at generation.
+    var coverageCount: Int = 0
 
     // EXPLICIT init — freezes the construction signature so adding the fields above doesn't
     // churn the memberwise-init symbol (stale-incremental-link fix). New fields are defaulted.
     init(id: String, methodology: TradeMethodology, assignments: [PackageAssignment],
          route: NWayRoute?, urgency: Int = 0, isOptimal: Bool = false,
          fireCount: Int = 0, bookendTotal: Int = 0, qualSwap: QualSwapLegData? = nil,
-         partnerPrior: Double = 0, acceptanceScore: Double = 0) {
+         partnerPrior: Double = 0, acceptanceScore: Double = 0, coverageCount: Int = 0) {
         self.id = id; self.methodology = methodology; self.assignments = assignments
         self.route = route; self.urgency = urgency; self.isOptimal = isOptimal
         self.fireCount = fireCount; self.bookendTotal = bookendTotal; self.qualSwap = qualSwap
         self.partnerPrior = partnerPrior; self.acceptanceScore = acceptanceScore
+        self.coverageCount = coverageCount
     }
 
     // TOTAL distinct people INCLUDING you (SPEC S-ENG-5): You↔Cary ⇒ 2. The route
@@ -474,8 +477,9 @@ enum TradeRouter {
         let priors = ctx.priors   // U-PERF: built once in ctx (one responses scan, not per-leg)
         let rescored = scored.map { p -> TradePackage in
             var q = p
-            q.acceptanceScore = packageLogProb(for: p, selfID: selfID, maps: maps, quals: qualsDict,
+            q.acceptanceScore = packageQuality(for: p, selfID: selfID, maps: maps, quals: qualsDict,
                                                priors: priors, start: start)
+            q.coverageCount = myGiveCoverage(p, selfID: selfID)
             return q
         }
         return finalize(rescored, lucky: lucky)
@@ -659,8 +663,9 @@ enum TradeRouter {
         let qualsDict = rosterMeta.mapValues { $0.quals }
         let scored = result.map { p -> TradePackage in
             var q = p
-            q.acceptanceScore = packageLogProb(for: p, selfID: selfID, maps: maps, quals: qualsDict,
+            q.acceptanceScore = packageQuality(for: p, selfID: selfID, maps: maps, quals: qualsDict,
                                                priors: priors, start: start)
+            q.coverageCount = myGiveCoverage(p, selfID: selfID)
             return q
         }
         return finalize(scored, lucky: lucky)
@@ -698,10 +703,11 @@ enum TradeRouter {
             personPrior: priors[receiverID] ?? 0)   // O(1) lookup; absent → neutral (U-PERF)
     }
 
-    /// The package's REAL acceptance log-prob: build per-leg features for every handoff and multiply
-    /// (with the N-penalty folded in by `TradeScore.packageLogProb`). Circular reads `route.legs`;
-    /// a reciprocal package synthesizes legs (you→them for gives, them→you for takes).
-    private static func packageLogProb(for pkg: TradePackage, selfID: String,
+    /// The package's average per-leg acceptance QUALITY (0…1): build per-leg features for every handoff
+    /// and take the geometric mean, with a per-PERSON penalty (not per-leg) so covering more days with
+    /// one clean person isn't punished. Circular reads `route.legs`; a reciprocal package synthesizes
+    /// legs (you→them for gives, them→you for takes).
+    private static func packageQuality(for pkg: TradePackage, selfID: String,
                                maps: [String: DayMap], quals: [String: [String]],
                                priors: [String: Double], start: Date) -> Double {
         var legs: [(g: String, r: String, day: String, desk: String)] = []
@@ -717,23 +723,42 @@ enum TradeRouter {
         let feats = legs.map { legFeatures(giverID: $0.g, receiverID: $0.r, day: $0.day, desk: $0.desk,
                                            receiverQuals: quals[$0.r] ?? [], maps: maps, priors: priors,
                                            selfID: selfID, start: start) }
-        return TradeScore.packageLogProb(feats)
+        return TradeScore.packageQuality(feats, people: pkg.peopleCount)
     }
 
-    // MARK: - Unified gate (packageLogProb floor + score-order) — the NEW gate
-    static let floorNormalProb = 0.32   // normal feed: keep packages with ≥32% combined acceptance
-    static let floorLuckyProb  = 0.07   // Lucky: wider, allow weaker matches
-    static let emptyFallbackCount = 5   // if nothing clears the floor, still show the top few by score
+    /// How many of YOUR give-days this package covers (distinct days you hand off) — the PRIMARY ranking key.
+    private static func myGiveCoverage(_ pkg: TradePackage, selfID: String) -> Int {
+        if let route = pkg.route { return Set(route.legs.filter { $0.fromID == selfID }.map(\.dayID)).count }
+        return Set(pkg.assignments.flatMap(\.giveDayIDs)).count
+    }
 
-    /// Score-order by the REAL `packageLogProb` (already stored in `acceptanceScore`), drop everything
-    /// below the floor (normal 0.32 / Lucky 0.07), keep a top-N fallback if the floor empties it, then
-    /// a safety ceiling. Replaces the legacy count/qualityScore `capped`. (Step 3/5.)
+    // MARK: - Unified gate (per-leg quality floor + coverage-first ranking)
+    static let floorNormalProb = 0.32   // normal feed: keep packages whose AVERAGE leg quality ≥ 0.32
+    static let floorLuckyProb  = 0.07   // Lucky: wider, allow weaker matches
+    static let emptyFallbackCount = 5   // if nothing clears the floor, still show the top few by quality
+
+    /// Coverage-first ranking (what the user asked for): most of YOUR days covered → fewest people →
+    /// bookends → acceptance quality → soonest → id. `acceptanceScore` is the AVERAGE leg quality (0…1),
+    /// so a clean full-cover isn't buried for having many legs.
+    static func rankLess(_ a: TradePackage, _ b: TradePackage) -> Bool {
+        if a.coverageCount != b.coverageCount { return a.coverageCount > b.coverageCount }   // most days first
+        if a.peopleCount != b.peopleCount { return a.peopleCount < b.peopleCount }           // fewest people
+        if a.bookendTotal != b.bookendTotal { return a.bookendTotal > b.bookendTotal }       // cleaner (bookends)
+        if a.acceptanceScore != b.acceptanceScore { return a.acceptanceScore > b.acceptanceScore } // likelier
+        let e0 = a.earliestDayID ?? "9999-12-31", e1 = b.earliestDayID ?? "9999-12-31"
+        if e0 != e1 { return e0 < e1 }
+        return a.id < b.id
+    }
+
+    /// Drop trades whose AVERAGE leg quality is below the floor (never a full-cover just for having many
+    /// legs), keep a top-N fallback if the floor empties it, rank coverage-first, then a safety ceiling.
     static func finalize(_ pkgs: [TradePackage], lucky: Bool) -> [TradePackage] {
-        let sorted = pkgs.sorted { $0.acceptanceScore > $1.acceptanceScore }
-        let floorLog = log(lucky ? floorLuckyProb : floorNormalProb)
-        let passed = sorted.filter { $0.acceptanceScore >= floorLog }
-        let kept = passed.isEmpty ? Array(sorted.prefix(emptyFallbackCount)) : passed
-        return Array(kept.prefix(intentResultCap))
+        let floor = lucky ? floorLuckyProb : floorNormalProb
+        let passed = pkgs.filter { $0.acceptanceScore >= floor }
+        let base = passed.isEmpty
+            ? Array(pkgs.sorted { $0.acceptanceScore > $1.acceptanceScore }.prefix(emptyFallbackCount))
+            : passed
+        return Array(base.sorted(by: rankLess).prefix(intentResultCap))
     }
 
     /// U4 priority tier (lower = higher priority): 0 = 🔥+bookends, 1 = 🔥-only, 2 = bookends-only.

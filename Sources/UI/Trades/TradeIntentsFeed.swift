@@ -668,7 +668,7 @@ struct CompactSwapCard: View {
                     .padding(.top, 2)
             }
             if DevAccess.shared.unlocked {
-                Text(String(format: "TradeScore: %.0f%%", exp(package.acceptanceScore) * 100))
+                Text(String(format: "TradeScore: %.0f%% · cover %d", package.acceptanceScore * 100, package.coverageCount))
                     .font(.dsBadge).foregroundStyle(.purple)
             }
         }
@@ -801,7 +801,7 @@ struct PackageCard: View {
                     // DEV-ONLY: TradeScore acceptance estimate. Hidden from the userbase; never in copy;
                     // does NOT affect ranking. Visible only in developer mode.
                     if DevAccess.shared.unlocked {
-                        Text(String(format: "TradeScore: %.0f%% · log %.2f", exp(package.acceptanceScore) * 100, package.acceptanceScore))
+                        Text(String(format: "TradeScore: %.0f%% · cover %d", package.acceptanceScore * 100, package.coverageCount))
                             .font(.dsBadge).foregroundStyle(.purple)
                     }
                 }

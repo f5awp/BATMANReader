@@ -1122,21 +1122,35 @@ enum TradeEngineTests {
             check(Array(TradeRouter.rankIntentPackages(many).prefix(TradeRouter.intentResultCap)).count == 60,
                   "Intents: safety ceiling caps the list at 60")
 
-            // finalize (the NEW unified gate): score-order by acceptanceScore (packageLogProb), drop
-            // below the floor (normal 0.32 / Lucky 0.07), with a top-N empty-feed fallback.
-            func fpkg(_ id: String, _ prob: Double) -> TradePackage {
+            // finalize (unified gate): AVERAGE-leg-quality floor (normal 0.32 / Lucky 0.07), then
+            // coverage-first ranking, with a top-N empty-feed fallback. acceptanceScore is now 0…1.
+            func fpkg(_ id: String, _ prob: Double, coverage: Int = 0) -> TradePackage {
                 var p = TradePackage(id: id, methodology: .greedy,
                                      assignments: [PackageAssignment(workerID: "w", name: "n", giveDayIDs: ["d"], takeDayIDs: ["e"])],
                                      route: nil)
-                p.acceptanceScore = log(prob); return p
+                p.acceptanceScore = prob; p.coverageCount = coverage; return p
             }
             let hi = fpkg("hi", 0.9), midp = fpkg("mid", 0.2), lop = fpkg("lo", 0.02)
             check(TradeRouter.finalize([midp, lop, hi], lucky: false).map(\.id) == ["hi"],
-                  "finalize: normal floor (0.32) keeps only ≥0.32, highest score first")
+                  "finalize: normal floor (0.32) keeps only ≥0.32 avg-quality")
             check(TradeRouter.finalize([midp, lop, hi], lucky: true).map(\.id) == ["hi", "mid"],
-                  "finalize: Lucky floor (0.07) admits more, still score-ordered")
+                  "finalize: Lucky floor (0.07) admits more")
             check(TradeRouter.finalize([fpkg("w1", 0.01), fpkg("w2", 0.005)], lucky: false).map(\.id) == ["w1", "w2"],
-                  "finalize: empty-feed fallback shows the top few by score when nothing clears the floor")
+                  "finalize: empty-feed fallback shows the top few by quality when nothing clears the floor")
+            // THE FIX: a full-cover (more of your days) outranks a higher-scored single-day.
+            let fullCover = fpkg("full", 0.80, coverage: 3), oneDay = fpkg("one", 0.95, coverage: 1)
+            check(TradeRouter.finalize([oneDay, fullCover], lucky: false).map(\.id).first == "full",
+                  "finalize: coverage-first — a 3-day full-cover beats a higher-scored 1-day")
+
+            // packageQuality: covering more DAYS (more legs) with one person doesn't lower quality; more
+            // PEOPLE does. (This is what un-buried the full-cover.)
+            let cleanLeg = LegFeatures(wantToTake: true, wantToTrade: true, bookend: true,
+                                       timeValue: 1, needsQualBridge: false)
+            let q2legs = TradeScore.packageQuality(Array(repeating: cleanLeg, count: 2), people: 2)
+            let q6legs = TradeScore.packageQuality(Array(repeating: cleanLeg, count: 6), people: 2)
+            check(abs(q2legs - q6legs) < 0.0001, "packageQuality: more days (legs) with one person → same quality")
+            check(TradeScore.packageQuality(Array(repeating: cleanLeg, count: 4), people: 3) < q2legs,
+                  "packageQuality: more PEOPLE lowers quality")
 
             // A1 best-first seeding: highest score first, then soonest day (give-day IDs sort chronologically).
             check(TradeRouter.bestFirstSeeds([("2026-07-10", 0.5), ("2026-07-04", 3.5), ("2026-07-02", 0.5)])
