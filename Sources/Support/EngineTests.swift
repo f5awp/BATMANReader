@@ -1152,6 +1152,19 @@ enum TradeEngineTests {
             check(TradeScore.packageQuality(Array(repeating: cleanLeg, count: 4), people: 3) < q2legs,
                   "packageQuality: more PEOPLE lowers quality")
 
+            // Giver-side bookend: a peer's mid-week give (island off) is NOT clean; an edge day is.
+            func rEntry(_ day: String, _ off: Bool) -> RosterEntry {
+                RosterEntry(workerID: "R", workerName: "R", quals: ["D"], day: day, startHour: 5, desk: "10", isOff: off)
+            }
+            // Off Sun 13 · work Mon14–Fri18 · off Sat19
+            let rDays: [(String, Bool)] = [("2026-09-13", true), ("2026-09-14", false), ("2026-09-15", false),
+                                           ("2026-09-16", false), ("2026-09-17", false), ("2026-09-18", false), ("2026-09-19", true)]
+            let rMap = Dictionary(rDays.map { ($0.0, rEntry($0.0, $0.1)) }, uniquingKeysWith: { a, _ in a })
+            check(!TradeMatcher.isCleanGiveAway(day: TradeMatcher.dayDate(fromISO: "2026-09-15")!, map: rMap, cal: Calendar.current),
+                  "give-bookend: a mid-week give (both neighbors worked → island off) is NOT clean")
+            check(TradeMatcher.isCleanGiveAway(day: TradeMatcher.dayDate(fromISO: "2026-09-18")!, map: rMap, cal: Calendar.current),
+                  "give-bookend: an edge give (neighbor off) IS clean")
+
             // A1 best-first seeding: highest score first, then soonest day (give-day IDs sort chronologically).
             check(TradeRouter.bestFirstSeeds([("2026-07-10", 0.5), ("2026-07-04", 3.5), ("2026-07-02", 0.5)])
                   == ["2026-07-04", "2026-07-02", "2026-07-10"],

@@ -460,6 +460,12 @@ enum TradeMatcher {
                 coverMap: myMap, coverQuals: myQuals, coverProfile: myProfile,
                 options: EligibilityOptions(enforceWeeklyCap: true, applySoftGates: !ignoreOwnBlacklist), cal: cal)
             guard check.eligible else { continue }
+            // GIVER-side bookend: don't ask a bookends-only peer to give away a mid-week day that would
+            // leave them an isolated day off (unless they explicitly marked it trade-away). Symmetric to
+            // the pickup bookend rule — fixes "random inconvenient give-back" (e.g. a peer's mid-week Sep 15).
+            if theirProfile.opennessLevel == .bookends,
+               !theirSeeking.contains(pe.day),
+               !TradeMatcher.isCleanGiveAway(day: day, map: pMap, cal: cal) { continue }
             iTake.append(TwoWayLeg(dayID: pe.day, date: day, desk: pe.desk, startHour: pe.startHour,
                                    bookend: check.isBookend, wanted: theirSeeking.contains(pe.day)))
         }
@@ -675,6 +681,18 @@ enum TradeMatcher {
             }
         }
         return false
+    }
+
+    /// The GIVER-side bookend: giving away a worked `day` is CLEAN only if it sits at the EDGE of a work
+    /// block — a neighbor is already off/absent — so trading it out extends the giver's time off instead
+    /// of leaving an isolated mid-week "island" day off. (Symmetric to `anchored`, which is the pickup
+    /// bookend.) Used to stop offering a peer's inconvenient mid-week give-backs.
+    static func isCleanGiveAway(day: Date, map: [String: RosterEntry], cal: Calendar) -> Bool {
+        func offOrAbsent(_ d: Date) -> Bool { map[iso(d)].map { $0.isOff } ?? true }
+        let base = cal.startOfDay(for: day)
+        let prev = cal.date(byAdding: .day, value: -1, to: base) ?? base
+        let next = cal.date(byAdding: .day, value: 1, to: base) ?? base
+        return offOrAbsent(prev) || offOrAbsent(next)
     }
 
     // MARK: - Qual swaps (shared by trade search + intents + routes)

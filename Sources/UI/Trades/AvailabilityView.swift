@@ -107,7 +107,10 @@ struct FindCandidatesSection: View {
             // U-PERF: restore prior results on tab return; only re-search if intents/settings changed
             // while away (and we'd already searched). Keeps Trade Solutions loaded across tab switches.
             guard let snap = TradeFeedCache.shared.snapshot(Self.cacheKey) else { return }
-            selectedIDs = snap.selectedIDs; packages = snap.packages
+            // Only restore the cached selection when the user has NONE in progress — never clobber a
+            // selection they've changed since (the "deselected Aug 5 but it came back" bug).
+            if selectedIDs.isEmpty { selectedIDs = snap.selectedIDs }
+            packages = snap.packages
             candidates = snap.candidates; rosterPeople = snap.rosterPeople; hasSearched = snap.hasSearched
             if snap.hasSearched { calendarExpanded = false }
             if snap.hasSearched, !selectedIDs.isEmpty,
@@ -179,6 +182,13 @@ struct FindCandidatesSection: View {
                         }
                     }
                     Spacer()
+                    if !selectedIDs.isEmpty {
+                        Button { selectedIDs = []; packages = []; candidates = []; hasSearched = false } label: {
+                            Label("Clear", systemImage: "xmark.circle")
+                        }
+                        .controlSize(.small)
+                        .accessibilityLabel("Clear selected days")
+                    }
                     Button { emailSelectedToDispatch() } label: {
                         Image(systemName: "envelope.fill")
                     }

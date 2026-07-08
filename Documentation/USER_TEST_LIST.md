@@ -622,6 +622,15 @@
   (6 legs) always lost to a 1-day (2 legs) and could even fall below the floor. Now the floor uses the
   **average** leg quality and the sort leads with **coverage**.
 
+### B4-16 — clean give-backs + selection you can see/clear  [Auto ✅ core; device-check]
+1. Pick some give-days → Find. In the reciprocal trades, the days the **other** person gives back to you
+   should be **clean for them** (edge of their work block), not a random **mid-week island** day.
+   - **Was the bug:** the take-side only checked "can I cover it," never "is it clean for *them* to give"
+     → offered a peer's inconvenient mid-week Sep-15-type give-back.
+2. Selection: the **"Trading away"** header always shows your selected days; a **Clear** button (✕) resets
+   them. Deselecting a day and switching tabs no longer resurrects it.
+   - **Was the bug:** returning to Trade Solutions restored the old cached selection over your changes.
+
 ### Notes for the tester
 - If something here fails, tell me the item number (e.g. "T5 ⚠️") and what you saw.
 - "Auto ✅" means the logic is unit-guarded, but **your device check is still the real proof** — the

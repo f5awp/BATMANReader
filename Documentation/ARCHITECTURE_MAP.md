@@ -57,7 +57,7 @@
 
 | Feature | File | Key symbols | Spec |
 |---|---|---|---|
-| Hard gates / candidates / two-way | `TradeMatcher.swift` | `TradeOpenness`, `DeskRules.region/requiredQual/qualified`, `candidatesForTrades`, `twoWayExplore`, `goldCount`, `anchored(...)` (bookend), `rested(...)` | S-ENG-1, S-ENG-2, S-ENG-10 |
+| Hard gates / candidates / two-way | `TradeMatcher.swift` | `TradeOpenness`, `DeskRules.region/requiredQual/qualified`, `candidatesForTrades`, `twoWayExplore` (iTake now gated by `isCleanGiveAway` — giver-side bookend), `goldCount`, `anchored(...)` (pickup bookend), `isCleanGiveAway(...)` (give-side bookend), `rested(...)` | S-ENG-1/2/10, give-bookend |
 | Packages / circular / tiers | `TradeRouter.swift` | `MatchContext`, `packages(...)`, `intentSolutions(...)`, `nWayRoutes(...,preloadedMaps:)`, `legFeatures`, **`packageQuality(for:)`** (avg leg quality), **`myGiveCoverage`**, **`finalize`+`rankLess`** = coverage → fewest-people → bookends → quality; floor on AVG leg quality (`TradeScore.packageQuality`, per-PERSON penalty) | S-ENG-3/4/5, coverage-first ranking |
 | Fewest-people reciprocal | `OptimalMatcher.swift` | `minPeopleReciprocal(giveDayIDs:peers:contiguous:)`, `Cand`, `Assignment` | S-ENG-3 |
 | Min-cost flow | `MinCostFlow.swift` | `MinCostFlow`, `addEdge`, `run(from:to:)` | — |
