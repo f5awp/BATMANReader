@@ -21,6 +21,7 @@ struct LayerVisibility {
     var notes = true          // DayNote markers
     var intentOverlays = true // intent tints
     var availability = true   // AM/PM/MID pickup markers on off days (#2: now toggleable)
+    var shiftType = true       // show the shift TYPE (AM/PM/MID) on worked days
     var deskAssignments = true // show the desk on worked days ("PM 32" vs just "PM")
 }
 
@@ -34,7 +35,7 @@ struct HomeView: View {
 
     @State private var mode: IntentMode = .off
     @State private var layers = LayerVisibility()
-    @State private var editTarget: DayEditTarget?
+    @State private var editTarget: DayEditTarget?     // day tap (any mode) → full DayIntentEditor
     @State private var changedDays: Set<String> = []
     @State private var showBanner = false
     @AppStorage("batman.v2.lastReconciledFetch") private var lastReconciledFetch: Double = 0
@@ -43,6 +44,7 @@ struct HomeView: View {
     @State private var workBrush: WorkingIntentState = .dontWantToWork
     @State private var offIntentBrush: OffIntentState = .wantToWork   // direct off-day intent brush (F1)
     @State private var noteBrush = ""   // F2: when set, each tapped day also gets this note
+    @State private var clearNoteMode = false   // when on, tapping a day CLEARS its note (no intent paint)
     @State private var pendingConflict: PendingConflict?
     @State private var overwriteConfirmed = false   // #10: ask-overwrite ONCE per mass-action session
     @State private var showLeaveGuard = false        // C1 phase-2: Save-or-Discard when leaving with unsaved edits
@@ -60,15 +62,19 @@ struct HomeView: View {
                     HStack(spacing: 10) {
                         markIntentsPill
                         Spacer(minLength: 8)
-                        HomeMetricsHeader()
+                        // Successful-trade stats moved to the shared bottom bar (TradeStatsBar) so the top
+                        // of the calendar isn't crowded (B6-STATS).
                         VisibilityToolbar(layers: $layers)
                     }
                     .padding(.horizontal).padding(.vertical, 6)
+                    // Intent tally under the Mark Intents button (full "Want to Trade/Work" labels are too
+                    // wide to sit inline without wrapping on iPhone). Centered; hidden when no intents.
+                    IntentTallyBar(centered: true)
                 }
                 homeNotesBar
                 MarkIntentsToolbar(mode: $mode, offBrush: $offBrush, workBrush: $workBrush,
                                    offIntentBrush: $offIntentBrush, noteBrush: $noteBrush,
-                                   layers: $layers,
+                                   clearNoteMode: $clearNoteMode, layers: $layers,
                                    onSave: saveIntents, onDone: attemptLeaveEditing)
                 Divider()
 
@@ -90,10 +96,7 @@ struct HomeView: View {
                         })
                 }
 
-                // Last-synced line pinned to the very bottom of the page.
-                Divider()
-                HStack { SyncTag(); Spacer() }
-                    .padding(.horizontal).padding(.vertical, 4)
+                // (Last-synced + app version moved to App Settings; the Home page ends at the calendar.)
             }
             .navigationTitle("BATMAN Watcher")
             .navigationBarTitleDisplayMode(.inline)
@@ -209,9 +212,17 @@ struct HomeView: View {
     /// Single tap: apply the mode's default intent, toggling it off if already set.
     /// If the day already carries a *different* explicit intent, confirm first.
     private func handleTap(day: String, isOff: Bool) {
+        // Clear-note brush: while active, a tap ONLY clears that day's note (no intent paint), so you can
+        // sweep dates to wipe notes. Works in both Working and Days-Off sub-modes.
+        if mode != .off, clearNoteMode {
+            intents.setNote(nil, forDay: day)
+            return
+        }
         switch mode {
         case .off:
-            break   // read-only outside Mark Intents — marking only happens in the section
+            // Outside Mark Intents a day tap opens the FULL day editor (intent, reason, note,
+            // significant-day, and the vacation traded-in toggle) — edit anything in one tap.
+            editTarget = DayEditTarget(dayID: day, isOff: isOff)
         case .workingShifts:
             guard !isOff else { return }
             stampNote(day)
@@ -294,6 +305,7 @@ struct MarkIntentsToolbar: View {
     @Binding var workBrush: WorkingIntentState
     @Binding var offIntentBrush: OffIntentState
     @Binding var noteBrush: String
+    @Binding var clearNoteMode: Bool       // when on, tapping a day clears its note
     @Binding var layers: LayerVisibility   // layers menu rides in the top row while editing
     var onSave: () -> Void          // SAVE this session's marks (clears the dirty glow)
     var onDone: () -> Void          // leave the section (guarded if there are unsaved edits)
@@ -301,10 +313,10 @@ struct MarkIntentsToolbar: View {
 
     init(mode: Binding<IntentMode>, offBrush: Binding<ShiftAvailabilityType?>,
          workBrush: Binding<WorkingIntentState>, offIntentBrush: Binding<OffIntentState>,
-         noteBrush: Binding<String>, layers: Binding<LayerVisibility>,
+         noteBrush: Binding<String>, clearNoteMode: Binding<Bool>, layers: Binding<LayerVisibility>,
          onSave: @escaping () -> Void, onDone: @escaping () -> Void) {
         _mode = mode; _offBrush = offBrush; _workBrush = workBrush
-        _offIntentBrush = offIntentBrush; _noteBrush = noteBrush; _layers = layers
+        _offIntentBrush = offIntentBrush; _noteBrush = noteBrush; _clearNoteMode = clearNoteMode; _layers = layers
         self.onSave = onSave; self.onDone = onDone
     }
 
@@ -337,16 +349,34 @@ struct MarkIntentsToolbar: View {
             } else if mode == .daysOff {
                 availabilityPills
             }
-            // F2: optional note stamped onto every day you tap.
+            // F2: optional note stamped onto every day you tap. The eraser toggles a "clear notes" brush —
+            // while on, tapping days wipes their notes instead of stamping.
             HStack(spacing: 8) {
                 Image(systemName: "note.text").foregroundStyle(.secondary)
-                TextField("Stamp a note on tapped days (optional)", text: $noteBrush)
+                TextField(clearNoteMode ? "Tap days to clear their notes" : "Stamp a note on tapped days (optional)",
+                          text: $noteBrush)
                     .font(.subheadline)
+                    .disabled(clearNoteMode)
+                    .foregroundStyle(clearNoteMode ? .secondary : .primary)
                     .onChange(of: noteBrush) { _, v in if v.count > DayNote.maxLength { noteBrush = String(v.prefix(DayNote.maxLength)) } }
-                if !noteBrush.isEmpty {
+                if !clearNoteMode, !noteBrush.isEmpty {
                     CharCounter(text: noteBrush, limit: DayNote.maxLength)
                     Button { noteBrush = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
                 }
+                // Clear-note brush toggle (to the right of the note input).
+                Button {
+                    clearNoteMode.toggle()
+                    if clearNoteMode { noteBrush = "" }   // the two brushes are mutually exclusive
+                } label: {
+                    Image(systemName: "eraser.line.dashed")
+                        .font(.subheadline.weight(.semibold))
+                        .frame(width: DS.controlSize, height: DS.controlSize)
+                        .foregroundStyle(clearNoteMode ? Color.white : Color.primary)
+                        .background(clearNoteMode ? AppColor.danger : Color(.tertiarySystemFill),
+                                    in: RoundedRectangle(cornerRadius: DS.controlRadius, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(clearNoteMode ? "Clear-note brush on" : "Clear notes")
             }
             .padding(.horizontal)
 
@@ -433,85 +463,19 @@ struct MarkIntentsToolbar: View {
     }
 }
 
-// MARK: - Home metrics header (H1)
-
-/// Pinned at top of Home: TOTAL successful trades — yours and the whole company — for the
-/// selected period (#9). "Successful" = accepted + archived. One period control switches both totals.
-struct HomeMetricsHeader: View {
-    private var metrics = MetricsStore.shared
-    private var dev = DevAccess.shared
-    @State private var period: MetricPeriod = .month
-
-    private var myID: String { SettingsManager.shared.username }
-    private var mine: Int { Metrics.count(metrics.globalEvents, kind: .trade, period: period, now: Date(), workerID: myID) }
-    private var company: Int { Metrics.count(metrics.globalEvents, kind: .trade, period: period, now: Date()) }
-
-    var body: some View {
-        // A tight, self-sizing chip (no Spacer / full-width) so it sits inline in the Home control
-        // row next to the layers toggle — successful-trade counts + a compact period menu.
-        Menu {
-            Picker("Period", selection: $period) {
-                ForEach(MetricPeriod.allCases) { Text($0.label).tag($0) }
-            }
-        } label: {
-            HStack(spacing: 5) {
-                Image(systemName: "checkmark.seal.fill").foregroundStyle(AppColor.success)
-                countPair(mine, "you")
-                Text("·").foregroundStyle(.secondary)
-                countPair(company, "PAFCA")
-                Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold)).foregroundStyle(.secondary)
-            }
-            .font(.caption2)
-            .lineLimit(1)
-            .frame(height: DS.controlSize)
-            .padding(.horizontal, 12)
-            .background(Color(.tertiarySystemFill), in: RoundedRectangle(cornerRadius: DS.controlRadius, style: .continuous))
-        }
-        .buttonStyle(.plain)
-        .onLongPressGesture { if dev.unlocked { TradeHistoryStore.shared.resetMetrics() } }   // admin reset
-        .accessibilityLabel("Successful trades: \(mine) you, \(company) PAFCA, \(period.label)")
-        .task { await metrics.refresh() }
-    }
-
-    private func countPair(_ n: Int, _ label: String) -> some View {
-        HStack(spacing: 3) {
-            Text("\(n)").fontWeight(.bold).monospacedDigit()
-            Text(label).foregroundStyle(.secondary)
-        }
-    }
-}
-
 // MARK: - Visibility toolbar (WSI-style icon strip)
 
 /// A compact horizontal strip of icon toggles controlling which calendar layers
 /// are drawn — modeled on the dispatch desk's icon toolbar, with Slack-grade
 /// spacing and clear on/off states.
 /// Compact "last synced" line, shown at the bottom of the Home page.
-struct SyncTag: View {
-    private var store = ShiftStore.shared
-
-    var body: some View {
-        HStack(spacing: 4) {
-            Image(systemName: "arrow.triangle.2.circlepath")
-            Text(text)
-        }
-        .font(.caption2).foregroundStyle(.secondary)
-    }
-
-    private var text: String {
-        guard let date = store.lastFetchDate else { return "Not synced yet" }
-        let f = DateFormatter(); f.dateFormat = "MMM d, h:mm a"
-        return "Synced \(f.string(from: date))"
-    }
-}
-
 struct VisibilityToolbar: View {
     @Binding var layers: LayerVisibility
 
     /// Collapsed into a single "layers" menu so it no longer occupies a full toolbar row.
     /// The icon fills accent when any layer is hidden (so it's obvious something is off).
     private var anyHidden: Bool {
-        !(layers.notes && layers.intentOverlays && layers.availability && layers.deskAssignments)
+        !(layers.notes && layers.intentOverlays && layers.availability && layers.shiftType && layers.deskAssignments)
     }
 
     var body: some View {
@@ -519,6 +483,7 @@ struct VisibilityToolbar: View {
             Toggle(isOn: $layers.notes) { Label("Notes", systemImage: "note.text") }
             Toggle(isOn: $layers.intentOverlays) { Label("Intent colors", systemImage: "paintpalette.fill") }
             Toggle(isOn: $layers.availability) { Label("Shift availability", systemImage: "clock.badge.checkmark") }
+            Toggle(isOn: $layers.shiftType) { Label("Shift type (AM/PM/MID)", systemImage: "clock") }
             Toggle(isOn: $layers.deskAssignments) { Label("Desk numbers", systemImage: "number") }
         } label: {
             Image(systemName: "square.3.layers.3d")

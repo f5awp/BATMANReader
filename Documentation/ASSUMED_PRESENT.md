@@ -146,6 +146,100 @@
   select your OWN shifts to give away, where the *accept*-blacklist is irrelevant and would confuse.
   Flag if you want Blackout on the pickers too.
 
+## Build 6 assumptions (flag if wrong)
+- **B6-INTENTS — robot gate is Mutual-only.** The active-account filter was gating BOTH modes → the
+  Intents feed went empty whenever no peer had claimed an account (test env). Fix: pure
+  `TradeRouter.peerEligibleForIntents(isActiveAccount:mutualOnly:)` (`!mutualOnly || isActiveAccount`),
+  wired at both guard sites (2-way loop + circular). **All** shows every peer; **Mutual** keeps real
+  accounts only. Proven by test (unclaimed→eligible in All, excluded in Mutual; claimed→eligible in Mutual).
+  Assumption: robots never publish a claimed profile, so Mutual stays robot-free in production. ✅ proven by test
+- **B6-VAC-FINAL — BOTH `V` and `w` (ECB VC) are OFF-day leave codes; printed shift ≠ worked.** Verified
+  against the user's real CSV: `L,V` (Vacation) AND `L,w` (ECB VC) both print a base-rotation shift yet the
+  worker is OFF (May 11-13 `w` = off; Dec 15-18 `V` = off). ECB VC is just another way to obtain vacation
+  days; neither code says whether you picked up. So `resolveVacations` flips EVERY `V`/`w` day OFF
+  (`Shift.vacationLeaveCodes = {V,w}`, `isVacationOrigin`), start/desk preserved, and the per-day override
+  ("I worked this day") is the ONLY signal for a picked-up leave day (e.g. July 26-29 `V` picked up →
+  working). ✅ proven by test (B6-VAC-ECB). Supersedes the desk-heuristic and the "w stays working" attempts.
+- **B6-VAC — a V-day ALWAYS defaults to vacation OFF (heuristic dropped).** First attempt kept the
+  home-desk heuristic (foreign desk → working); user reported December vacations STILL showed working.
+  Root cause: a genuine vacation prints whatever desk that **month's rotation** uses, which differs from
+  the summer-sampled "home" desk → misread as a foreign/traded-in pickup. The desk simply can't
+  distinguish genuine vacation from traded-in. **Fix:** `resolveVacations` now flips EVERY `V`-day to OFF
+  (printed start/desk preserved for the override); no desk logic. Traded-in is the rare per-day manual
+  toggle. Tests rewritten (December seasonal desk 74 + blank + foreign 43/45 → ALL OFF). ✅ proven by test.
+  **Residual (flag):** if December still shows working after this build it is NOT the resolver — it's
+  either (a) **stale cached** shifts predating the fix → re-sync/re-import once, or (b) those days aren't
+  tagged `L|V` in the source CSV → needs the current CSV to fix the parse. ⚠️ user re-sync / send CSV if it persists
+- **B6-LAYER — shift-type visibility toggle.** New `LayerVisibility.shiftType` + a "Shift type (AM/PM/MID)"
+  toggle in `VisibilityToolbar`. `HomeCalendar.dayContent` composes the worked-day label from the two
+  independent flags (type + desk); both off → blank (the day circle still marks worked). ⚠️ device-verify
+- **B6-STATS placement fix.** `.safeAreaInset(edge:.bottom)` on the **TabView** rendered the strip OVER the
+  tab bar. Moved the inset onto each **tab's content** (HomeView/TradesView) so it sits within the screen's
+  safe area, above the native tab bar. ⚠️ device-verify (no overlap on all devices)
+- **B6-HOME — normal-view day tap opens `DayDetailSheet`.** `handleTap` `.off` was `break` (no-op), and
+  the vacation toggle only lived behind a Mark-Intents long-press → unreachable. Now a tap sets
+  `detailTarget` → `DayDetailSheet` (shift summary + the "Vacation Traded In" toggle → `setVacationOverride`,
+  which re-syncs Apple Calendar + trades). Assumption: read-only detail is the desired normal-view tap (no
+  accidental intent edits). ⚠️ device-verify (tap opens; toggle flips + calendar re-syncs)
+- **B6-CARD — PackageCard is presentation-only.** Replaced the dual `TraderChips` (Gives/Gets, each day
+  shown twice) with one `● Name — dates` line per participant (days they GIVE; loop/swap conveys
+  direction). No engine/data change — harness GREEN after. `TraderChips` still used by the inbox. Assumption:
+  users read the give-only line correctly given the swap context. ⚠️ device-verify (clarity + no truncation at large Dynamic Type)
+- **B6-ECB — hand-picked multi-recipient send.** Tap a candidate cell to toggle it into
+  `selectedRecipients` (reuses the cell's existing `isSelected`/`onTap`/`selectionCheck`); a prominent
+  "Send to Selected (N)" button sits alongside Bookends/All. Extracted `sendECB(to:)`; `requestAll`/
+  `requestSelected` both call it; selection clears on a new search. ⚠️ device-verify (select 1+ → sends only to them)
+- **B6-STATS — stats relocated to `TradeStatsBar`.** Moved the You+Company successful-trade metric out of
+  the Home header into a slim bar pinned via `.safeAreaInset(edge:.bottom)` on the `TabView` (above the
+  tab bar, all tabs). Same data source (`MetricsStore.globalEvents` + `Metrics.count` + `MetricPeriod`);
+  tap = period menu. `HomeMetricsHeader` deleted (relocated, not duplicated). Assumption: `safeAreaInset`
+  sits above the native tab bar without overlap on all devices. ⚠️ device-verify (placement, no overlap, period switch)
+
+## Build 6 batch-3 assumptions (flag if wrong)
+- **B6-VAC-DEDUP — overlapping strips were fighting (root cause of the July 26-29 bug).** The expanded
+  schedule repeats a date window across multiple strips; the user's row appears in each. Two strips both
+  covered Jul 3–Aug 2 but annotated DIFFERENT days as vacation (strip A: `L,V` on 28-29; strip B: `L,V` on
+  26-27). `dedup`'s old rule (a working copy replaces an OFF copy, first-seen wins) kept strip A's plain
+  working 26-27 and DISCARDED strip B's `L,V` → 26-27 showed working, 28-29 vacation (exact symptom).
+  **Fix:** `dedup`+`mergeDuplicate` now UNION leave codes across duplicate dates (a `V`/`w` in any copy
+  survives) while keeping the printed shift. Teeth proven: OLD `26:work 27:work 28:VAC 29:VAC` → NEW
+  `26:VAC 27:VAC 28:VAC 29:VAC`. ✅ proven by test (B6-VAC-DEDUP). Verified both ingest paths
+  (`RosterStore.syncMasterIfNewer`, `WebController`) share `parseAllWorkers`→`dedup` — one dedup, no
+  second conflicting parser.
+- **B6-UI-3 — Intents tally + cushion.** `IntentTallyBar(centered:)`; shown ONLY on the Intents segment
+  (was on all trade tabs) and also under the Home "Mark Intents" button (placed UNDER, not inline — the
+  full labels wrap on iPhone). Segmented control gained `.padding(.top,6)` off the top bar. Toggle renamed
+  "Trade Picked Up". ⚠️ device-verify
+
+## Build 6 batch-2 assumptions (flag if wrong)
+- **B6-TOGGLE — Mutual/All is an instant cached flip.** The toggle used to re-run the engine. Now `reload`
+  computes BOTH modes in one pass (`intentSolutions` ×2: All superset + Mutual subset), caches both in the
+  `TradeFeedCache.Snapshot` (`packages` + `mutualPackages`), and the toggle just picks which cached set to
+  show (`activePackages`). Re-runs only on intent/whatIf/max-people change. Cost: ~2× per data-change (not
+  per toggle). ⚠️ device-verify (toggle is instant; counts correct)
+- **B6-TAP — normal-view tap opens the FULL editor.** Per user, the `.off` tap now opens `DayIntentEditor`
+  (intent + reason + note + significant + vacation), not the lighter read-only sheet. `DayDetailSheet`
+  deleted. ⚠️ device-verify
+- **B6-CARD-INBOX — inbox trade card uses the shared `TradeParticipantLines`.** Extracted the feed's
+  per-participant line into a reusable view; the inbox ThreadView card now renders the identical
+  `● Name — dates` format for both chains and 2-way. **Visibility note:** a circular trade you propose is
+  sent per-participant with `fromID == me`, so it lands in the inbox **"Sent"** section (`outgoing`). If it
+  seems missing it's the **sandbox** (see B6-PROPOSE) or it's under Sent, not "Needs your reply". ⚠️ device-verify
+- **B6-PROPOSE — the robot send-gate is real; sandbox masks it.** `MessagingStore.sendRequest(to:)` blocks
+  any recipient without `accountClaimed == true` (`blockedRecipient` alert) — 2-way, N-way, ECB, intents all
+  funnel through it. In single-account sandbox testing the "robots" were published by the dev account, so
+  they're `accountClaimed` and pass. In production only real accounts pass. NOT a code leak. ✅ gate confirmed by read
+- **B6-STATS-2 — stats bar moved BELOW the tab bar.** `.safeAreaInset` on the TabView overlapped in-tab
+  controls (the ECB Send button); the bar is now a sibling placed after the `TabView` in the root VStack,
+  centered, so it sits under the Home/Trades buttons. ⚠️ device-verify (doesn't cover the home indicator awkwardly)
+- **B6-SETTINGS — synced info + version moved to App Settings.** `SyncTag` deleted from Home; App Settings
+  gained a top "App info" section (`AppInfo.version`/`.build` + last `ShiftStore.lastFetchDate`). ⚠️ device-verify
+- **B6-CLEARNOTE — clear-note brush.** New `clearNoteMode` (eraser toggle right of the note-stamp field). While
+  on, a tap in Mark-Intents ONLY clears that day's note (short-circuits before intent paint); mutually
+  exclusive with the note-stamp. ⚠️ device-verify
+- **B6-LUCKY — renamed to "More: 3+ & loops".** Same on-demand heavy 3+/circular search; label + sheet title
+  + empty-state copy updated. Functionality unchanged. ✅ label-only
+
 ## How I'll stop doing this (process change)
 
 **New rule: I never say "already there." I prove it.** Concretely:

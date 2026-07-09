@@ -148,11 +148,85 @@ enum TradeEngineTests {
             check(v06?.isOff == true && v06?.leaveCode == "V", "Vacation: 11-06 L|V (no desk) → off + leaveCode V")
             check(w07?.isOff == false && w07?.startHour == 21 && w07?.leaveCode == nil,
                   "Vacation: 11-07 (no annotation) stays a normal working shift")
-            // Traded BACK into a vacation day: L|V but a real desk (20) is printed → the worked shift wins.
-            check(t08?.isOff == false && t08?.startHour == 5 && t08?.desk == "20" && t08?.leaveCode == nil,
-                  "Vacation: 11-08 L|V WITH a real desk (traded back in) → working shift, not vacation")
+            // A vacation day still prints its base rotation (incl. a desk) — it must stay OFF. (The Build 5
+            // "traded back in if a desk is printed" heuristic was reverted; it wrongly flipped real vacations.)
+            check(t08?.isOff == true && t08?.leaveCode == "V",
+                  "Vacation: 11-08 L|V WITH a desk (no clear home desk in this fixture) → vacation OFF")
         } else {
             check(false, "Vacation: parser failed to return worker 999999")
+        }
+
+        // MARK: Vacation resolution — a V-day ALWAYS defaults to OFF (genuine vacation), regardless of the
+        // printed desk. (The home-desk heuristic was dropped: December vacations on a seasonal-rotation desk
+        // were mislabeled working. Traded-in days are the rare per-day manual override.)
+        do {
+            func mk(_ id: String, month: Int, desk: String, v: Bool) -> Shift {
+                let day = Int(id.suffix(2)) ?? 1
+                let d = DateComponents(calendar: .current, year: 2026, month: month, day: day).date ?? Date()
+                return Shift(id: id, date: d, startHour: 5, endHour: 14, role: .dispatcher,
+                             desk: desk, leaveCode: v ? "V" : nil, isOff: false)
+            }
+            // The user's real pattern: a summer rotation on desk "22", a DECEMBER genuine-vacation block that
+            // prints a DIFFERENT seasonal desk ("74"), traded-in days on foreign desks (43/45), and a
+            // blank-desk V-day. EVERY V-day must read OFF; the printed desk is preserved for the override.
+            let input = [mk("2026-07-01", month: 7, desk: "22", v: false), mk("2026-07-02", month: 7, desk: "22", v: false),
+                         mk("2026-07-03", month: 7, desk: "22", v: false), mk("2026-07-04", month: 7, desk: "22", v: false),
+                         mk("2026-12-07", month: 12, desk: "74", v: true), mk("2026-12-08", month: 12, desk: "74", v: true),
+                         mk("2026-12-09", month: 12, desk: "74", v: true), mk("2026-12-10", month: 12, desk: "74", v: true),
+                         mk("2026-07-26", month: 7, desk: "43", v: true), mk("2026-07-27", month: 7, desk: "45", v: true),
+                         mk("2026-12-15", month: 12, desk: "", v: true)]
+            let out = ScheduleParser.resolveVacations(input)
+            let allV = ["2026-12-07", "2026-12-08", "2026-12-09", "2026-12-10", "2026-07-26", "2026-07-27", "2026-12-15"]
+            check(allV.allSatisfy { id in out.first { $0.id == id }?.isVacation == true },
+                  "B6-VAC: every V-day defaults to OFF (ingested as vacation), incl. December seasonal desk + blank desk")
+            check(out.first { $0.id == "2026-12-07" }?.desk == "74",
+                  "B6-VAC: the printed desk is preserved on a vacation day (so the traded-in override can restore it)")
+            check(out.first { $0.id == "2026-07-01" }?.isOff == false,
+                  "B6-VAC: a plain (non-V) working day is untouched")
+
+            // B6-VAC-ECB: BOTH leave codes default OFF. "V" (Vacation) and "w" (ECB VC) are just leave
+            // designations — the printed base-rotation shift is NOT proof of working (user's real data:
+            // May 11-13 = L,w = off despite a printed shift; Dec 15-18 = L,V = off; July 26-29 = L,V but
+            // picked up → the per-day override flips them to working). resolveVacations flips BOTH to OFF,
+            // preserving the printed start/desk + code so the override can restore the worked shift.
+            func day(_ iso: String, m: Int, d: Int, start: Int, desk: String, code: String?) -> Shift {
+                let date = DateComponents(calendar: .current, year: 2026, month: m, day: d).date ?? Date()
+                return Shift(id: iso, date: date, startHour: start, endHour: (start + 9) % 24,
+                             role: .dispatcher, desk: desk, leaveCode: code, isOff: false)
+            }
+            let leaveOut = ScheduleParser.resolveVacations([
+                day("2026-05-11", m: 5,  d: 11, start: 5,  desk: "22", code: "w"),   // ECB VC, printed shift
+                day("2026-12-15", m: 12, d: 15, start: 13, desk: "22", code: "V"),   // Vacation, printed shift
+                day("2026-07-26", m: 7,  d: 26, start: 5,  desk: "43", code: "V")])  // Vacation (user picked up → override)
+            check(leaveOut.first { $0.id == "2026-05-11" }?.isVacation == true,
+                  "B6-VAC-ECB: an ECB-VC day (code \"w\", printed shift) defaults OFF (leave, not proof of work)")
+            check(leaveOut.first { $0.id == "2026-07-26" }?.isVacation == true && leaveOut.first { $0.id == "2026-07-26" }?.desk == "43",
+                  "B6-VAC-ECB: a Vacation day defaults OFF too; printed desk preserved for the worked-it override")
+            check(leaveOut.allSatisfy { $0.isOff },
+                  "B6-VAC-ECB: every vacation-designated day (V or w) resolves OFF by default")
+
+            // B6-VAC-DEDUP: the real July 26-29 bug — TWO overlapping strips of the SAME window annotate
+            // DIFFERENT days. Strip A tags Jul 28-29 (L,V) and leaves 26-27 as plain working; strip B tags
+            // Jul 26-27 (L,V) and leaves 28-29 as plain working. The old dedup kept the first-seen copy and
+            // dropped the other strip's annotation → 26-27 showed WORKING. dedup must UNION leave codes so
+            // ALL FOUR resolve to vacation.
+            func sd(_ d: Int, start: Int, desk: String, code: String?, off: Bool) -> Shift {
+                let date = DateComponents(calendar: .current, year: 2026, month: 7, day: d).date ?? Date()
+                return Shift(id: "2026-07-\(String(format: "%02d", d))", date: date,
+                             startHour: off ? 0 : start, endHour: off ? 0 : (start + 9) % 24,
+                             role: off ? .off : .dispatcher, desk: off ? "" : desk, leaveCode: code, isOff: off)
+            }
+            let stripA = [sd(26, start: 5, desk: "22", code: nil, off: false),   // NOT annotated in this strip
+                          sd(27, start: 5, desk: "41", code: nil, off: false),
+                          sd(28, start: 5, desk: "41", code: "V",  off: false),  // L,V here
+                          sd(29, start: 5, desk: "74", code: "V",  off: false)]
+            let stripB = [sd(26, start: 0, desk: "",   code: "V",  off: true),   // L,V here (printed OFF)
+                          sd(27, start: 5, desk: "41", code: "V",  off: false),
+                          sd(28, start: 5, desk: "41", code: nil, off: false),   // NOT annotated in this strip
+                          sd(29, start: 5, desk: "74", code: nil, off: false)]
+            let deduped = ScheduleParser.resolveVacations(ScheduleParser.dedup(stripA + stripB))
+            check(deduped.count == 4 && deduped.allSatisfy { $0.isVacation },
+                  "B6-VAC-DEDUP: overlapping strips union leave codes → ALL of Jul 26-29 resolve to vacation OFF")
         }
 
         // MARK: Vacation auto-intent (SPEC S-PARSE-2). A day flipping to vacation auto-
@@ -338,7 +412,7 @@ enum TradeEngineTests {
             bp("pinnedOld", at: n.addingTimeInterval(-600), pinned: true),
         ])
         check(sortedPosts.first?.id == "pinnedOld", "pin: a pinned (even old) post sorts to the very top")
-        check(sortedPosts.map(\.id) == ["pinnedOld", "old", "newest"], "pin: pinned first, then unpinned OLDEST→newest (E1 thread order)")
+        check(sortedPosts.map(\.id) == ["pinnedOld", "newest", "old"], "pin: pinned first, then unpinned NEWEST→oldest (latest at top)")
 
         // MARK: Brush completeness (F1). EVERY intent must be paintable — this is the
         // exact guard against "I thought the brush already covered it". A new enum case
@@ -446,6 +520,16 @@ enum TradeEngineTests {
                                                 today: today, horizonEnd: horizon, cal: cal)
             check(n2 == 1, "A6: Must-Be-Off on k2 removes the B match → 1, got \(n2)")
         }
+
+        // MARK: B6-INTENTS — the robot/active-account gate applies ONLY in Mutual mode.
+        // Regression: gating BOTH modes on isActiveAccount zeroed the feed when no peer had claimed an
+        // account. All (mutualOnly=false) must include an unclaimed peer; Mutual (true) must exclude it.
+        check(TradeRouter.peerEligibleForIntents(isActiveAccount: false, mutualOnly: false),
+              "B6-INTENTS: unclaimed peer IS eligible in All mode")
+        check(!TradeRouter.peerEligibleForIntents(isActiveAccount: false, mutualOnly: true),
+              "B6-INTENTS: unclaimed peer is EXCLUDED in Mutual mode")
+        check(TradeRouter.peerEligibleForIntents(isActiveAccount: true, mutualOnly: true),
+              "B6-INTENTS: a claimed account is eligible in Mutual mode")
 
         // MARK: D1 — bookends is the DEFAULT/fallback openness (discharges #3). Verified by
         // code that onboarding never writes tradeOpenness and load() defaults to "bookends";
@@ -1258,7 +1342,7 @@ enum TradeEngineTests {
             check(ReplyThread.subtreeIDs(of: "a", in: flat) == ["b", "d"], "#9: subtreeIDs returns all descendants for per-comment collapse")
         }
 
-        // MARK: E1 — channel reads top-to-bottom (oldest → newest); pinned still first.
+        // MARK: E1 — channel shows newest at the top (newest → oldest); pinned still first.
         do {
             func post(_ id: String, at: TimeInterval, pinned: Bool? = nil) -> BroadcastPost {
                 BroadcastPost(id: id, authorID: "x", authorName: "x", text: "t",
@@ -1266,7 +1350,7 @@ enum TradeEngineTests {
                               pinned: pinned)
             }
             let ordered = MessagingStore.sortedForChannel([post("new", at: 300), post("old", at: 100), post("mid", at: 200)])
-            check(ordered.map(\.id) == ["old", "mid", "new"], "E1: channel posts read oldest→newest (top to bottom)")
+            check(ordered.map(\.id) == ["new", "mid", "old"], "E1: channel posts show newest→oldest (latest at the top)")
             let withPin = MessagingStore.sortedForChannel([post("old", at: 100), post("pinNew", at: 500, pinned: true)])
             check(withPin.first?.id == "pinNew", "E1: a pinned post stays first regardless of age")
         }

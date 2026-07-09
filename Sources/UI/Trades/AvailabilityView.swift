@@ -527,6 +527,7 @@ struct ECBTradesView: View {
     private let settings = SettingsManager.shared
 
     @State private var selectedIDs: Set<String> = []
+    @State private var selectedRecipients: Set<String> = []   // tap-to-select takers for the ECB send
     @State private var candidates: [PlanCandidate] = []
     @State private var isSearching = false
     @State private var hasSearched = false
@@ -624,24 +625,37 @@ struct ECBTradesView: View {
                     LazyVGrid(columns: columns, spacing: 6) {
                         ForEach(candidates) { c in
                             PlanCandidateCell(candidate: c, selectedShifts: selectedShifts,
-                                              total: selectedShifts.count, isSelected: false,
-                                              onTap: {}, onEnter: {}, showSchedule: true, showEnter: false)
+                                              total: selectedShifts.count,
+                                              isSelected: selectedRecipients.contains(c.workerID),
+                                              onTap: { toggleRecipient(c.workerID) },
+                                              onEnter: {}, showSchedule: true, showEnter: false)
                         }
                     }
                     .padding(8)
                 }
-                HStack(spacing: 10) {
-                    Button { Task { await requestAll(bookendsOnly: true) } } label: {
-                        Label("Bookends (\(bookendCandidates.count))", systemImage: "book.fill")
-                            .frame(maxWidth: .infinity)
+                VStack(spacing: 8) {
+                    HStack(spacing: 10) {
+                        Button { Task { await requestAll(bookendsOnly: true) } } label: {
+                            Label("Bookends (\(bookendCandidates.count))", systemImage: "book.fill")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered).tint(AppColor.success)
+                        .disabled(bookendCandidates.isEmpty)
+                        Button { Task { await requestAll(bookendsOnly: false) } } label: {
+                            Label("All \(candidates.count)", systemImage: "paperplane.fill")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
                     }
-                    .buttonStyle(.bordered).tint(AppColor.success)
-                    .disabled(bookendCandidates.isEmpty)
-                    Button { Task { await requestAll(bookendsOnly: false) } } label: {
-                        Label("All \(candidates.count)", systemImage: "paperplane.fill")
+                    // Tap dispatchers above to pick exactly who gets the offer, then send to just them.
+                    Button { Task { await requestSelected() } } label: {
+                        Label(selectedRecipients.isEmpty ? "Send to Selected"
+                                                          : "Send to Selected (\(selectedRecipients.count))",
+                              systemImage: "paperplane.fill")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
+                    .disabled(selectedRecipients.isEmpty)
                 }
                 .padding(10).background(.bar)
             }
@@ -660,6 +674,7 @@ struct ECBTradesView: View {
         let shifts = selectedShifts
         guard !shifts.isEmpty else { return }
         isSearching = true
+        selectedRecipients = []   // a fresh candidate list — clear any prior hand-picked takers
         let able = await TradeMatcher.candidatesForTrades(shifts: shifts, excluding: settings.username)
         await TradeProfileStore.shared.refreshOthers()
         // ECB broadcast filter (U2/U5): only offer to recipients whose OWN rules accept it —
@@ -708,12 +723,26 @@ struct ECBTradesView: View {
         }
     }
 
+    /// Toggle a taker in/out of the hand-picked recipient set (tap-to-select, no checkbox).
+    private func toggleRecipient(_ id: String) {
+        if selectedRecipients.contains(id) { selectedRecipients.remove(id) }
+        else { selectedRecipients.insert(id) }
+    }
+
     private func requestAll(bookendsOnly: Bool) async {
+        await sendECB(to: bookendsOnly ? bookendCandidates : candidates)   // #6: bookends-only or everyone
+    }
+
+    /// Send the ECB offer to exactly the hand-picked takers (tap-to-select).
+    private func requestSelected() async {
+        await sendECB(to: candidates.filter { selectedRecipients.contains($0.workerID) })
+    }
+
+    /// One ECB send path — a request per taker for only the selected days THEY can cover.
+    private func sendECB(to targets: [PlanCandidate]) async {
         let offerID = UUID().uuidString   // groups the broadcast; queue is per shift
-        let targets = bookendsOnly ? bookendCandidates : candidates   // #6: bookends-only or everyone
         var sent = 0
         for c in targets {
-            // Only the selected days THIS person can actually cover.
             let theirDays = selectedShifts.filter { c.coveredShiftIDs.contains($0.id) }.map(\.id)
             guard !theirDays.isEmpty else { continue }
             let dates = theirDays.map { prettyDay($0) }.joined(separator: ", ")
@@ -1591,6 +1620,7 @@ struct MiniScheduleGrid: View {
     var intent: (String) -> Color? = { _ in nil }              // thick bottom bar (toggle-able by caller)
     var topology: (String) -> DayTopology = { _ in .standard } // high-impact / personal-day circle
     var eventName: (String) -> String? = { _ in nil }          // popover text when a marked day is tapped
+    var fill: Bool = false               // stretch rows to fill the container's height (scale-to-fit on iPad)
 
     @State private var openEvent: String?
 
@@ -1625,9 +1655,10 @@ struct MiniScheduleGrid: View {
                         cell(dayOffset: w * 7 + c)
                     }
                 }
+                .frame(maxHeight: fill ? .infinity : nil)
             }
         }
-        .frame(maxWidth: .infinity)
+        .frame(maxWidth: .infinity, maxHeight: fill ? .infinity : nil)
         // Scale with Dynamic Type, but cap it so the fixed-size day cells don't overflow.
         .dynamicTypeSize(...DynamicTypeSize.xLarge)
     }
@@ -1665,7 +1696,7 @@ struct MiniScheduleGrid: View {
                 .foregroundStyle(working ? accent : .secondary)
                 .lineLimit(1).minimumScaleFactor(0.55)
         }
-        .frame(maxWidth: .infinity, minHeight: 50)
+        .frame(maxWidth: .infinity, minHeight: fill ? 30 : 50, maxHeight: fill ? .infinity : nil)
         .background(background(key: key, working: working))
         .overlay(alignment: .bottom) { intentBar(key: key) }
         .clipShape(RoundedRectangle(cornerRadius: 7))

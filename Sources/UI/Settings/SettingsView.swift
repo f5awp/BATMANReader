@@ -35,6 +35,20 @@ struct SettingsView: View {
         NavigationStack {
             Form {
 
+                // ── App info: installed version + last schedule sync (moved off the Home page) ───
+                Section {
+                    LabeledContent {
+                        Text("\(AppInfo.version) (\(AppInfo.build))").foregroundStyle(.secondary)
+                    } label: {
+                        Label("Version", systemImage: "info.circle")
+                    }
+                    LabeledContent {
+                        Text(Self.syncedText).foregroundStyle(.secondary)
+                    } label: {
+                        Label("Schedule synced", systemImage: "arrow.triangle.2.circlepath")
+                    }
+                }
+
                 // ── Help ─────────────────────────────────────────────
                 Section {
                     Button { showWelcome = true } label: {
@@ -516,6 +530,13 @@ struct SettingsView: View {
         let ampm = h < 12 ? "AM" : "PM"
         let twelve = h % 12 == 0 ? 12 : h % 12
         return "\(twelve) \(ampm)"
+    }
+
+    /// Last schedule sync, for the App-info section (moved here from the Home page's SyncTag).
+    private static var syncedText: String {
+        guard let date = ShiftStore.shared.lastFetchDate else { return "Not synced yet" }
+        let f = DateFormatter(); f.dateFormat = "MMM d, h:mm a"
+        return f.string(from: date)
     }
 
     /// Re-schedule the daily digest with the latest counts + current settings (on toggle/time change).

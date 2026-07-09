@@ -34,6 +34,13 @@ enum CloudPush {
                      recordType: "BroadcastPost",
                      predicate: NSPredicate(value: true),
                      alert: "New post in the trade channel")
+        // Named @mention → a stronger, personal ping (in addition to the blanket channel push above).
+        // Requires the `mentionedIDs` queryable list field to exist in the BroadcastPost schema (deploy it
+        // in the CloudKit Console before this predicate will resolve).
+        await ensure(id: "mentioned-\(myID)",
+                     recordType: "BroadcastPost",
+                     predicate: NSPredicate(format: "mentionedIDs CONTAINS %@", myID),
+                     alert: "💬 You were mentioned in the trade channel")
         // Blasted qual-swap bridges (in `candidateIDs`) are neither toID nor fromID, so
         // they need their own subscription to be pinged when a blast lands (Q3).
         await ensure(id: "qualswap-bridge-\(myID)",

@@ -19,12 +19,56 @@ final class ShiftStore {
     private(set) var lastFetchDate: Date?
     private(set) var lastDiff:      ScheduleDiff?
 
-    /// The shifts every consumer sees. For a Relief Dispatcher, days AFTER their relief
-    /// horizon are BLANK (removed) — they can't see, select, or trade them, and the placeholder
-    /// CSV AMs never surface. Non-relief users see the full list. (REL1)
+    /// Manual per-day vacation overrides, correcting the parser's home-desk heuristic:
+    ///  • `tradedBackDayIDs` — a genuine-vacation day the user says they actually WORKED (traded in).
+    ///  • `forcedVacationDayIDs` — a traded-back day the user says is actually vacation (OFF).
+    /// Both only apply to vacation-ORIGIN days (`leaveCode == "V"`). Persisted.
+    private(set) var tradedBackDayIDs: Set<String> = []
+    private(set) var forcedVacationDayIDs: Set<String> = []
+
+    /// The shifts every consumer sees. Relief horizon removes future days; then the per-day vacation
+    /// overrides flip a "V" day's worked/off state. (REL1 + manual vacation override)
     var shifts: [Shift] {
-        guard let rt = SettingsManager.shared.effectiveReliefThrough else { return rawShifts }
-        return rawShifts.filter { !TradeProfile.isPastRelief(day: $0.date, reliefThrough: rt) }
+        var out = rawShifts
+        if let rt = SettingsManager.shared.effectiveReliefThrough {
+            out = out.filter { !TradeProfile.isPastRelief(day: $0.date, reliefThrough: rt) }
+        }
+        guard !tradedBackDayIDs.isEmpty || !forcedVacationDayIDs.isEmpty else { return out }
+        return out.map { s in
+            guard s.isVacationOrigin else { return s }   // overrides only touch approved-vacation days
+            if tradedBackDayIDs.contains(s.id), s.isOff, s.startHour > 0 {   // vacation → worked (traded in)
+                return Shift(id: s.id, date: s.date, startHour: s.startHour, endHour: s.endHour,
+                             role: s.role, desk: s.desk, leaveCode: "V", isOff: false)
+            }
+            if forcedVacationDayIDs.contains(s.id), !s.isOff {              // worked → vacation OFF
+                return Shift(id: s.id, date: s.date, startHour: s.startHour, endHour: s.endHour,
+                             role: s.role, desk: s.desk, leaveCode: "V", isOff: true)
+            }
+            return s
+        }
+    }
+
+    /// Toggle a per-day vacation override (worked ⇄ off), persist it, and PUSH it to the Apple calendar
+    /// so the calendar matches (adds the shift event when marked worked, removes it when marked off).
+    func setVacationOverride(dayID: String, worked: Bool) {
+        if worked { tradedBackDayIDs.insert(dayID); forcedVacationDayIDs.remove(dayID) }
+        else       { forcedVacationDayIDs.insert(dayID); tradedBackDayIDs.remove(dayID) }
+        persistOverrides()
+        _ = EventKitManager.shared.resyncPersonalEvents(for: shifts)   // keep Apple Calendar in sync
+        WidgetData.update()
+    }
+
+    /// Clear any override on a day (revert to the parser's heuristic).
+    func clearVacationOverride(dayID: String) {
+        guard tradedBackDayIDs.remove(dayID) != nil || forcedVacationDayIDs.remove(dayID) != nil else { return }
+        persistOverrides()
+        _ = EventKitManager.shared.resyncPersonalEvents(for: shifts)
+        WidgetData.update()
+    }
+
+    private func persistOverrides() {
+        UserDefaults.standard.set(Array(tradedBackDayIDs), forKey: Keys.tradedBack)
+        UserDefaults.standard.set(Array(forcedVacationDayIDs), forKey: Keys.forcedVacation)
     }
 
     private let encoder = JSONEncoder()
@@ -33,6 +77,8 @@ final class ShiftStore {
     private enum Keys {
         static let shifts    = "batman.shifts"
         static let fetchDate = "batman.lastFetchDate"
+        static let tradedBack = "batman.vacTradedBack"
+        static let forcedVacation = "batman.vacForcedOff"
     }
 
     private init() { load() }
@@ -121,5 +167,7 @@ final class ShiftStore {
             self.rawShifts = decoded
         }
         self.lastFetchDate = UserDefaults.standard.object(forKey: Keys.fetchDate) as? Date
+        self.tradedBackDayIDs = Set(UserDefaults.standard.stringArray(forKey: Keys.tradedBack) ?? [])
+        self.forcedVacationDayIDs = Set(UserDefaults.standard.stringArray(forKey: Keys.forcedVacation) ?? [])
     }
 }

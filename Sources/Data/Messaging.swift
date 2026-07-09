@@ -47,14 +47,18 @@ struct BroadcastPost: Sendable, Codable, Identifiable, Hashable {
     var pinned: Bool? = nil       // admin-pinned to the top of its channel (B7). Optional ⇒ old records decode.
     var reactions: [Reaction]? = nil  // emoji reactions (B6). Optional ⇒ old records decode.
     var imageBase64: String? = nil    // attached photo (downscaled JPEG, base64) — rides the payload (B5).
+    var mentionedIDs: [String]? = nil // worker IDs @-mentioned in `text` — mirrored to a queryable CKRecord
+                                      // field so a per-user "you were mentioned" push subscription can fire (B4).
 
     // EXPLICIT init — freezes the construction symbol so adding new optional fields above
     // doesn't churn the memberwise-init symbol (stale-link prevention; see TradeProfile).
     init(id: String, authorID: String, authorName: String, text: String, createdAt: Date, expiresAt: Date,
-         channel: String? = nil, pinned: Bool? = nil, reactions: [Reaction]? = nil, imageBase64: String? = nil) {
+         channel: String? = nil, pinned: Bool? = nil, reactions: [Reaction]? = nil, imageBase64: String? = nil,
+         mentionedIDs: [String]? = nil) {
         self.id = id; self.authorID = authorID; self.authorName = authorName; self.text = text
         self.createdAt = createdAt; self.expiresAt = expiresAt
         self.channel = channel; self.pinned = pinned; self.reactions = reactions; self.imageBase64 = imageBase64
+        self.mentionedIDs = mentionedIDs
     }
 
     var isExpired: Bool { expiresAt < Date() }
@@ -614,11 +618,13 @@ final class MessagingStore {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty || imageBase64 != nil else { return }   // allow image-only posts
         let now = Date()
+        let mentioned = Mentions.mentionedIDs(in: trimmed).filter { $0 != myID }  // don't ping yourself
         let post = BroadcastPost(
             id: UUID().uuidString, authorID: myID, authorName: myName,
             text: trimmed, createdAt: now,
             expiresAt: Calendar.current.date(byAdding: .day, value: daysValid, to: now) ?? now,
-            channel: channel, imageBase64: imageBase64)
+            channel: channel, imageBase64: imageBase64,
+            mentionedIDs: mentioned.isEmpty ? nil : mentioned)
         await service.postBroadcast(post)
         // Optimistic: show locally now (don't wait on a server round-trip, which
         // may need queryable indexes before fetch returns).
@@ -736,7 +742,7 @@ final class MessagingStore {
     static func sortedForChannel(_ posts: [BroadcastPost]) -> [BroadcastPost] {
         posts.sorted { a, b in
             if a.isPinned != b.isPinned { return a.isPinned }   // pinned first
-            return a.createdAt < b.createdAt                     // E1: then OLDEST first (thread reads top→bottom)
+            return a.createdAt > b.createdAt                     // then NEWEST first (latest posts at the top)
         }
     }
 

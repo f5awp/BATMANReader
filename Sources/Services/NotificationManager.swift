@@ -9,6 +9,7 @@
 
 import UserNotifications
 import Foundation
+import BackgroundTasks
 
 final class NotificationManager {
 
@@ -52,7 +53,7 @@ final class NotificationManager {
             ), fireDate > now else { continue }
 
             let content         = UNMutableNotificationContent()
-            content.title       = "Shift today — \(shift.title)"
+            content.title       = "Shift today — \(shift.shiftShortLabel)"   // type + desk, e.g. "PM 32"
             content.body        = makeBody(for: shift, leadHours: leadHours)
             content.sound       = .default
             content.userInfo    = ["shiftID": shift.id, "isoDate": shift.isoDate]
@@ -101,6 +102,44 @@ final class NotificationManager {
         do { try await center.add(request) } catch { print("⚠️ Could not schedule daily digest: \(error)") }
     }
 
+    // MARK: - Live digest (BGTaskScheduler keeps the counts fresh)
+
+    static let digestRefreshTaskID = "com.batmanwatcher.digestRefresh"
+
+    /// Register the daily-digest background-refresh handler. MUST be called at launch (App.init) BEFORE
+    /// the app finishes launching. When iOS runs it, we recompute counts and re-schedule the digest so its
+    /// numbers are current at fire time (best-effort — iOS decides when to run it).
+    func registerDigestRefresh() {
+        BGTaskScheduler.shared.register(forTaskWithIdentifier: Self.digestRefreshTaskID, using: nil) { task in
+            guard let refresh = task as? BGAppRefreshTask else { task.setTaskCompleted(success: false); return }
+            let work = Task { @MainActor in
+                self.scheduleDigestRefresh()   // chain the next background run
+                await MessagingStore.shared.refresh()
+                let s = SettingsManager.shared
+                let c = DashboardCounts.from(requests: MessagingStore.shared.requests,
+                                             responses: MessagingStore.shared.responses,
+                                             unread: MessagingStore.shared.pendingIncoming.count,
+                                             pendingLedger: TradeHistoryStore.shared.pendingCount)
+                await self.scheduleDailyDigest(enabled: s.dailyDigestEnabled, hour: s.dailyDigestHour,
+                                               pending: c.pending, unread: c.unread)
+                refresh.setTaskCompleted(success: true)
+            }
+            refresh.expirationHandler = { work.cancel() }
+        }
+    }
+
+    /// Ask iOS to run a background refresh shortly before the next digest hour (opportunistic).
+    func scheduleDigestRefresh() {
+        let req = BGAppRefreshTaskRequest(identifier: Self.digestRefreshTaskID)
+        let hour = SettingsManager.shared.dailyDigestHour
+        var comps = DateComponents(); comps.hour = max(0, min(23, hour)); comps.minute = 0
+        // Next occurrence of the digest hour, minus an hour, so counts are fresh when it fires.
+        if let next = Calendar.current.nextDate(after: Date(), matching: comps, matchingPolicy: .nextTime) {
+            req.earliestBeginDate = next.addingTimeInterval(-3600)
+        }
+        try? BGTaskScheduler.shared.submit(req)
+    }
+
     /// PURE, testable: the digest sentence for the given counts.
     static func digestBody(pending: Int, unread: Int) -> String {
         func plural(_ n: Int, _ noun: String) -> String { "\(n) \(noun)\(n == 1 ? "" : "s")" }
@@ -124,11 +163,13 @@ final class NotificationManager {
     // MARK: - Helpers
 
     private func makeBody(for shift: Shift, leadHours: Int) -> String {
-        var lines = ["\(shift.startTimeString)–\(shift.endTimeString)"]
-        if let lc = shift.leaveCode, !lc.isEmpty {
-            lines.append("Leave: \(lc)")
-        }
-        lines.append("Starting in \(leadHours)h.")
-        return lines.joined(separator: " · ")
+        // Colon-separated times ("13:00–22:00") so iOS doesn't mistake the bare digit run "1300–2200"
+        // for a phone number ("1 (300) 220-0"). Also spell out the desk so the alert is self-explanatory.
+        func hhmm(_ h: Int) -> String { String(format: "%02d:00", h) }
+        var parts = ["\(hhmm(shift.startHour))–\(hhmm(shift.endHour))"]
+        if !shift.desk.isEmpty { parts.append("Desk \(shift.desk)") }
+        if let lc = shift.leaveCode, !lc.isEmpty { parts.append("Leave: \(lc)") }
+        parts.append("starts in \(leadHours)h")
+        return parts.joined(separator: " · ")
     }
 }

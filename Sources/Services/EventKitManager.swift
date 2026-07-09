@@ -100,11 +100,27 @@ final class EventKitManager {
     // MARK: - Personal calendar
 
     private func personalCalendar() -> EKCalendar? {
+        // 1) Reuse by the saved identifier when it still resolves.
         if let id = savedPersonalCalendarID,
            let cal = ekStore.calendar(withIdentifier: id) {
             return cal
         }
 
+        // 2) The saved ID went stale (reinstall / iCloud re-sync / identifier rotation) — but an
+        //    "AA Schedule" calendar probably already exists. ADOPT it instead of creating a duplicate,
+        //    and DELETE any extra copies so the user only ever keeps ONE dispatch schedule calendar.
+        let existing = ekStore.calendars(for: .event).filter { $0.title == personalCalendarName }
+        if let keep = existing.first(where: { $0.allowsContentModifications }) ?? existing.first {
+            for dupe in existing
+            where dupe.calendarIdentifier != keep.calendarIdentifier && dupe.allowsContentModifications {
+                try? ekStore.removeCalendar(dupe, commit: true)   // collapse legacy duplicates into `keep`
+            }
+            savedPersonalCalendarID = keep.calendarIdentifier
+            refreshAvailableCalendars()
+            return keep
+        }
+
+        // 3) None exists → create the single one.
         let cal = EKCalendar(for: .event, eventStore: ekStore)
         cal.title = "AA Schedule"
         guard let source = preferredSource() else { return nil }

@@ -9,6 +9,8 @@ import SwiftData
 struct BATMANReaderApp: App {
 
     init() {
+        // MUST register the background-refresh handler before launch completes (live daily digest).
+        NotificationManager.shared.registerDigestRefresh()
         Task { @MainActor in
             // Both requests run concurrently — iOS shows one dialog at a time.
             async let notif    = NotificationManager.shared.requestPermission()

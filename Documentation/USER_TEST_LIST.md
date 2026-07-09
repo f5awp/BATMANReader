@@ -631,6 +631,17 @@
    them. Deselecting a day and switching tabs no longer resurrects it.
    - **Was the bug:** returning to Trade Solutions restored the old cached selection over your changes.
 
+### Build 6 batch  [Auto ✅ core; device-check]
+- **B6-INTENTS** — Trades → Intents → toggle **All / Mutual**. All lists peers even before anyone claims
+  an account; Mutual shows real accounts only. (Was: both empty.)
+- **B6-VAC** — a December genuine-vacation block reads **OFF** (vacation); a traded-in day reads working.
+  If it still shows working after this build, **re-sync/re-import once** (old cached shifts predate the fix).
+- **B6-HOME** — tap a day in the normal Home view → a **Day Detail** sheet opens (shift summary + the
+  **Vacation Traded In** toggle). Toggling flips the day working↔off and updates Apple Calendar.
+- **B6-CARD** — Trade Solutions cards show **one line per person** (`Name — dates`), no repeated Gives/Gets.
+- **B6-ECB** — ECB: **tap candidates** to select, then **Send to Selected (N)** sends to just those.
+- **B6-STATS** — a slim **You · PAFCA · period** strip sits above the Home/Trades tab bar; tap → pick period.
+
 ### Notes for the tester
 - If something here fails, tell me the item number (e.g. "T5 ⚠️") and what you saw.
 - "Auto ✅" means the logic is unit-guarded, but **your device check is still the real proof** — the

@@ -67,6 +67,9 @@ struct ContentView: View {
                     .tabItem { Label("Trades", systemImage: "arrow.left.arrow.right") }
                     .tag(1)
             }
+            // Stats strip sits at the VERY bottom — BELOW the Home/Trades tab bar, centered — so it never
+            // covers in-tab controls like the ECB "Send to Selected" button (B6-STATS).
+            TradeStatsBar()
         }
         // Developer mode: a thick red border so it's obvious you have moderation powers.
         .overlay {
@@ -142,10 +145,17 @@ struct ContentView: View {
             await NotificationManager.shared.scheduleDailyDigest(
                 enabled: settings.dailyDigestEnabled, hour: settings.dailyDigestHour,
                 pending: c.pending, unread: c.unread)
+            NotificationManager.shared.scheduleDigestRefresh()   // live digest: refresh counts in the background
             // Z2: show "What's New" on EVERY launch (per user request) — but not over onboarding.
             // (Was once-per-build via ChangeLog.shouldShow; intentionally every restart now.)
             if !settings.username.trimmingCharacters(in: .whitespaces).isEmpty {
                 showChangelog = true
+                // Populate the Intents tab badge (mutual-match count) in the background — fire-and-forget
+                // so it never delays launch. Cheap fast pass; the engine yields cooperatively.
+                Task {
+                    let matches = await TradeRouter.intentSolutions(excluding: settings.username, mutualOnly: true)
+                    TradeFeedCache.shared.intentMatchCount = matches.count
+                }
             }
         }
     }
@@ -195,6 +205,55 @@ struct AppTopBar: View {
         .padding(.horizontal, 14).padding(.vertical, 8)
         .background(.bar)
         .overlay(alignment: .bottom) { Divider() }
+    }
+}
+
+// MARK: - Trade stats bar (B6-STATS)
+
+/// Slim, full-width successful-trade stats pinned just above the tab bar (relocated from the Home header
+/// so it doesn't crowd the calendar). Tap to pick the period (month / year / all time). "Successful" =
+/// accepted + archived; totals are YOU + the whole company (PAFCA), same source as the old header.
+struct TradeStatsBar: View {
+    private var metrics = MetricsStore.shared
+    private var dev = DevAccess.shared
+    @State private var period: MetricPeriod = .month
+
+    private var myID: String { SettingsManager.shared.username }
+    private var mine: Int { Metrics.count(metrics.globalEvents, kind: .trade, period: period, now: Date(), workerID: myID) }
+    private var company: Int { Metrics.count(metrics.globalEvents, kind: .trade, period: period, now: Date()) }
+
+    var body: some View {
+        Menu {
+            Picker("Period", selection: $period) {
+                ForEach(MetricPeriod.allCases) { Text($0.label).tag($0) }
+            }
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "checkmark.seal.fill").foregroundStyle(AppColor.success)
+                countPair(mine, "you")
+                Text("·").foregroundStyle(.tertiary)
+                countPair(company, "PAFCA")
+                Text("· \(period.label)").foregroundStyle(.secondary)
+                Image(systemName: "chevron.up.chevron.down").font(.system(size: 9, weight: .bold)).foregroundStyle(.tertiary)
+            }
+            .font(.caption)
+            .lineLimit(1)
+            .padding(.horizontal, 16).padding(.vertical, 6)
+            .frame(maxWidth: .infinity)   // centered content, full-width strip
+            .background(.bar)
+            .overlay(alignment: .top) { Divider() }
+        }
+        .buttonStyle(.plain)
+        .onLongPressGesture { if dev.unlocked { TradeHistoryStore.shared.resetMetrics() } }   // admin reset
+        .accessibilityLabel("Successful trades: \(mine) you, \(company) PAFCA, \(period.label)")
+        .task { await metrics.refresh() }
+    }
+
+    private func countPair(_ n: Int, _ label: String) -> some View {
+        HStack(spacing: 3) {
+            Text("\(n)").fontWeight(.bold).monospacedDigit()
+            Text(label).foregroundStyle(.secondary)
+        }
     }
 }
 

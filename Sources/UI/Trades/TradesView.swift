@@ -10,6 +10,7 @@ struct TradesView: View {
 
     private var messaging = MessagingStore.shared
     private var intents   = DayIntentStore.shared
+    private var feedCache = TradeFeedCache.shared
 
     @State private var segment = 1   // default to Trade Search (middle). S-UIUX U-TRADES-1
     @State private var whatIf = false
@@ -19,10 +20,13 @@ struct TradesView: View {
         NavigationStack {
             VStack(spacing: 0) {
                 // The trade-status counters now live in the shared top bar (AppTopBar) on every tab.
-                TradesSegmentBar(segment: $segment, intentCount: intents.tradeIntentCount)
-                    .padding(.horizontal).padding(.bottom, 8)
+                // Badge = number of MUTUAL intent matches (not your raw intent count).
+                TradesSegmentBar(segment: $segment, intentCount: feedCache.intentMatchCount)
+                    .padding(.horizontal).padding(.top, 6).padding(.bottom, 8)   // cushion below the top bar
 
-                IntentTallyBar()   // color-coded per-intent counts (D2a)
+                if segment == 0 {
+                    IntentTallyBar(centered: true)   // color-coded per-intent counts — Intents tab only (D2a)
+                }
 
                 Divider()
 
@@ -89,7 +93,11 @@ struct TradesSegmentBar: View {
 /// A thin row of color-coded count chips — one per active intent category — so you can
 /// see your marked intents at a glance. Counts come from `DayIntentStore` (pure).
 struct IntentTallyBar: View {
+    var centered: Bool = false
     private var intents = DayIntentStore.shared
+
+    init(centered: Bool = false) { self.centered = centered }
+
     var body: some View {
         let wc = intents.workingIntentCounts
         let oc = intents.offIntentCounts
@@ -107,8 +115,9 @@ struct IntentTallyBar: View {
                         Text(it.label).font(.caption2).foregroundStyle(.secondary)
                     }
                 }
-                Spacer()
+                if !centered { Spacer() }   // left-aligned by default; centered when requested
             }
+            .frame(maxWidth: .infinity, alignment: centered ? .center : .leading)
             .padding(.horizontal).padding(.bottom, 4)
         }
     }

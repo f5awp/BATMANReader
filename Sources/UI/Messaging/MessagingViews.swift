@@ -98,6 +98,19 @@ enum Mentions {
         return found
     }
 
+    /// Resolve the @-mentions in `text` to the worker IDs of the active dispatchers named. "@everyone" is
+    /// ignored here — every dispatcher already gets the blanket "new channel post" push, so a per-user
+    /// mention push is only needed for specifically-named people. Pure (reads the published-profile roster).
+    static func mentionedIDs(in text: String) -> [String] {
+        let hits = mentioned(in: text, names: channelNames())
+        guard !hits.isEmpty else { return [] }
+        var ids: Set<String> = []
+        for id in TradeProfileStore.shared.others.keys where hits.contains(participantName(id)) {
+            ids.insert(id)
+        }
+        return Array(ids)
+    }
+
     /// Color every "@name" run in `attr` with the accent, longest names first so a full name isn't
     /// clipped by a shorter partial match.
     static func highlight(_ attr: inout AttributedString, names: [String]) {
@@ -505,22 +518,23 @@ struct ThreadView: View {
                         StatusBadge(status: status)
                     }
                     Divider()
+                    // B6-CARD: same compact "● Name — dates" lines as the feed card (each person's GIVE days).
                     if let chain = request.chain, !chain.isEmpty {
-                        HandoffChain(chain: chain)
+                        TradeParticipantLines(rows: TradeParticipantLines.rows(chain: chain, myID: myID),
+                                              orderedPeers: chain.map(\.fromID))
                     } else {
-                        // Each party in their color, border = trades away, fill = takes.
-                        let fromColor = request.fromID == myID ? BrickPalette.mineScheme : BrickPalette.peerScheme
-                        let toColor   = request.toID == myID ? BrickPalette.mineScheme : BrickPalette.peerScheme
-                        let fromLabel = request.fromID == myID ? "You" : request.fromName
-                        let toLabel   = request.toID == myID ? "You" : request.toName
-                        TraderChips(name: fromLabel, color: fromColor,
-                                    giveDays: request.giveDayIDs, getDays: request.takeDayIDs,
-                                    id: request.fromID == myID ? nil : request.fromID)
-                        if !(request.takeDayIDs.isEmpty && request.giveDayIDs.isEmpty) {
-                            TraderChips(name: toLabel, color: toColor,
-                                        giveDays: request.takeDayIDs, getDays: request.giveDayIDs,
-                                        id: request.toID == myID ? nil : request.toID)
-                        }
+                        let rows: [(id: String, name: String, isMe: Bool, days: [String])] = {
+                            var r: [(id: String, name: String, isMe: Bool, days: [String])] = [
+                                (id: request.fromID, name: request.fromID == myID ? "You" : request.fromName,
+                                 isMe: request.fromID == myID, days: request.giveDayIDs)
+                            ]
+                            if !(request.takeDayIDs.isEmpty && request.giveDayIDs.isEmpty) {
+                                r.append((id: request.toID, name: request.toID == myID ? "You" : request.toName,
+                                          isMe: request.toID == myID, days: request.takeDayIDs))
+                            }
+                            return r
+                        }()
+                        TradeParticipantLines(rows: rows, orderedPeers: [request.fromID, request.toID])
                     }
                     if request.isECB, let ecb = request.ecbAmount {
                         Label("\(ecbText(ecb)) ECB offered", systemImage: "star.circle.fill")
@@ -889,7 +903,6 @@ struct ChannelView: View {
     @State private var expanded: Set<String> = []
     @State private var collapsedReplies: Set<String> = []   // #9: per-comment subtree collapse
     @State private var replyingTo: String? = nil            // #9: reply ID an inline composer targets
-    @State private var respondedNote: String?
     @State private var editingPost: BroadcastPost?
     @State private var editingReply: BroadcastReply?
     @State private var editReplyDraft = ""
@@ -932,8 +945,12 @@ struct ChannelView: View {
                     Text("# trades").tag("trades")
                     Text("# feedback").tag("feedback")
                 }
-                .pickerStyle(.segmented).padding(.horizontal).padding(.vertical, 6)
-                ChannelHeader(name: channel, subtitle: channelMeta.subtitle)
+                .pickerStyle(.segmented).padding(.horizontal).padding(.top, 6)
+                // Slim one-line description (the "# name" is already in the picker above — no redundant header).
+                Text(channelMeta.subtitle)
+                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16).padding(.top, 3).padding(.bottom, 7)
                     .onAppear { store.markBroadcastsSeen() }   // clears the unread badge (A2)
                 Divider()
                 if posts.isEmpty {
@@ -996,9 +1013,6 @@ struct ChannelView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
             .task { await store.refresh(); await TradeProfileStore.shared.refreshOthers() }   // E2: load peers so statuses render
-            .alert("Sent", isPresented: Binding(get: { respondedNote != nil }, set: { if !$0 { respondedNote = nil } })) {
-                Button("OK", role: .cancel) {}
-            } message: { Text(respondedNote ?? "") }
             .sheet(item: $editingPost) { post in EditPostSheet(post: post) }
             .alert("Edit reply", isPresented: Binding(get: { editingReply != nil }, set: { if !$0 { editingReply = nil } })) {
                 TextField("Reply", text: $editReplyDraft)
@@ -1209,20 +1223,10 @@ struct ChannelView: View {
     }
 
     private func actionRow(_ post: BroadcastPost) -> some View {
+        // The old "Send trade request" shortcut was removed — it fired an EMPTY request (no days) at the
+        // poster, which was vague and duplicated the real trade flow. Reply in-thread or propose a real
+        // trade from Trades instead.
         HStack(spacing: 14) {
-            if !store.isMine(post) {
-                Button {
-                    Task {
-                        await store.sendRequest(
-                            to: post.authorID, toName: post.authorName,
-                            note: "Re: your channel post — “\(post.text)”. I'm interested.",
-                            take: [], give: [])
-                        WidgetData.update()
-                        respondedNote = "Trade request sent to \(post.authorName). Track it in your Inbox."
-                    }
-                } label: { Label("Send trade request", systemImage: "arrowshape.turn.up.left.fill").font(.caption) }
-                    .buttonStyle(.borderless)
-            }
             Spacer()
             Text("Expires \(post.expiresAt, style: .relative)")
                 .font(.caption2).foregroundStyle(.tertiary)

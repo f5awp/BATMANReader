@@ -19,7 +19,8 @@ final class TradeFeedCache {
     struct Snapshot {
         var signature: Int
         var selectedIDs: Set<String> = []
-        var packages: [TradePackage] = []
+        var packages: [TradePackage] = []            // ALL-mode results (superset)
+        var mutualPackages: [TradePackage] = []      // Mutual-mode subset (both cached so the toggle is instant)
         var candidates: [PlanCandidate] = []
         var rosterPeople: [(id: String, name: String)] = []
         var hasSearched: Bool = false
@@ -27,6 +28,10 @@ final class TradeFeedCache {
     private var snaps: [String: Snapshot] = [:]
     func snapshot(_ key: String) -> Snapshot? { snaps[key] }
     func save(_ key: String, _ snap: Snapshot) { snaps[key] = snap }
+
+    /// Number of MUTUAL intent matches — drives the Intents tab badge. Set by the feed's mutual-mode
+    /// searches and the launch background pass; read live by the segment bar (this class is @Observable).
+    var intentMatchCount: Int = 0
 
     /// Full distinct roster (minus self), names resolved — loaded ONCE per session for the
     /// "Look up a dispatcher" dropdown (moved from the former Just 2 tab) so it isn't re-fetched
@@ -51,7 +56,8 @@ struct TradeByIntentsFeed: View {
 
     @Binding var whatIf: Bool
 
-    @State private var packages: [TradePackage] = []   // unfiltered search results
+    @State private var packages: [TradePackage] = []        // ALL-mode results (superset)
+    @State private var mutualPackages: [TradePackage] = []  // Mutual subset — both computed once per search
     @State private var loading = true
     @State private var execRoute: NWayRoute?
     @State private var sentMessage: String?
@@ -62,14 +68,20 @@ struct TradeByIntentsFeed: View {
     @State private var showFilter = false
     @State private var rosterPeople: [(id: String, name: String)] = []
     @State private var searchTask: Task<Void, Never>?   // A1: cancellable Lucky search
+    @State private var mutualOnly = true   // Mutual (both sides marked) vs All (also one-sided, active peers)
 
+    /// The result set for the current toggle — Mutual (subset) or All (superset). Both are computed in one
+    /// search and cached, so flipping the toggle is an instant state change (no engine re-run).
+    private var activePackages: [TradePackage] { mutualOnly ? mutualPackages : packages }
     /// A1/A2: filtered + capped (best-first via rankPackages order) view of the results.
-    private var displayed: [TradePackage] { Array(searchFilter.filter(packages).prefix(100)) }
+    private var displayed: [TradePackage] { Array(searchFilter.filter(activePackages).prefix(100)) }
 
-    /// The Lucky button label reflects the active one-time criteria (or the default name).
+    /// The deeper-search button label reflects the active one-time criteria (or the default name).
+    /// "More: 3+ & loops" = the on-demand heavy search for 3+person / circular options (the normal feed
+    /// stays fast at two-person swaps).
     private var luckyTitle: String {
         searchFilter.summary(nameFor: { id in rosterPeople.first { $0.id == id }?.name ?? id })
-            .map { "Lucky: \($0)" } ?? "I'm Feeling Lucky"
+            .map { "More: \($0)" } ?? "More: 3+ & loops"
     }
 
     var body: some View {
@@ -77,6 +89,15 @@ struct TradeByIntentsFeed: View {
             VStack(alignment: .leading, spacing: 12) {
                 if !loading {
                     luckyBar
+                    // Mutual = both sides marked (true intent matches). All = also one-sided deals where
+                    // an ACTIVE peer could take days you marked. Robots/inactives are excluded in both.
+                    Picker("Match type", selection: $mutualOnly) {
+                        Text("Mutual").tag(true)
+                        Text("All").tag(false)
+                    }
+                    .pickerStyle(.segmented)
+                    .padding(.horizontal).padding(.top, 4)
+                    // No re-run on toggle: both Mutual + All were computed in one search (instant flip).
                     // Trade size (Max people) is a Lucky-time option — only shown once Lucky is engaged.
                     if searchFilter.isActive {
                         MaxPeoplePicker().padding(.horizontal).padding(.top, 4)
@@ -95,8 +116,10 @@ struct TradeByIntentsFeed: View {
                 } else if displayed.isEmpty {
                     ContentUnavailableView("No Intent Matches",
                         systemImage: "sparkles",
-                        description: Text(packages.isEmpty
-                            ? "Mark days to trade away on Home — and as others mark theirs, mutual-intent matches appear here. Try I'm Feeling Lucky for 3+ person and circular options."
+                        description: Text(activePackages.isEmpty
+                            ? (mutualOnly
+                               ? "No two-sided intent matches yet — mark days to trade away on Home, and as others mark theirs, matches appear here. Switch to All to see active people who could take the days you marked."
+                               : "Mark days to trade away on Home. Tap “More: 3+ & loops” for 3+ person and circular options.")
                             : "No matches fit your current filter — tap the filter to widen it."))
                         .padding(.top, 20)
                 } else {
@@ -151,7 +174,8 @@ struct TradeByIntentsFeed: View {
             // CANCELLABLE fast search (so the spinner shows a working Cancel and the engine yields).
             if let snap = TradeFeedCache.shared.snapshot(Self.cacheKey),
                snap.signature == TradeFeedCache.signature(whatIf: whatIf) {
-                packages = snap.packages; rosterPeople = snap.rosterPeople; loading = false
+                packages = snap.packages; mutualPackages = snap.mutualPackages
+                rosterPeople = snap.rosterPeople; loading = false
             } else {
                 runSearch { await reloadFast() }
             }
@@ -227,11 +251,12 @@ struct TradeByIntentsFeed: View {
         // Step 4: normal feed searches up to the user's N-max toggle (default 3) — the floor +
         // N-penalty keep small trades on top. (Reverses the old 2-way-only U-PERF gate.)
         await reload(generation: SearchFilter(engine: .both, maxPeople: SettingsManager.shared.normalMaxPeople))
-        // U-PERF: cache the fast results so a tab switch restores them without re-running the engine.
+        // U-PERF: cache BOTH result sets so a tab switch OR a Mutual/All toggle restores them without
+        // re-running the engine.
         if Task.isCancelled { return }
         TradeFeedCache.shared.save(Self.cacheKey, .init(
             signature: TradeFeedCache.signature(whatIf: whatIf),
-            packages: packages, rosterPeople: rosterPeople, hasSearched: true))
+            packages: packages, mutualPackages: mutualPackages, rosterPeople: rosterPeople, hasSearched: true))
     }
 
     private static let cacheKey = "intents"
@@ -242,11 +267,19 @@ struct TradeByIntentsFeed: View {
         loading = true
         await TradeProfileStore.shared.refreshOthers()
         let myID = SettingsManager.shared.username
-        // Intents uses its OWN engine — a marketplace of intent-for-intent deals involving you,
-        // scored by the real packageLogProb (narrow floor normal / wide Lucky).
-        let result = await TradeRouter.intentSolutions(excluding: myID, generation: generation, lucky: lucky)
+        // Intents uses its OWN engine — a marketplace of intent-for-intent deals involving you, scored by
+        // the real packageLogProb. Compute BOTH modes in ONE search: All (superset, every peer) and Mutual
+        // (both-sides-marked, active accounts). The toggle then just picks which cached set to show.
+        let allResult = await TradeRouter.intentSolutions(excluding: myID, generation: generation,
+                                                          lucky: lucky, mutualOnly: false)
         if Task.isCancelled { return }   // A1: superseded by a newer search — don't clobber its state
-        packages = result
+        let mutualResult = await TradeRouter.intentSolutions(excluding: myID, generation: generation,
+                                                            lucky: lucky, mutualOnly: true)
+        if Task.isCancelled { return }
+        packages = allResult
+        mutualPackages = mutualResult
+        // The Intents badge = number of MUTUAL matches.
+        TradeFeedCache.shared.intentMatchCount = mutualResult.count
         // A2: people for the Connection dropdown — union of the roster, published peers, and anyone
         // already in a result — names resolved (G2a) — so it's never blank with a thin roster.
         let now = Date()
@@ -362,7 +395,7 @@ struct MasterFilterSheet: View {
                     Text("Generate runs the heavy 3+ person and circular (N-Way) search once. The normal feed stays fast with two-person trades only.")
                 }
             }
-            .navigationTitle("I'm Feeling Lucky")
+            .navigationTitle("More: 3+ & loops")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
         }
@@ -672,6 +705,48 @@ struct TraderWeekStrip: View {
     }
 }
 
+/// Reusable compact participant summary: one "● Name — Jul 16, Jul 22, Jul 29" line per person (the days
+/// they GIVE; the swap/loop conveys who receives them). Shared by the feed's `PackageCard` AND the inbox
+/// trade card so both read identically (B6-CARD).
+struct TradeParticipantLines: View {
+    let rows: [(id: String, name: String, isMe: Bool, days: [String])]
+    let orderedPeers: [String]
+
+    private var myID: String { SettingsManager.shared.username }
+    private func color(_ id: String, _ isMe: Bool) -> Color {
+        isMe ? BrickPalette.mineScheme
+             : TradeColors.color(forParticipant: id, myID: myID, orderedPeers: orderedPeers)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            ForEach(rows, id: \.id) { r in
+                HStack(spacing: 8) {
+                    Circle().fill(color(r.id, r.isMe)).frame(width: 9, height: 9)
+                    Text(r.name).font(.subheadline.weight(.semibold)).foregroundStyle(color(r.id, r.isMe)).lineLimit(1)
+                    Text(r.days.isEmpty ? "—" : r.days.map(SwapChips.chipDay).joined(separator: ", "))
+                        .font(.subheadline).foregroundStyle(.secondary)
+                        .lineLimit(2).minimumScaleFactor(0.85)
+                    Spacer(minLength: 0)
+                }
+            }
+        }
+    }
+
+    /// Rows for a directed chain (each participant gives the days on the legs they originate, loop order).
+    static func rows(chain legs: [TradeLeg], myID: String) -> [(id: String, name: String, isMe: Bool, days: [String])] {
+        var gives: [String: [String]] = [:]; var order: [String] = []
+        for leg in legs {
+            if gives[leg.fromID] == nil { order.append(leg.fromID) }
+            gives[leg.fromID, default: []].append(leg.dayID)
+        }
+        return order.map { id in
+            let name = legs.first { $0.fromID == id }?.fromName ?? participantName(id)
+            return (id: id, name: id == myID ? "You" : name, isMe: id == myID, days: gives[id] ?? [])
+        }
+    }
+}
+
 struct PackageCard: View {
     let package: TradePackage
     let onPropose: () -> Void
@@ -740,23 +815,10 @@ struct PackageCard: View {
 
             Divider()
 
-            if isCircular, let route = package.route {
-                // Circular loop: show the directed handoffs, not reciprocal pairs.
-                HandoffChain(legs: route.legs)
-            } else {
-                // Reciprocal: each pairing in its traders' colors (border = trades
-                // away, fill = takes) — the same colors as the calendars.
-                ForEach(Array(package.assignments.enumerated()), id: \.element.id) { idx, a in
-                    VStack(alignment: .leading, spacing: 8) {
-                        TraderChips(name: "You", color: BrickPalette.mineScheme,
-                                    giveDays: a.giveDayIDs, getDays: a.takeDayIDs)
-                        TraderChips(name: a.name, color: TradeColors.color(forParticipant: a.workerID, myID: SettingsManager.shared.username, orderedPeers: package.assignments.map(\.workerID)),
-                                    giveDays: a.takeDayIDs, getDays: a.giveDayIDs, id: a.workerID)   // D1/F1: stable per-worker color
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    if idx < package.assignments.count - 1 { Divider() }
-                }
-            }
+            // B6-CARD: one compact line per participant — "● Name — Jul 16, Jul 22, Jul 29" (the days that
+            // person GIVES; whoever's next in the swap/loop receives them). Replaces the tall dual
+            // Gives/Gets rows, which repeated every day twice. Same component as the inbox trade card.
+            TradeParticipantLines(rows: participantRows, orderedPeers: package.assignments.map(\.workerID))
 
             Divider()
 
@@ -792,6 +854,31 @@ struct PackageCard: View {
             .padding(.horizontal, DS.s).padding(.vertical, 3)
             .background(color.opacity(DS.pillFill), in: Capsule())
             .foregroundStyle(color)
+    }
+
+    private var myID: String { SettingsManager.shared.username }
+
+    /// One row per participant with the days they GIVE. Reciprocal: You give your give-days, each peer
+    /// gives their take-days (= what you get). Circular: each participant gives the days on the legs they
+    /// originate, in loop order.
+    private var participantRows: [(id: String, name: String, isMe: Bool, days: [String])] {
+        if isCircular, let route = package.route {
+            var gives: [String: [String]] = [:]; var order: [String] = []
+            for leg in route.legs {
+                if gives[leg.fromID] == nil { order.append(leg.fromID) }
+                gives[leg.fromID, default: []].append(leg.dayID)
+            }
+            return order.map { id in
+                (id: id, name: id == myID ? "You" : participantName(id), isMe: id == myID, days: gives[id] ?? [])
+            }
+        }
+        var rows: [(id: String, name: String, isMe: Bool, days: [String])] = []
+        let myGives = package.assignments.flatMap(\.giveDayIDs)
+        if !myGives.isEmpty { rows.append((id: "__me", name: "You", isMe: true, days: myGives)) }
+        for a in package.assignments {
+            rows.append((id: a.workerID, name: a.name, isMe: false, days: a.takeDayIDs))
+        }
+        return rows
     }
 }
 
@@ -868,7 +955,7 @@ struct PackageDetailView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 12) {
-                stepsList
+                chipIndex
 
                 HStack {
                     Button { if monthIndex > 0 { monthIndex -= 1 } } label: { Image(systemName: "chevron.left").font(.headline) }
@@ -911,53 +998,83 @@ struct PackageDetailView: View {
         }
     }
 
-    /// Your traded dates, used as the sheet title (e.g. "Jul 4 ⇄ Jul 11").
+    /// Sheet title: a descriptor + counts (dates live in the chips + calendars, not repeated here).
     private var dateTitle: String {
-        let g = gives(myID).sorted().map { SwapChips.chipDay($0) }
-        let t = gets(myID).sorted().map { SwapChips.chipDay($0) }
-        if g.isEmpty && t.isEmpty { return tradeTypeLabel(distinctPeople: Set(participants).count) }
-        return g.joined(separator: ", ") + "  ⇄  " + t.joined(separator: ", ")
+        let g = gives(myID).count, t = gets(myID).count
+        if isCircular { return "\(Set(participants).count)-person loop" }
+        if g == 0 && t == 0 { return tradeTypeLabel(distinctPeople: Set(participants).count) }
+        return "Swap · give \(g), get \(t)"
     }
 
-    /// Tappable handoff steps — tap one to jump the calendars to those two people
-    /// and that date. Works for any size (the top calendar isn't always yours).
-    private var stepsList: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            ForEach(Array(steps.enumerated()), id: \.element.id) { i, s in
-                Button { withAnimation(.snappy) { select(i) } } label: { stepRow(i, s) }
-                    .buttonStyle(.plain)
+    /// Compact, fixed-height horizontal index that REPLACES the old growing vertical list — so the
+    /// calendars below stay the hero at any trade size. Reciprocal trades show two rows (You give / You
+    /// get); circular loops show the loop path in order. Tapping a chip focuses that leg on the calendars.
+    private var chipIndex: some View {
+        let all = Array(steps.enumerated())
+        return VStack(alignment: .leading, spacing: 6) {
+            if isCircular {
+                chipRow("Loop", all)
+            } else {
+                chipRow("You give", all.filter { $0.element.fromID == myID })
+                chipRow("You get",  all.filter { $0.element.toID == myID })
             }
         }
         .padding(.horizontal)
     }
 
-    private func stepRow(_ i: Int, _ s: Step) -> some View {
-        let on = i == selectedStep
-        return HStack(spacing: 6) {
-            Text(name(s.fromID)).foregroundStyle(colorFor(s.fromID)).font(.caption.weight(.semibold)).lineLimit(1)
-            Image(systemName: "arrow.right").font(.caption2).foregroundStyle(.secondary)
-            Text(name(s.toID)).foregroundStyle(colorFor(s.toID)).font(.caption.weight(.semibold)).lineLimit(1)
-            Spacer(minLength: 6)
-            Text(SwapChips.chipDay(s.dayID) + (s.desk.map { " · \($0)" } ?? ""))
-                .font(.dsChip).foregroundStyle(AppColor.special)
+    private func chipRow(_ label: String, _ items: [(offset: Int, element: Step)]) -> some View {
+        HStack(alignment: .center, spacing: 8) {
+            Text("\(label) \(items.count)")
+                .font(.dsLabel).foregroundStyle(.secondary)
+                .frame(width: 62, alignment: .leading)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(items, id: \.element.id) { i, s in
+                        Button { withAnimation(.snappy) { select(i) } } label: { chip(i, s) }
+                            .buttonStyle(.plain)
+                    }
+                    if items.isEmpty { Text("—").font(.caption).foregroundStyle(.tertiary) }
+                }
+            }
         }
-        .padding(.vertical, 6).padding(.horizontal, 10)
-        .background(on ? AppColor.special.opacity(0.12) : Color(.secondarySystemBackground),
-                    in: RoundedRectangle(cornerRadius: DS.rowRadius))
-        .overlay(RoundedRectangle(cornerRadius: DS.rowRadius).stroke(on ? AppColor.special : .clear, lineWidth: 1.5))
     }
 
-    /// The two people in the selected step, stacked (giver above, receiver below),
-    /// each in their own color with the step's day focused.
+    /// One day chip, colored by the OTHER party (loop: the giver). Selected chip is outlined.
+    private func chip(_ i: Int, _ s: Step) -> some View {
+        let on = i == selectedStep
+        let other = isCircular ? s.fromID : (s.fromID == myID ? s.toID : s.fromID)
+        let c = colorFor(other)
+        return HStack(spacing: 5) {
+            Circle().fill(c).frame(width: 7, height: 7)
+            Text(SwapChips.chipDay(s.dayID)).font(.dsChip)
+            if isCircular {   // loop needs "who→who" since a hop may not involve you
+                Text("\(shortFirst(s.fromID))→\(shortFirst(s.toID))").font(.caption2).foregroundStyle(.secondary)
+            }
+        }
+        .padding(.vertical, 6).padding(.horizontal, 10)
+        .background(on ? c.opacity(0.18) : Color(.tertiarySystemFill),
+                    in: RoundedRectangle(cornerRadius: DS.controlRadius, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: DS.controlRadius).stroke(on ? c : .clear, lineWidth: 1.5))
+    }
+
+    private func shortFirst(_ id: String) -> String {
+        if id == myID { return "You" }
+        let n = participantName(id)
+        return n.split(whereSeparator: { $0 == "," || $0 == " " }).first.map(String.init) ?? n
+    }
+
+    /// The selected leg's two calendars — YOU pinned on top whenever the leg involves you (stable, no
+    /// give/get flip); a loop hop between two OTHER people shows that hop's giver→receiver.
     @ViewBuilder private func stepCalendars(for off: Int) -> some View {
-        ScrollView {
-            VStack(spacing: 10) {
-                if steps.indices.contains(selectedStep) {
-                    let s = steps[selectedStep]
-                    personCalendar(s.fromID, off: off, focus: s.dayID)
-                    Image(systemName: "arrow.down").font(.headline).foregroundStyle(.secondary)
-                    personCalendar(s.toID, off: off, focus: s.dayID)
-                }
+        if steps.indices.contains(selectedStep) {
+            let s = steps[selectedStep]
+            let involvesMe = s.fromID == myID || s.toID == myID
+            let topID = involvesMe ? myID : s.fromID
+            let bottomID = involvesMe ? (s.fromID == myID ? s.toID : s.fromID) : s.toID
+            VStack(spacing: 8) {
+                personCalendar(topID, off: off, focus: s.dayID)
+                Image(systemName: "arrow.down").font(.subheadline).foregroundStyle(.secondary)
+                personCalendar(bottomID, off: off, focus: s.dayID)
             }
         }
     }
@@ -975,7 +1092,8 @@ struct PackageDetailView: View {
         return MiniScheduleGrid(
             title: name(id), days: schedules[id] ?? [:], month: monthAnchor(off),
             accent: colorFor(id), giveDays: gives(id), takeDays: gets(id), focusDay: focus,
-            intent: intentClosure, topology: topoClosure, eventName: eventClosure)
+            intent: intentClosure, topology: topoClosure, eventName: eventClosure, fill: true)
+            .frame(maxHeight: .infinity)   // the two calendars split the available height → fit, no scroll
     }
 
     /// My intents on the "You" calendar (hidden when the overlay toggle is off).

@@ -238,8 +238,17 @@ struct IntentCalendarView: View {
 
     @ViewBuilder private func dayContent(shift: Shift?, isWorking: Bool, isOff: Bool, dayID: String) -> some View {
         if isWorking, let shift {
-            Text(layers.deskAssignments ? shift.shiftShortLabel : shift.shiftTypeLabel)
-                .font(.caption.weight(.heavy)).lineLimit(1).minimumScaleFactor(0.6)
+            // Type (AM/PM/MID) and desk are independently toggleable. Both off → blank (the colored day
+            // circle still marks it as worked).
+            let type = layers.shiftType ? shift.shiftTypeLabel : ""
+            let desk = (layers.deskAssignments && !shift.desk.isEmpty) ? shift.desk : ""
+            let label = [type, desk].filter { !$0.isEmpty }.joined(separator: " ")
+            if label.isEmpty {
+                Color.clear.frame(height: 14)
+            } else {
+                Text(label)
+                    .font(.caption.weight(.heavy)).lineLimit(1).minimumScaleFactor(0.6)
+            }
         } else if let shift, shift.isVacation {
             // Vacation reads as a distinct teal state, not a plain day off. (U-VAC)
             Image(systemName: "beach.umbrella.fill")
@@ -429,6 +438,11 @@ struct DayIntentEditor: View {
         let f = DateFormatter(); f.dateFormat = "EEEE, MMM d, yyyy"; return f.string(from: d)
     }
 
+    /// The approved-vacation shift for this day, if any (drives the traded-in override toggle).
+    private var vacationShift: Shift? {
+        ShiftStore.shared.shifts.first { $0.id == target.dayID && $0.isVacationOrigin }
+    }
+
     var body: some View {
         NavigationStack {
             Form {
@@ -473,6 +487,24 @@ struct DayIntentEditor: View {
                     Toggle("Significant day", isOn: $significant)
                 } footer: {
                     Text("Protects this date from automatic trade suggestions.")
+                }
+
+                // Leave days (Vacation "V" or ECB VC "w") are OFF by default. Only the worker knows if they
+                // actually picked up a shift that day — this toggle marks it worked (syncs Apple Calendar).
+                if let vac = vacationShift {
+                    Section {
+                        Toggle(isOn: Binding(
+                            get: { !vac.isOff },
+                            set: { ShiftStore.shared.setVacationOverride(dayID: target.dayID, worked: $0) })) {
+                            Label("Trade Picked Up", systemImage: "arrow.left.arrow.right")
+                        }
+                    } header: {
+                        Text(vac.leaveCode == "w" ? "ECB VC day" : "Vacation day")
+                    } footer: {
+                        Text(vac.isOff
+                             ? "This is a leave day — off by default. Turn on if you picked up a shift; it'll show as working and be added to your Apple Calendar."
+                             : "Marked as worked (\(vac.shiftShortLabel)). Turn off if you were actually off; it'll show as leave and be removed from your Apple Calendar.")
+                    }
                 }
 
                 Section("Note (≤ 50 chars)") {

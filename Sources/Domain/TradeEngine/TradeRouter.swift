@@ -571,8 +571,19 @@ enum TradeRouter {
     /// trade-away days AND peers' marked trade-away days you'd take (so a peer's marked day seeds a
     /// deal even when you marked no give), and ranks by most mutual intent. `generation` gates the
     /// heavy 3+/circular work to Lucky → Generate, exactly like `packages` (U-PERF).
+    /// `mutualOnly` (default): a deal shows only when BOTH sides marked a day in it (true mutual intent).
+    /// When false, one-sided deals (your marked days a peer would cover) also show.
+    ///
+    /// **Robot gate (B6-INTENTS):** the active-account filter (real signed-in profile) is applied ONLY in
+    /// Mutual mode — there, 🔥 means both-sides-marked, so unclaimed/robot records are meaningless clutter.
+    /// In **All** mode every peer is eligible (an unclaimed peer can still be a valid bookend counterparty),
+    /// so All keeps showing matches even before anyone has claimed an account. See `peerEligibleForIntents`.
+    static func peerEligibleForIntents(isActiveAccount: Bool, mutualOnly: Bool) -> Bool {
+        !mutualOnly || isActiveAccount
+    }
+
     static func intentSolutions(excluding selfID: String, generation: SearchFilter = .fast,
-                                lucky: Bool = false) async -> [TradePackage] {
+                                lucky: Bool = false, mutualOnly: Bool = true) async -> [TradePackage] {
         let ctx = await MatchContext.build(selfID: selfID)
         let (start, end) = (ctx.start, ctx.end)
         let mySeeking = DayIntentStore.shared.seekingDayIDs
@@ -626,6 +637,9 @@ enum TradeRouter {
         for cand in universe.sorted(by: { $0.workerID < $1.workerID }) {
             if Task.isCancelled { return [] }   // U-PERF: cancellable mid-scan (Cancel button / supersede)
             await Task.yield()                  // hand the main run loop a turn so the UI never freezes
+            // Robot gate is Mutual-only (B6-INTENTS): All shows every peer; Mutual = real accounts only.
+            guard peerEligibleForIntents(isActiveAccount: TradeProfileStore.shared.isActiveAccount(cand.workerID),
+                                         mutualOnly: mutualOnly) else { continue }
             let profile = profileFor(cand.workerID, cand.name)
             let plan = await TradeMatcher.twoWayExplore(
                 withWorker: cand.workerID, name: cand.name,
@@ -643,6 +657,14 @@ enum TradeRouter {
                 theirGiveMarked: theirTakeable.filter { $0.wanted }.map(\.dayID),
                 theirGivePref:   theirTakeable.filter { !$0.wanted }.map(\.dayID))
             guard let deal = assembleIntentDeal(pairing) else { continue }
+            // Mutual mode (default): require a real TWO-SIDED intent — ≥1 day I marked AND ≥1 day the
+            // peer marked, both inside this deal. So 🔥 truly means both-sides-marked; one-sided "I want"
+            // deals only appear in the "All" view.
+            if mutualOnly {
+                let iMarked    = deal.gives.contains { mySeeking.contains($0) }
+                let theyMarked = deal.takes.contains { profile.seekingDayIDs.contains($0) }
+                guard iMarked && theyMarked else { continue }
+            }
             // Set-contiguity for bookend parties: peer covers my gives (anchored in THEIR schedule),
             // I cover their takes (anchored in MINE). Skip a deal that would split anyone's break.
             if profile.opennessLevel == .bookends, !anchoredSet(deal.gives, in: maps[cand.workerID] ?? [:]) { continue }
@@ -680,6 +702,11 @@ enum TradeRouter {
                     if leg.toID == selfID   { tk[leg.fromID, default: []].append(leg.dayID) }
                 }
                 let participants = Set(gv.keys).union(tk.keys)
+                // Robot gate is Mutual-only (B6-INTENTS): in All mode unclaimed peers may join a loop.
+                guard participants.allSatisfy({
+                    peerEligibleForIntents(isActiveAccount: TradeProfileStore.shared.isActiveAccount($0),
+                                           mutualOnly: mutualOnly)
+                }) else { continue }
                 let a = participants.map { pid in
                     PackageAssignment(workerID: pid, name: participantName(pid),
                                       giveDayIDs: gv[pid] ?? [], takeDayIDs: tk[pid] ?? [])

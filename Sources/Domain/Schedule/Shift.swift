@@ -39,13 +39,22 @@ struct Shift: Codable, Identifiable, Hashable {
 
     let role: ShiftRole
     let desk: String        // "29", "82", "OJT", "RC1", ""
-    let leaveCode: String?  // "S"=sick, "V"=vacation, "w"=weather/other, nil=none
+    let leaveCode: String?  // "S"=sick, "V"=vacation, "w"=ECB VC (ECB-obtained vacation), nil=none
     let isOff: Bool
 
     // MARK: - Computed helpers
 
-    /// Vacation: the worker is off on a day that *printed* a shift (parser removed it). (S-DATA-1)
-    var isVacation: Bool { leaveCode == "V" }
+    /// Leave codes that mean "you're scheduled OFF on this day" — a leave DESIGNATION, not proof of work:
+    /// "V" (Vacation) and "w" (ECB VC — vacation obtained via ECB). The printed shift on such a day is just
+    /// your base rotation; whether you actually worked it (picked up) is a per-day manual override. (S-DATA-1)
+    static let vacationLeaveCodes: Set<String> = ["V", "w"]
+
+    /// A leave/vacation-designated day the worker is actually OFF on (the default). If they picked up a
+    /// shift that day, the override flips `isOff` false and `isVacation` becomes false.
+    var isVacation: Bool { isVacationOrigin && isOff }
+    /// This day carries a vacation-type leave designation (V or ECB-VC "w") — drives the per-day
+    /// "did you work it?" override, regardless of whether a base-rotation shift is printed.
+    var isVacationOrigin: Bool { leaveCode.map(Self.vacationLeaveCodes.contains) ?? false }
 
     /// Full start datetime for this shift (0500 or 1300 local time).
     var startDate: Date {

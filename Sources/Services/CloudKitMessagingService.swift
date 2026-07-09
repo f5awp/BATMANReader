@@ -26,6 +26,10 @@ actor CloudKitMessagingService: MessagingService {
         await save(recordType: RT.post, id: post.id, model: post) { r in
             r["authorID"]  = post.authorID as CKRecordValue
             r["createdAt"] = post.createdAt as CKRecordValue
+            // Queryable list field so the per-user "you were mentioned" push subscription can fire.
+            if let mentioned = post.mentionedIDs, !mentioned.isEmpty {
+                r["mentionedIDs"] = mentioned as CKRecordValue
+            }
         }
     }
 
