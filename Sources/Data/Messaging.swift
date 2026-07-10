@@ -170,6 +170,11 @@ enum TradeRequestStatus: String, Codable, Sendable, CaseIterable {
 }
 
 /// A 1:1 trade proposal that lands in the recipient's inbox.
+/// Where a request originated, so the inbox can file it into Intents / Search / ECB / Misc.
+/// Optional on the record (old requests decode as nil → Misc). Rides in the JSON payload,
+/// so no CloudKit schema change is needed.
+enum TradeOrigin: String, Codable, Sendable { case intents, search, ecb, manual }
+
 struct TradeRequest: Sendable, Codable, Identifiable, Hashable {
     let id: String            // UUID string (recordName)
     let fromID: String
@@ -187,6 +192,10 @@ struct TradeRequest: Sendable, Codable, Identifiable, Hashable {
     var chain: [TradeLeg]? = nil // present for multi-person (circular) trades: the full loop
     var qualSwap: QualSwapLegData? = nil // embedded qual-swap leg (Q3/Q5/Q6). Optional ⇒ old records decode.
     var perfectMatch: Bool? = nil        // computed sender-side: hits the recipient's own intents (U6 push).
+    var origin: TradeOrigin? = nil       // inbox filing (intents/search/ecb/manual). Optional ⇒ old records → Misc.
+
+    /// Where this request files in the inbox. ECB always wins; otherwise the stored origin, else Misc.
+    var inboxOrigin: TradeOrigin { isECB ? .ecb : (origin ?? .manual) }
 
     // EXPLICIT init — REPLACES the synthesized memberwise init and FREEZES the construction
     // signature, so adding a NEW optional field above won't churn the init symbol (the
@@ -775,7 +784,8 @@ final class MessagingStore {
     func sendRequest(to toID: String, toName: String, note: String,
                      take: [String], give: [String], daysValid: Int = 21,
                      ecb: Int? = nil, ecbValue: Double? = nil, offerID: String? = nil,
-                     chain: [TradeLeg]? = nil, qualSwap: QualSwapLegData? = nil) async {
+                     chain: [TradeLeg]? = nil, qualSwap: QualSwapLegData? = nil,
+                     origin: TradeOrigin = .manual) async {
         let now = Date()
         // Sender-side "Perfect Match": does this hit the recipient's published intents? (U6 push)
         let recipient = TradeProfileStore.shared.profile(forWorker: toID)
@@ -791,13 +801,14 @@ final class MessagingStore {
             give: give, take: take, isECB: isECB,
             recipientSeeking: recipient?.seekingDayIDs ?? [],
             recipientWantToWork: recipient?.wantToWorkDayIDs ?? [])
-        let req = TradeRequest(
+        var req = TradeRequest(
             id: UUID().uuidString, fromID: myID, fromName: myName,
             toID: toID, toName: toName, note: note,
             takeDayIDs: take, giveDayIDs: give, createdAt: now,
             expiresAt: Calendar.current.date(byAdding: .day, value: daysValid, to: now) ?? now,
             ecb: ecb, ecbValue: ecbValue, offerID: offerID, chain: chain, qualSwap: qualSwap,
             perfectMatch: perfect ? true : nil)
+        req.origin = isECB ? .ecb : origin   // ECB always files under ECB; else the caller's origin
         await service.sendRequest(req)
         MetricsStore.shared.log(.proposed)   // H1 #18 global tally
         requests = ([req] + requests.filter { $0.id != req.id })

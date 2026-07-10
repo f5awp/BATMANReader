@@ -184,7 +184,7 @@ struct InboxView: View {
     private var store = MessagingStore.shared
     private var ecb = ECBAccountingStore.shared
     @Environment(\.dismiss) private var dismiss
-    @State private var filter = 0   // 0 = all, 1 = ECB only
+    @State private var filter = 0   // 0 Intents · 1 Search · 2 ECB · 3 Misc
 
     private var myID: String { SettingsManager.shared.username }
 
@@ -193,71 +193,94 @@ struct InboxView: View {
         store.requests.filter { $0.isECB }.sorted { ($0.ecbAmount ?? 0) > ($1.ecbAmount ?? 0) }
     }
 
+    /// Which tab a request files under (0 Intents · 1 Search · 2 ECB · 3 Misc). A request where I'm
+    /// neither sender nor recipient (a qual-swap bridge blast) always lands in Misc.
+    private func tabIndex(for r: TradeRequest) -> Int {
+        if r.isECB { return 2 }
+        guard r.fromID == myID || r.toID == myID else { return 3 }   // bridge / not a core party
+        switch r.inboxOrigin {
+        case .intents: return 0
+        case .search:  return 1
+        case .ecb:     return 2
+        case .manual:  return 3
+        }
+    }
+    private func inTab(_ r: TradeRequest) -> Bool { tabIndex(for: r) == filter }
+
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
                 Picker("", selection: $filter) {
-                    Text("All").tag(0)
-                    Text("ECB (\(ecbRequests.count))").tag(1)
+                    Text("Intents").tag(0)
+                    Text("Search").tag(1)
+                    Text("ECB (\(ecbRequests.count))").tag(2)
+                    Text("Misc").tag(3)
                 }
                 .pickerStyle(.segmented).padding()
 
-                if store.requests.isEmpty {
-                    ContentUnavailableView("No Trade Requests", systemImage: "tray",
-                        description: Text("Swaps you propose or receive show up here."))
-                } else if filter == 1 {
-                    let incomingECB = store.incoming.filter { $0.isECB }.sorted { ($0.ecbAmount ?? 0) > ($1.ecbAmount ?? 0) }
-                    if store.ecbOffers.isEmpty && incomingECB.isEmpty {
-                        ContentUnavailableView("No ECB Offers", systemImage: "star.circle",
-                            description: Text("One-way ECB trade offers show here, sorted by most ECB offered."))
-                    } else {
-                        List {
-                            if !store.ecbOffers.isEmpty {
-                                Section("Your ECB offers · first to accept each shift gets it") {
-                                    ForEach(store.ecbOffers, id: \.offerID) { offer in
-                                        NavigationLink { ECBOfferView(offerID: offer.offerID) } label: { ECBOfferRow(offer: offer) }
-                                    }
-                                }
-                            }
-                            if !incomingECB.isEmpty {
-                                Section("Offers to you · highest ECB first") { ForEach(incomingECB) { row($0) } }
-                            }
-                        }
-                    }
-                } else {
-                    let arch = store.archivedRequestIDs
-                    List {
-                        // B6-ECB: shared ledger lines a dispatcher logged that need YOUR confirmation.
-                        if !ecb.pendingConfirmations.isEmpty {
-                            Section("ECB confirmations") {
-                                ForEach(ecb.pendingConfirmations) { ecbConfirmRow($0) }
-                            }
-                        }
-                        let pending = MessagingStore.active(store.pendingIncoming, archived: arch)
-                        if !pending.isEmpty {
-                            Section("Needs your reply") { ForEach(pending) { row($0) } }
-                        }
-                        let handledIncoming = MessagingStore.active(store.incoming, archived: arch)
-                            .filter { store.status(of: $0) != .pending }
-                        if !handledIncoming.isEmpty {
-                            Section("Incoming") { ForEach(handledIncoming) { row($0) } }
-                        }
-                        let sent = MessagingStore.active(store.outgoing, archived: arch)
-                        if !sent.isEmpty {
-                            Section("Sent") { ForEach(sent) { row($0) } }
-                        }
-                        let archived = store.requests.filter { arch.contains($0.id) }
-                        if !archived.isEmpty {
-                            Section("Archived") { ForEach(archived) { row($0) } }
-                        }
-                    }
-                }
+                if filter == 2 { ecbTab } else { requestList }
             }
             .navigationTitle("Trade Inbox")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
             .task { await store.refresh(); await TradeProfileStore.shared.refreshOthers(); await ecb.syncOnLaunch() }   // load peers so status renders (A7/B8 / audit #7) + ECB confirmations
             .refreshable { await store.refresh(); await TradeProfileStore.shared.refreshOthers(); await ecb.syncOnLaunch() }
+        }
+    }
+
+    /// ECB tab: outgoing offers as tappable folders, incoming offers, and ledger-line confirmations.
+    @ViewBuilder private var ecbTab: some View {
+        let incomingECB = store.incoming.filter { $0.isECB }.sorted { ($0.ecbAmount ?? 0) > ($1.ecbAmount ?? 0) }
+        if store.ecbOffers.isEmpty && incomingECB.isEmpty && ecb.pendingConfirmations.isEmpty {
+            ContentUnavailableView("No ECB Offers", systemImage: "star.circle",
+                description: Text("One-way ECB trade offers show here, sorted by most ECB offered."))
+        } else {
+            List {
+                if !ecb.pendingConfirmations.isEmpty {
+                    Section("ECB confirmations") { ForEach(ecb.pendingConfirmations) { ecbConfirmRow($0) } }
+                }
+                if !store.ecbOffers.isEmpty {
+                    Section("Your ECB offers · tap to see who you sent it to") {
+                        ForEach(store.ecbOffers, id: \.offerID) { offer in
+                            NavigationLink { ECBOfferView(offerID: offer.offerID) } label: { ECBOfferRow(offer: offer) }
+                        }
+                    }
+                }
+                if !incomingECB.isEmpty {
+                    Section("Offers to you · highest ECB first") { ForEach(incomingECB) { row($0) } }
+                }
+            }
+        }
+    }
+
+    /// Intents / Search / Misc tabs: the usual sectioned request list, filtered to the active tab.
+    @ViewBuilder private var requestList: some View {
+        let arch = store.archivedRequestIDs
+        let pending = MessagingStore.active(store.pendingIncoming, archived: arch).filter(inTab)
+        let handledIncoming = MessagingStore.active(store.incoming, archived: arch)
+            .filter { store.status(of: $0) != .pending && inTab($0) }
+        let sent = MessagingStore.active(store.outgoing, archived: arch).filter(inTab)
+        let archived = store.requests.filter { arch.contains($0.id) && inTab($0) }
+        if pending.isEmpty && handledIncoming.isEmpty && sent.isEmpty && archived.isEmpty {
+            ContentUnavailableView(emptyTitle, systemImage: "tray", description: Text(emptyMessage))
+        } else {
+            List {
+                if !pending.isEmpty { Section("Needs your reply") { ForEach(pending) { row($0) } } }
+                if !handledIncoming.isEmpty { Section("Incoming") { ForEach(handledIncoming) { row($0) } } }
+                if !sent.isEmpty { Section("Sent") { ForEach(sent) { row($0) } } }
+                if !archived.isEmpty { Section("Archived") { ForEach(archived) { row($0) } } }
+            }
+        }
+    }
+
+    private var emptyTitle: String {
+        switch filter { case 0: return "No Intent Trades"; case 1: return "No Search Trades"; default: return "Nothing Here" }
+    }
+    private var emptyMessage: String {
+        switch filter {
+        case 0:  return "Swaps you send or receive from the Intents feed show here."
+        case 1:  return "Swaps from Trade Solutions searches show here."
+        default: return "Qual-swap bridge requests and other messages show here."
         }
     }
 

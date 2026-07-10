@@ -147,7 +147,7 @@ struct TradeByIntentsFeed: View {
                               onPropose: { Task { await propose(pkg) } },
                               onExecute: { if let r = pkg.route { execRoute = r } })
         }
-        .sheet(item: $execRoute) { ExecutionConfirmationView(route: $0) }
+        .sheet(item: $execRoute) { ExecutionConfirmationView(route: $0, origin: .intents) }
         .sheet(item: $pkgSwap) { ctx in
             QualSwapPickerSheet(giveDeskLabel: "desk \(ctx.leg.giveDesk) (\(ctx.leg.giveQual))",
                                 takerName: ctx.leg.takerName, dayLabel: ctx.dayLabel,
@@ -158,7 +158,7 @@ struct TradeByIntentsFeed: View {
                     await MessagingStore.shared.sendRequest(
                         to: ctx.leg.takerID, toName: ctx.leg.takerName,
                         note: "Qual swap to give away \(ctx.dayLabel) — \(ctx.leg.takerName) takes a freed desk.",
-                        take: [], give: [ctx.leg.giveShiftDayID], qualSwap: sendLeg)
+                        take: [], give: [ctx.leg.giveShiftDayID], qualSwap: sendLeg, origin: .intents)
                     WidgetData.update()
                     pkgSwap = nil
                     sentMessage = "Qual-swap request sent. Track it in your Inbox."
@@ -305,7 +305,7 @@ struct TradeByIntentsFeed: View {
         for a in pkg.assignments {
             await MessagingStore.shared.sendRequest(
                 to: a.workerID, toName: a.name, note: swapNote(a),
-                take: a.takeDayIDs, give: a.giveDayIDs)
+                take: a.takeDayIDs, give: a.giveDayIDs, origin: .intents)
         }
         WidgetData.update()
         let n = pkg.assignments.count
@@ -1144,6 +1144,7 @@ struct PackageDetailView: View {
 
 struct ExecutionConfirmationView: View {
     let route: NWayRoute
+    var origin: TradeOrigin = .search   // where the loop was surfaced (Intents feed vs Trade Solutions)
 
     private var messaging = MessagingStore.shared
     @Environment(\.dismiss) private var dismiss
@@ -1202,7 +1203,7 @@ struct ExecutionConfirmationView: View {
         for pid in route.participants where pid != myID {
             await messaging.sendRequest(to: pid, toName: participantName(pid),
                                         note: "",   // #7: the card shows the trade visually; no redundant text
-                                        take: [], give: [], chain: legs)
+                                        take: [], give: [], chain: legs, origin: origin)
         }
         sending = false
         sent = true

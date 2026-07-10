@@ -137,7 +137,7 @@ struct FindCandidatesSection: View {
                         await MessagingStore.shared.sendRequest(
                             to: leg.takerID, toName: leg.takerName,
                             note: "Qual swap to give away \(SwapChips.chipDay(leg.giveShiftDayID)) — \(leg.takerName) takes a freed desk.",
-                            take: [], give: [leg.giveShiftDayID], qualSwap: leg)
+                            take: [], give: [leg.giveShiftDayID], qualSwap: leg, origin: .search)
                         n += 1
                     }
                     WidgetData.update()
@@ -165,7 +165,7 @@ struct FindCandidatesSection: View {
                     await MessagingStore.shared.sendRequest(
                         to: ctx.leg.takerID, toName: ctx.leg.takerName,
                         note: "Qual swap to give away \(ctx.dayLabel) — \(ctx.leg.takerName) takes a freed desk.",
-                        take: [], give: [ctx.leg.giveShiftDayID], qualSwap: sendLeg)
+                        take: [], give: [ctx.leg.giveShiftDayID], qualSwap: sendLeg, origin: .search)
                     WidgetData.update()
                     pkgSwap = nil
                     packageSent = "Qual-swap request sent. Track it in your Inbox."
@@ -503,7 +503,7 @@ struct FindCandidatesSection: View {
         for a in pkg.assignments {
             await MessagingStore.shared.sendRequest(
                 to: a.workerID, toName: a.name, note: swapNote(a),
-                take: a.takeDayIDs, give: a.giveDayIDs)
+                take: a.takeDayIDs, give: a.giveDayIDs, origin: .search)
         }
         WidgetData.update()
         let n = pkg.assignments.count
@@ -753,10 +753,11 @@ struct ECBTradesView: View {
             let theirDays = selectedShifts.filter { c.coveredShiftIDs.contains($0.id) }.map(\.id)
             guard !theirDays.isEmpty else { continue }
             let dates = theirDays.map { prettyDay($0) }.joined(separator: ", ")
+            // No boilerplate note — the card shows the ECB offer + shifts, and the accepter's employee #
+            // appears automatically in the sender's ECB offer view once they accept.
             await MessagingStore.shared.sendRequest(
-                to: c.workerID, toName: c.name,
-                note: "One-way ECB trade — take my \(dates). Offering \(ecbText(ecb)) ECB. Accept the shifts you can take; first to accept each shift gets it. Reply with your employee #.",
-                take: [], give: theirDays, ecb: Int(ecb.rounded()), ecbValue: ecb, offerID: offerID)
+                to: c.workerID, toName: c.name, note: "",
+                take: [], give: theirDays, ecb: Int(ecb.rounded()), ecbValue: ecb, offerID: offerID, origin: .ecb)
             sent += 1
         }
         WidgetData.update()
@@ -1400,7 +1401,7 @@ struct TwoWaySheet: View {
     private func sendTwoWay(note: String, takes: [String], gives: [String], qualSwap: QualSwapLegData?) async {
         await MessagingStore.shared.sendRequest(
             to: candidate.workerID, toName: candidate.name, note: note,
-            take: takes, give: gives, qualSwap: qualSwap)
+            take: takes, give: gives, qualSwap: qualSwap, origin: .search)
         WidgetData.update()
         sentConfirmation = true
     }
