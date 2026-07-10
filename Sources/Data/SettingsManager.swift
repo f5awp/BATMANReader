@@ -224,7 +224,8 @@ final class SettingsManager {
         notificationLeadHours = savedHours > 0 ? savedHours : 2
 
         showDebugWebView         = defaults.bool(forKey: Keys.debugWebView)
-        magnifierEnabled         = defaults.bool(forKey: Keys.magnifier)
+        // Magnifier defaults ON (accessibility-first); users can toggle it off in App Settings.
+        magnifierEnabled         = defaults.object(forKey: Keys.magnifier) == nil ? true : defaults.bool(forKey: Keys.magnifier)
         displayName              = defaults.string(forKey: Keys.displayName) ?? ""
         firstName                = defaults.string(forKey: Keys.firstName) ?? ""
         lastName                 = defaults.string(forKey: Keys.lastName) ?? ""

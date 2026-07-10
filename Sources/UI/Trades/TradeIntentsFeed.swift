@@ -968,7 +968,6 @@ struct PackageDetailView: View {
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.horizontalSizeClass) private var hSize
-    @Environment(\.verticalSizeClass) private var vSize   // .compact ⇔ iPhone landscape (iPad stays .regular)
     @State private var selectedStep = 0
     @State private var monthIndex = 0
     @State private var schedules: [String: [String: String]] = [:]   // workerID → day labels
@@ -1038,10 +1037,10 @@ struct PackageDetailView: View {
                 // squished into an unusable sliver.
                 let wide = geo.size.width > geo.size.height
                 VStack(spacing: wide ? 6 : 12) {
-                    // The selectable date chips stay visible in every orientation (in landscape they
-                    // stand in for the verbose "Swap · give N, get N" title, which we drop to reclaim
-                    // vertical space on iPhone — iPad keeps both since it has the room).
-                    chipIndex
+                    // The selectable date chips carry the dates (the verbose "Swap · give N, get N"
+                    // title is dropped in both orientations to reclaim space). In landscape the give/get
+                    // rows sit side by side and slide horizontally to save vertical room.
+                    chipIndex(wide: wide)
 
                     HStack {
                         Button { if monthIndex > 0 { monthIndex -= 1 } } label: { Image(systemName: "chevron.left").font(.headline) }
@@ -1080,7 +1079,7 @@ struct PackageDetailView: View {
                     }
                 }
             }
-            .navigationTitle(vSize == .compact ? "" : dateTitle)   // iPhone landscape: chips carry the dates
+            .navigationTitle("")   // the chips carry the dates; drop the verbose title to reclaim space
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } } }
             .task { await load() }
@@ -1098,14 +1097,24 @@ struct PackageDetailView: View {
     /// Compact, fixed-height horizontal index that REPLACES the old growing vertical list — so the
     /// calendars below stay the hero at any trade size. Reciprocal trades show two rows (You give / You
     /// get); circular loops show the loop path in order. Tapping a chip focuses that leg on the calendars.
-    private var chipIndex: some View {
+    @ViewBuilder private func chipIndex(wide: Bool) -> some View {
         let all = Array(steps.enumerated())
-        return VStack(alignment: .leading, spacing: 6) {
+        let give = all.filter { $0.element.fromID == myID }
+        let get  = all.filter { $0.element.toID == myID }
+        Group {
             if isCircular {
                 chipRow("Loop", all)
+            } else if wide {
+                // Landscape: give + get side by side (each slides horizontally) to save vertical space.
+                HStack(alignment: .top, spacing: 16) {
+                    chipRow("You give", give)
+                    chipRow("You get",  get)
+                }
             } else {
-                chipRow("You give", all.filter { $0.element.fromID == myID })
-                chipRow("You get",  all.filter { $0.element.toID == myID })
+                VStack(alignment: .leading, spacing: 6) {
+                    chipRow("You give", give)
+                    chipRow("You get",  get)
+                }
             }
         }
         .padding(.horizontal)

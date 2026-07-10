@@ -1782,23 +1782,23 @@ struct MiniScheduleGrid: View {
                     }
                 }
                 Text("\(cal.component(.day, from: date))")
-                    .font(.subheadline.weight(.semibold))
+                    // Match the Home calendar: prominent headline day number.
+                    .font(.headline).fontWeight(.semibold)
                     // Dark text on the light gold circle; white on blue/pink.
                     .foregroundStyle(marker == nil ? .primary
                         : (topology(key) == .highDemand ? Color.black.opacity(0.85) : .white))
             }
-            .frame(height: fill ? 23 : 32)
+            .frame(height: fill ? 26 : 32)
             Text(label.isEmpty ? " " : label)
-                // As large as the cell allows (subheadline, up from caption); minimumScaleFactor lets it
-                // shrink on narrow/side-by-side cells so it never wraps, clips, or overlaps.
+                // Match the Home calendar's shift label (subheadline, heavy). A gentle scale floor keeps
+                // it large; the reserved min-height + bottom padding stop it overlapping the intent bar.
                 .font(.subheadline.weight(.heavy))
                 .foregroundStyle(working ? accent : .secondary)
-                .lineLimit(1).minimumScaleFactor(0.5)
-                // Clear the 5-pt intent bar that overlays the bottom edge, so shift labels
-                // (e.g. "AM 82") aren't clipped by it in fill mode.
+                .lineLimit(1).minimumScaleFactor(0.7)
+                .frame(minHeight: fill ? 16 : nil)
                 .padding(.bottom, fill ? 5 : 0)
         }
-        .frame(maxWidth: .infinity, minHeight: fill ? 30 : 50, maxHeight: fill ? .infinity : nil)
+        .frame(maxWidth: .infinity, minHeight: fill ? 34 : 50, maxHeight: fill ? .infinity : nil)
         .background(background(key: key, working: working))
         .overlay(alignment: .bottom) { intentBar(key: key) }
         .clipShape(RoundedRectangle(cornerRadius: 7))

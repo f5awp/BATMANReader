@@ -188,7 +188,9 @@ struct CollapsibleLegend: View {
                 .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
         }
         .tint(.secondary)
-        .padding(DS.cardPadding)
+        // Half-height collapsed bar: full horizontal padding, halved vertical padding.
+        .padding(.horizontal, DS.cardPadding)
+        .padding(.vertical, DS.cardPadding / 2)
         .background(.bar, in: RoundedRectangle(cornerRadius: DS.cardRadius))
     }
 }
