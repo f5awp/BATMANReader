@@ -741,10 +741,13 @@ struct TradeParticipantLines: View {
             if gives[leg.fromID] == nil { order.append(leg.fromID) }
             gives[leg.fromID, default: []].append(leg.dayID)
         }
-        return order.map { id in
+        let mapped = order.map { id in
             let name = legs.first { $0.fromID == id }?.fromName ?? participantName(id)
             return (id: id, name: id == myID ? "You" : name, isMe: id == myID, days: gives[id] ?? [])
         }
+        // Each viewer sees THEMSELVES first/on top; the rest stay in loop order. (Colors map by id,
+        // so reordering rows for display doesn't change anyone's assigned color.)
+        return mapped.filter(\.isMe) + mapped.filter { !$0.isMe }
     }
 }
 
