@@ -223,7 +223,10 @@ struct SettingsView: View {
                 } header: {
                     Text("Personal Calendar (Your Shifts)")
                 } footer: {
-                    Text("Your shifts are added to '\(ekManager.personalCalendarName)' automatically on every fetch. Traded shifts are removed automatically. Use Reset if you see duplicate events — it clears the app's events and re-adds your shifts once.")
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Your shifts are added to '\(ekManager.personalCalendarName)' automatically on every fetch. Traded shifts are removed automatically. Use Reset if you see duplicate events — it clears the app's events and re-adds your shifts once.")
+                        Text("Using Google Calendar? Add your Google account in iOS Settings → Calendar. Your shifts sync into it automatically through Apple Calendar — no separate setup in this app.")
+                    }
                 }
 
                 // ── Shared dispatcher calendar ───────────────────────

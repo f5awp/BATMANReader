@@ -872,8 +872,56 @@ enum AppGuide {
             ]),
     ]
 
+    /// Build 6 "What's New" — the most impactful changes, each with WHAT changed and WHY it matters.
+    /// Shown as the second welcome screen. Operator-facing.
+    struct Build6Highlight: Identifiable, Sendable {
+        let id = UUID(); let symbol: String; let title: String; let what: String; let why: String
+    }
+    static let build6Highlights: [Build6Highlight] = [
+        Build6Highlight(
+            symbol: "banknote.fill", title: "ECB Accounting — track your ECB",
+            what: "New page at ⋯ → ECB Accounting. Log OT/holiday deposits, withdrawals, and trades; see Available (capped at 144), Projected, and what you Owe / are Owed. Lines stay pending until you clear them on a pay day.",
+            why: "No more paper or mental math — ECB trades post to BOTH ledgers and stay in sync, and you can IOU a future deposit before it lands."),
+        Build6Highlight(
+            symbol: "beach.umbrella.fill", title: "Vacation & ECB VC days",
+            what: "The master schedule can't tell whether you traded into a vacation day, so all vacation (and ECB-VC) days start OFF. Picked one up? Open the day and toggle \"Trade Picked Up.\"",
+            why: "That builds the day into both the in-app calendar and your Apple Calendar, so what you actually work shows up instead of a blanket \"off.\""),
+        Build6Highlight(
+            symbol: "calendar.badge.plus", title: "Apple Calendar sync",
+            what: "Your working shifts build straight into Apple Calendar, and any day you change in the app (like a picked-up vacation day) updates there too. On Google Calendar? Add your Google account in iOS Settings → Calendar and your shifts flow there automatically.",
+            why: "Your real schedule lives in the calendar you already check — no double entry."),
+        Build6Highlight(
+            symbol: "plus.magnifyingglass", title: "Screen magnifier",
+            what: "Turn on in ⋯ → App Settings → Accessibility. A draggable button appears on every screen — tap it, pinch to zoom, drag with two fingers to pan; one finger still taps and scrolls.",
+            why: "Makes the whole app usable if you're hard of sight, without fighting the system zoom."),
+        Build6Highlight(
+            symbol: "sparkles", title: "Smarter, faster Intents",
+            what: "Two sections now — \"Mutual\" (both of you marked the day) and \"All\" (every possible partner, not just people on the app). Switching is instant; the heavy 3+person / loop search is opt-in via \"More: 3+ & loops.\"",
+            why: "True mutual matches and the wider pool, right away — the app only runs the heavy search when you ask."),
+        Build6Highlight(
+            symbol: "square.grid.2x2.fill", title: "Cleaner, less-cluttered layout",
+            what: "Redesigned trade/package cards (one \"Name — dates\" line each) and calendar; Trade Settings are now tap pills (shift types, regions, blackout days); a tidier top bar (Inbox · Channel · Trade status · ⋯); tapping any day opens the full editor. \"Keep\" (green) and \"Blackout\" (slate) are distinct everywhere.",
+            why: "Less noise, fewer taps — what you use most is easier to find and act on."),
+        Build6Highlight(
+            symbol: "bell.badge.fill", title: "Live daily digest + @mentions",
+            what: "The daily summary refreshes its counts in the background so it's current when it fires, and @-mentioning a dispatcher in a channel sends them a push.",
+            why: "Timely nudges about what needs you — without opening the app."),
+    ]
+
     /// Curated version history — milestones, technical, to show the scope of work.
     static let versionHistory: [ReleaseNote] = [
+        ReleaseNote(
+            version: "Build 6 — ECB Accounting, accessibility & trade polish",
+            headline: "A big update: track your ECB, a screen magnifier for everyone, and clearer, faster trading.",
+            points: [
+                "ECB Accounting (⋯ → ECB Accounting): a full ledger — log overtime/holiday deposits, withdrawals, and trades; see Available (capped at 144), Projected, and what you Owe / are Owed. Amounts stay pending until you mark them cleared on a pay day.",
+                "ECB trades sync both ways: trade ECB with a dispatcher and it posts to BOTH ledgers once they confirm in their Inbox; accepting an in-app ECB offer posts it automatically. You can even IOU a future deposit before it lands.",
+                "Vacation & ECB-VC days: the master schedule doesn't show whether you traded into a vacation day, so ALL vacation days are set to OFF by default. You can open any of those days and toggle \"Trade Picked Up\" — that updates the app's calendar AND your Apple Calendar to reflect what you actually work.",
+                "Screen magnifier — turn it on in App Settings (⋯ → App Settings → Accessibility → Screen magnifier). A DRAGGABLE floating button then appears on every screen; drag it wherever, tap it, and pinch with two fingers to zoom and pan (one finger still taps/scrolls). Works on the whole app, including pop-up sheets.",
+                "Intents now has two sections — \"Mutual\" (both of you marked the day) and \"All\" (every possible partner); switching is instant, and the heavy 3+person/circular search is opt-in via \"More: 3+ & loops.\"",
+                "Cleaner, less-cluttered layout: redesigned trade/package cards (one compact \"Name — dates\" line per person) and a refreshed calendar view; Trade Settings are now tap pills (shift types, regions grayed when unqualified, blackout days); a tidier top bar (Inbox · Channel · Trade status with badges · ⋯) with the color key by the Home layers button; and tapping any day opens the full editor directly. \"Keep\" (green) vs \"Blackout\" (slate) are consistent everywhere.",
+                "Live daily digest refreshes its counts in the background, and @-mentioning a dispatcher in a channel sends them a push.",
+            ]),
         ReleaseNote(
             version: "Build 5 — A cleaner app, smarter trades",
             headline: "A top-to-bottom design pass plus several trade-quality fixes from beta feedback.",

@@ -12,32 +12,173 @@ struct WelcomeView: View {
     @Environment(\.dismiss) private var dismiss
     var onDismiss: () -> Void = {}
 
+    /// Three-step welcome: 0 = who we are / first steps · 1 = "What's New in Build 6" · 2 = set trade preferences.
+    @State private var page = 0
+    @Bindable private var settings = SettingsManager.shared
+    @State private var myQuals: [String] = []
     private let columns = [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)]
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
-                    hero
-                    purpose
-                    firstSteps        // lead with what to DO
-                    whatsNew
-                    pillars
-                    // The deep methodology + scoring detail live at the BOTTOM — reference, not the pitch.
-                    methodology
-                    scoringTable
-                    deepLinks
+            Group {
+                switch page {
+                case 0:  welcomePage
+                case 1:  whatsNewPage
+                default: preferencesPage
                 }
-                .padding(20)
             }
-            .navigationTitle("Welcome")
+            .navigationTitle(page == 0 ? "Welcome" : (page == 1 ? "What's New" : "Your trade preferences"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                if page > 0 {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button { withAnimation { page -= 1 } } label: { Label("Back", systemImage: "chevron.left") }
+                    }
+                }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Got it") { onDismiss(); dismiss() }
+                    switch page {
+                    case 0:  Button("What's New →") { withAnimation { page = 1 } }
+                    case 1:  Button("Set preferences →") { withAnimation { page = 2 } }
+                    default: Button("Done") { onDismiss(); dismiss() }
+                    }
                 }
             }
         }
+    }
+
+    // MARK: Page 0 — welcome
+    private var welcomePage: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                hero
+                purpose
+                firstSteps        // lead with what to DO
+                pillars
+                // The deep methodology + scoring detail live at the BOTTOM — reference, not the pitch.
+                methodology
+                scoringTable
+                deepLinks
+            }
+            .padding(20)
+        }
+    }
+
+    // MARK: Page 1 — What's New in Build 6 (what changed + why it matters)
+    private var whatsNewPage: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Label("What's New in Build 6", systemImage: "sparkles")
+                        .font(.title2.bold()).labelStyle(.titleAndIcon).foregroundStyle(AppColor.primary)
+                    Text("The biggest changes in this update — exactly what changed and why it matters.")
+                        .font(.subheadline).foregroundStyle(.secondary)
+                }
+                ForEach(AppGuide.build6Highlights) { highlightCard($0) }
+            }
+            .padding(20)
+        }
+    }
+
+    private func highlightCard(_ h: AppGuide.Build6Highlight) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label(h.title, systemImage: h.symbol)
+                .font(.headline).labelStyle(.titleAndIcon).foregroundStyle(AppColor.primary)
+            highlightLine("What changed", h.what)
+            highlightLine("Why it matters", h.why)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14))
+    }
+    private func highlightLine(_ label: String, _ text: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label.uppercased()).font(.caption2.weight(.bold)).foregroundStyle(.tertiary)
+            Text(text).font(.subheadline).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    // MARK: Page 2 — set trade preferences (the essentials from Trade Settings, right in onboarding)
+    private var preferencesPage: some View {
+        Form {
+            Section {
+                Text("Set these so you only get trades you'd actually take. You can change everything anytime in Trade Settings.")
+                    .font(.subheadline).foregroundStyle(.secondary)
+            }
+            Section {
+                Picker("Accepting", selection: openness) {
+                    ForEach(TradeOpenness.allCases, id: \.self) { Text($0.label).tag($0) }
+                }
+                Toggle("Mercenary mode (take any qualifying shift)", isOn: mercenary)
+            } header: { Text("Openness") } footer: {
+                Text("Bookends-only offers you a pickup only when it attaches to your existing days off.")
+            }
+            Section("Status (optional, public)") {
+                TextField("e.g. Open to bookends this month", text: $settings.statusBroadcast, axis: .vertical)
+                    .lineLimit(1...3)
+            }
+            Section {
+                pillFlow(ShiftAvailabilityType.allCases.map(\.rawValue),
+                         isOn: { settings.blacklistedShiftTypes.contains($0) },
+                         enabled: { _ in true },
+                         toggle: { toggleSet(&settings.blacklistedShiftTypes, $0) },
+                         label: { $0 })
+            } header: { Text("Blacklisted shift types") } footer: { Text("Tap a type to stop being offered those shifts.") }
+            Section {
+                pillFlow(DeskRegion.allCases.map(\.rawValue),
+                         isOn: { settings.blacklistedRegions.contains($0) },
+                         enabled: { DeskRules.isQualified(quals: myQuals, forRegion: DeskRegion(rawValue: $0) ?? .domestic) },
+                         toggle: { toggleSet(&settings.blacklistedRegions, $0) },
+                         label: { $0 })
+            } header: { Text("Blacklisted regions") } footer: { Text("Grayed regions need a qualification you don't hold.") }
+            Section {
+                pillFlow(TradeSettingsSheet.weekdayPills.map { String($0.day) },
+                         isOn: { settings.blacklistedWeekdays.contains(Int($0) ?? 0) },
+                         enabled: { _ in true },
+                         toggle: { toggleSet(&settings.blacklistedWeekdays, Int($0) ?? 0) },
+                         label: { d in TradeSettingsSheet.weekdayPills.first { String($0.day) == d }?.letter ?? d })
+            } header: { Text("Blackout days") } footer: {
+                Text("More options — desks, qual-swap values, relief — live in Trade Settings.")
+            }
+        }
+        .task {
+            myQuals = await RosterStore.shared.schedule(forWorker: settings.username).first?.quals ?? []
+        }
+    }
+
+    /// A wrapping row of BlacklistPills, generic over the value's string key.
+    private func pillFlow(_ values: [String], isOn: @escaping (String) -> Bool,
+                          enabled: @escaping (String) -> Bool, toggle: @escaping (String) -> Void,
+                          label: @escaping (String) -> String) -> some View {
+        FlowLayout(spacing: 8) {
+            ForEach(values, id: \.self) { v in
+                BlacklistPill(label: label(v), selected: isOn(v), enabled: enabled(v)) { toggle(v) }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 2)
+    }
+
+    private func publishPrefs() { Task { await TradeProfileStore.shared.publishMine() } }
+    private func toggleSet<T: Hashable>(_ set: inout Set<T>, _ value: T) {
+        if set.contains(value) { set.remove(value) } else { set.insert(value) }
+        publishPrefs()
+    }
+    private var openness: Binding<TradeOpenness> {
+        Binding(get: { TradeOpenness(rawValue: settings.tradeOpenness) ?? .bookends },
+                set: { level in
+                    settings.tradeOpenness = level.rawValue
+                    DayIntentStore.shared.applyOpenness(level, shifts: ShiftStore.shared.shifts)
+                    publishPrefs()
+                })
+    }
+    private var mercenary: Binding<Bool> {
+        Binding(get: { settings.isMercenaryMode },
+                set: { on in
+                    settings.isMercenaryMode = on
+                    let level = TradeOpenness(rawValue: settings.tradeOpenness) ?? .bookends
+                    DayIntentStore.shared.applyMercenary(on, openness: level, shifts: ShiftStore.shared.shifts)
+                    publishPrefs()
+                })
     }
 
     private var hero: some View {
@@ -180,24 +321,6 @@ struct WelcomeView: View {
         }
         .padding(.horizontal, 12).padding(.vertical, 8)
         .background(shaded ? Color(.secondarySystemBackground).opacity(0.4) : .clear)
-    }
-
-    private var whatsNew: some View {
-        // SINGLE SOURCE: the "what's new" preview reads the latest entry of AppGuide.versionHistory —
-        // the same data the Version-history page renders — so the changelog can never drift between a
-        // simplistic copy and the detailed one. The full, build-by-build history is one tap below.
-        VStack(alignment: .leading, spacing: 10) {
-            if let current = AppGuide.versionHistory.first {
-                Text(current.version).font(.headline)
-                Text(current.headline).font(.subheadline).foregroundStyle(.secondary)
-                ForEach(current.points.prefix(4), id: \.self) { item in
-                    HStack(alignment: .top, spacing: 8) {
-                        Image(systemName: "sparkles").font(.caption).foregroundStyle(AppColor.success).padding(.top, 2)
-                        Text(item).font(.subheadline)
-                    }
-                }
-            }
-        }
     }
 
     private var deepLinks: some View {

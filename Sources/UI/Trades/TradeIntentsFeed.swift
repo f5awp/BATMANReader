@@ -28,6 +28,7 @@ final class TradeFeedCache {
     private var snaps: [String: Snapshot] = [:]
     func snapshot(_ key: String) -> Snapshot? { snaps[key] }
     func save(_ key: String, _ snap: Snapshot) { snaps[key] = snap }
+    func clear(_ key: String) { snaps[key] = nil }
 
     /// Number of MUTUAL intent matches — drives the Intents tab badge. Set by the feed's mutual-mode
     /// searches and the launch background pass; read live by the segment bar (this class is @Observable).

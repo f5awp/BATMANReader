@@ -103,7 +103,13 @@ struct FindCandidatesSection: View {
                               onGenerate: { f in if !selectedIDs.isEmpty { runSearch { await search(generation: f, lucky: true) } } },
                               onReset: { if !selectedIDs.isEmpty { runSearch { await searchFast() } } })
         }
-        .onDisappear { searchTask?.cancel() }   // A1: leaving cancels any in-flight Lucky search
+        .onDisappear {
+            // Leaving Trade Solutions resets the search — no auto-re-search on return (per user). Clear the
+            // in-flight task, local state, and the cached snapshot so coming back shows a clean day picker.
+            searchTask?.cancel()
+            selectedIDs = []; packages = []; candidates = []; hasSearched = false; calendarExpanded = true
+            TradeFeedCache.shared.clear(Self.cacheKey)
+        }
         .task {
             defer { onReady() }   // clear the Trades spinner however this task exits (incl. early return)
             if allDispatchers.isEmpty { await loadAllDispatchers() }
@@ -1908,7 +1914,7 @@ struct ECBAccountingView: View {
                 bigStat("Available now", store.available, store.available < 0 ? AppColor.danger : AppColor.success,
                         caption: "/ \(ecbText(ECBAccounting.maxBalance)) max")
                 bigStat("Projected", store.projected, .primary,
-                        caption: "after pending land")
+                        caption: "once scheduled + IOUs clear")
                 Spacer(minLength: 0)
             }
             // Owe / Owed — outstanding IOUs, mid-size so they read from the header.
