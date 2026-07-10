@@ -521,6 +521,81 @@ enum TradeEngineTests {
             check(n2 == 1, "A6: Must-Be-Off on k2 removes the B match → 1, got \(n2)")
         }
 
+        // MARK: B6-QUAL — region qualification gate (grays out regions in Trade Settings).
+        check(DeskRules.isQualified(quals: ["D"], forRegion: .domestic), "B6-QUAL: everyone qualifies for Domestic (D)")
+        check(!DeskRules.isQualified(quals: ["D"], forRegion: .european), "B6-QUAL: no E → not qualified for European")
+        check(DeskRules.isQualified(quals: ["D", "E"], forRegion: .european), "B6-QUAL: holding E → qualified for European")
+        check(DeskRules.isQualified(quals: ["D", "L"], forRegion: .latin), "B6-QUAL: holding L → qualified for Latin America")
+        check(!DeskRules.isQualified(quals: ["D", "E"], forRegion: .coordinator), "B6-QUAL: no coordinator qual → not qualified")
+        check(DeskRules.isQualified(quals: ["D", "R"], forRegion: .coordinator), "B6-QUAL: a coordinator qual (R) → qualified")
+
+        // MARK: B6-BLACKOUT — a blacked-out weekday blocks a pickup (arbitrary days, not just weekends).
+        do {
+            let prof = TradeProfile(workerID: "z", displayName: "Z", openness: "all",
+                                    blacklistedWeekdays: [4], blacklistedDesks: [], blacklistedShiftTypes: [],
+                                    blacklistedRegions: [], seekingDayIDs: [], updatedAt: .distantPast)
+            check(!prof.passesBlacklist(weekday: 4, desk: "29", shiftType: "AM", region: "Domestic"),
+                  "B6-BLACKOUT: a blacked-out weekday (Wed=4) is rejected by the matcher")
+            check(prof.passesBlacklist(weekday: 3, desk: "29", shiftType: "AM", region: "Domestic"),
+                  "B6-BLACKOUT: a non-blacked-out weekday passes")
+            // Display parity: the calendar tints a WORKING shift only via desk/type/region — the weekday
+            // dimension is opt-in via the `weekdays` set, so HomeCalendar passes [] for working days (a
+            // blacked-out weekday only bites off-day pickups). With weekdays:[] a clean working day → no tint.
+            check(!Blackout.isBlacklisted(desk: "29", startHour: 5, weekday: 4,
+                                          desks: [], shiftTypes: [], regions: [], weekdays: []),
+                  "B6-BLACKOUT: working-day tint ignores the weekday dimension (weekdays: [])")
+            check(Blackout.isBlacklisted(desk: "29", startHour: 5, weekday: 4,
+                                         desks: [], shiftTypes: [], regions: [], weekdays: [4]),
+                  "B6-BLACKOUT: off-day path (weekdays passed) still flags a blacked-out weekday")
+        }
+
+        // MARK: B6-ECB — ECB accounting pure core (signed amount, available vs projected, cap, IOU, decode).
+        do {
+            let d = Date(timeIntervalSince1970: 1_700_000_000)
+            func personal(_ amt: Double, _ cat: ECBCategory, cleared: Bool) -> ECBEntry {
+                ECBEntry(date: d, amount: amt, category: cat, cleared: cleared)
+            }
+            func trade(_ mag: Double, payer: String, payee: String, _ state: ECBLineState, cleared: Bool) -> ECBEntry {
+                ECBEntry(date: d, amount: mag, category: .trade, cleared: cleared, payerID: payer, payeeID: payee, state: state)
+            }
+            // signedAmount: personal passthrough; shared → payee +, payer −.
+            check(ECBAccounting.signedAmount(for: "me", personal(9, .overtime, cleared: true)) == 9, "B6-ECB: personal line passes its signed amount through")
+            check(ECBAccounting.signedAmount(for: "me", trade(5, payer: "you", payee: "me", .confirmed, cleared: true)) == 5, "B6-ECB: shared line credits the payee (+)")
+            check(ECBAccounting.signedAmount(for: "me", trade(5, payer: "me", payee: "you", .confirmed, cleared: true)) == -5, "B6-ECB: shared line debits the payer (−)")
+            // available = agreed + CLEARED only; projected = agreed (cleared or scheduled); pending-confirm excluded from both.
+            let ledger = [personal(9, .overtime, cleared: true),                            // +9 available
+                          personal(-4, .withdrawal, cleared: false),                        // −4 scheduled only
+                          ECBEntry(date: d, amount: 2.5, category: .adjustment, cleared: true), // +2.5 available
+                          trade(5, payer: "you", payee: "me", .confirmed, cleared: true),    // +5 available
+                          trade(3, payer: "you", payee: "me", .confirmed, cleared: false),   // +3 scheduled only
+                          trade(7, payer: "you", payee: "me", .pendingIncoming, cleared: false)] // awaiting confirm → neither
+            check(ECBAccounting.available(ledger, viewerID: "me") == 16.5, "B6-ECB: available = 9 + 2.5 + 5 (cleared only) = 16.5")
+            check(ECBAccounting.projected(ledger, viewerID: "me") == 15.5, "B6-ECB: projected = 16.5 − 4 + 3 (agreed incl. scheduled) = 15.5")
+            check(ECBAccounting.pendingConfirmations(ledger, myID: "me").count == 1, "B6-ECB: one shared line awaits my confirmation")
+            // 144 cap: can't CLEAR a positive delta that pushes available over 144.
+            check(ECBAccounting.wouldExceedCap(available: 140, clearing: 5), "B6-ECB: clearing +5 at 140 exceeds the 144 cap")
+            check(!ECBAccounting.wouldExceedCap(available: 140, clearing: 4), "B6-ECB: clearing +4 at 140 is fine (=144)")
+            check(!ECBAccounting.wouldExceedCap(available: 200, clearing: -10), "B6-ECB: a withdrawal never trips the cap")
+            // IOU capacity = available + net scheduled (you can only promise what you have or will have).
+            let capLedger = [personal(10, .holidayPay, cleared: false),   // scheduled deposit +10
+                             personal(6, .overtime, cleared: true)]       // cleared +6
+            check(ECBAccounting.payableCapacity(capLedger, myID: "me") == 16, "B6-ECB: payable = cleared 6 + scheduled 10 = 16")
+            // owe / owed = outstanding (agreed, uncleared) shared lines; cleared ones drop off.
+            let iouLedger = [trade(4, payer: "me", payee: "you", .confirmed, cleared: false),  // I owe 4
+                             trade(2, payer: "you", payee: "me", .confirmed, cleared: false),  // owed 2 to me
+                             trade(9, payer: "me", payee: "you", .confirmed, cleared: true)]    // cleared → neither
+            check(ECBAccounting.owe(iouLedger, myID: "me") == 4, "B6-ECB: owe = agreed uncleared I pay = 4")
+            check(ECBAccounting.owed(iouLedger, myID: "me") == 2, "B6-ECB: owed = agreed uncleared others pay me = 2")
+            // Setting balance produces the correct delta.
+            check(ECBAccounting.adjustmentAmount(current: 16.5, target: 20) == 3.5, "B6-ECB: set-balance delta 16.5→20 = +3.5")
+            // INV-3: a minimal (legacy-shaped) entry decodes with defaults (incl. cleared=false).
+            let legacyJSON = #"{"id":"x","date":0,"amount":6,"category":"overtime"}"#.data(using: .utf8)!
+            if let back = try? JSONDecoder().decode(ECBEntry.self, from: legacyJSON) {
+                check(back.state == .confirmed && back.payerID == nil && back.memo == "" && back.cleared == false,
+                      "B6-ECB: legacy entry decodes with defaults (INV-3)")
+            } else { check(false, "B6-ECB: legacy entry failed to decode") }
+        }
+
         // MARK: B6-INTENTS — the robot/active-account gate applies ONLY in Mutual mode.
         // Regression: gating BOTH modes on isActiveAccount zeroed the feed when no peer had claimed an
         // account. All (mutualOnly=false) must include an unclaimed peer; Mutual (true) must exclude it.
@@ -1593,9 +1668,10 @@ enum TradeEngineTests {
                   "B4-3: a shift matching NO blacklist dimension is not blacked out")
         }
 
-        // MARK: B4-1 — "Blackout" rename (labels unified; enum cases + gates unchanged).
-        check(WorkingIntentState.mustWork.label == "Blackout", "B4-1: keep (working) day label reads 'Blackout'")
-        check(OffIntentState.mustBeOff.label == "Blackout", "B4-1: must-be-off day label reads 'Blackout'")
+        // MARK: B6-LABEL — working protect = "Keep" (green), off protect = "Blackout" (slate). (Supersedes
+        // B4-1's shared "Blackout" label: the working keep is now visually + verbally distinct from blocked.)
+        check(WorkingIntentState.mustWork.label == "Keep", "B6-LABEL: working-protect day label reads 'Keep'")
+        check(OffIntentState.mustBeOff.label == "Blackout", "B6-LABEL: off-protect (must-be-off) day label reads 'Blackout'")
         // Cases/keys are unchanged (no data migration) — raw values must stay stable.
         check(WorkingIntentState.mustWork.rawValue == "mustWork", "B4-1: mustWork raw value unchanged (no migration)")
         check(OffIntentState.mustBeOff.rawValue == "mustBeOff", "B4-1: mustBeOff raw value unchanged (no migration)")

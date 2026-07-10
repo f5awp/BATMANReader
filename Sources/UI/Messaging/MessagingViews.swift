@@ -182,6 +182,7 @@ struct FormatBar: View {
 
 struct InboxView: View {
     private var store = MessagingStore.shared
+    private var ecb = ECBAccountingStore.shared
     @Environment(\.dismiss) private var dismiss
     @State private var filter = 0   // 0 = all, 1 = ECB only
 
@@ -226,6 +227,12 @@ struct InboxView: View {
                 } else {
                     let arch = store.archivedRequestIDs
                     List {
+                        // B6-ECB: shared ledger lines a dispatcher logged that need YOUR confirmation.
+                        if !ecb.pendingConfirmations.isEmpty {
+                            Section("ECB confirmations") {
+                                ForEach(ecb.pendingConfirmations) { ecbConfirmRow($0) }
+                            }
+                        }
                         let pending = MessagingStore.active(store.pendingIncoming, archived: arch)
                         if !pending.isEmpty {
                             Section("Needs your reply") { ForEach(pending) { row($0) } }
@@ -249,9 +256,33 @@ struct InboxView: View {
             .navigationTitle("Trade Inbox")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
-            .task { await store.refresh(); await TradeProfileStore.shared.refreshOthers() }   // load peers so status renders (A7/B8 / audit #7)
-            .refreshable { await store.refresh(); await TradeProfileStore.shared.refreshOthers() }
+            .task { await store.refresh(); await TradeProfileStore.shared.refreshOthers(); await ecb.syncOnLaunch() }   // load peers so status renders (A7/B8 / audit #7) + ECB confirmations
+            .refreshable { await store.refresh(); await TradeProfileStore.shared.refreshOthers(); await ecb.syncOnLaunch() }
         }
+    }
+
+    /// A shared ECB line the counterparty logged, awaiting my confirm. Confirm → posts on both ledgers.
+    @ViewBuilder private func ecbConfirmRow(_ e: ECBEntry) -> some View {
+        let iReceive = e.payeeID == myID
+        let other = e.counterpartyName(myID: myID) ?? "A dispatcher"
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: "banknote").foregroundStyle(AppColor.pending)
+                Text("\(other) logged an ECB trade")
+                    .font(.subheadline.weight(.semibold))
+            }
+            Text("\(iReceive ? "You receive" : "You pay") \(ecbText(abs(e.amount))) ECB\(e.memo.isEmpty ? "" : " · \(e.memo)")")
+                .font(.caption).foregroundStyle(.secondary)
+            HStack(spacing: 10) {
+                Button { ecb.confirm(id: e.id) } label: {
+                    Label("Confirm", systemImage: "checkmark.circle.fill").frame(maxWidth: .infinity)
+                }.buttonStyle(.borderedProminent).controlSize(.small)
+                Button(role: .destructive) { ecb.decline(id: e.id) } label: {
+                    Label("Decline", systemImage: "xmark.circle").frame(maxWidth: .infinity)
+                }.buttonStyle(.bordered).controlSize(.small)
+            }
+        }
+        .padding(.vertical, 2)
     }
 
     private func row(_ req: TradeRequest) -> some View {
@@ -1348,29 +1379,42 @@ struct EditPostSheet: View {
 struct MessagingDock: View {
     @Binding var showInbox: Bool
     @Binding var showChannel: Bool
-    @Binding var showKey: Bool               // color key / legend (now inside the ⋯ overflow menu)
     @Binding var showTradeSettings: Bool
     @Binding var showAppSettings: Bool
-    @Binding var showDashboard: Bool         // trade-status breakdown (now inside the ⋯ overflow menu)
+    @Binding var showDashboard: Bool         // trade-status breakdown (now its own top-header button)
+    @Binding var showECB: Bool               // ECB Accounting ledger (⋯ menu)
     private var store = MessagingStore.shared
+    private var history = TradeHistoryStore.shared
 
-    init(showInbox: Binding<Bool>, showChannel: Binding<Bool>, showKey: Binding<Bool>,
-         showTradeSettings: Binding<Bool>, showAppSettings: Binding<Bool>, showDashboard: Binding<Bool>) {
-        _showInbox = showInbox; _showChannel = showChannel; _showKey = showKey
-        _showTradeSettings = showTradeSettings; _showAppSettings = showAppSettings; _showDashboard = showDashboard
+    init(showInbox: Binding<Bool>, showChannel: Binding<Bool>,
+         showTradeSettings: Binding<Bool>, showAppSettings: Binding<Bool>,
+         showDashboard: Binding<Bool>, showECB: Binding<Bool>) {
+        _showInbox = showInbox; _showChannel = showChannel
+        _showTradeSettings = showTradeSettings; _showAppSettings = showAppSettings
+        _showDashboard = showDashboard; _showECB = showECB
+    }
+
+    /// Trade-status "something new" badge: in-flight trades needing your attention — agreed-in-app
+    /// (accepted, awaiting you to mark official) + still-negotiating (pending). Live (@Observable stores).
+    private var tradeStatusBadge: Int {
+        let c = DashboardCounts.from(requests: store.requests, responses: store.responses,
+                                     unread: store.pendingIncoming.count, pendingLedger: history.pendingCount)
+        return c.accepted + c.pending
     }
 
     var body: some View {
-        // Three controls only: the two primary destinations (Inbox, Channel) + one ⋯ overflow for the
-        // rest. Inbox's badge is the single "needs you" signal (replaces the old 4-counter status row).
+        // Four controls: Inbox · Channel · Trade status · ⋯ (settings). Each primary destination carries its
+        // own "needs you" badge; the ⋯ overflow is settings only now.
         HStack(spacing: 8) {
             iconButton("tray.full.fill", label: "Inbox",
-                       badge: store.pendingIncoming.count, badgeColor: AppColor.danger) { showInbox = true }
+                       badge: store.pendingIncoming.count + ECBAccountingStore.shared.pendingConfirmations.count,
+                       badgeColor: AppColor.danger) { showInbox = true }
             iconButton("megaphone.fill", label: "Channel",
                        badge: store.unreadBroadcastCount, badgeColor: AppColor.primary) { showChannel = true }
+            iconButton("checklist", label: "Trade status",
+                       badge: tradeStatusBadge, badgeColor: AppColor.pending) { showDashboard = true }
             Menu {
-                Button { showDashboard = true } label: { Label("Trade status", systemImage: "checklist") }
-                Button { showKey = true } label: { Label("Colors & legend", systemImage: "paintpalette") }
+                Button { showECB = true } label: { Label("ECB Accounting", systemImage: "banknote") }
                 Divider()
                 Button { showTradeSettings = true } label: { Label("Trade Settings", systemImage: "arrow.left.arrow.right") }
                 Button { showAppSettings = true } label: { Label("App Settings", systemImage: "gearshape") }

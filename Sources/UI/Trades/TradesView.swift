@@ -101,10 +101,14 @@ struct IntentTallyBar: View {
     var body: some View {
         let wc = intents.workingIntentCounts
         let oc = intents.offIntentCounts
-        // Only the two MATCHING factors (#3) — protective intents (Keep / Must-Be-Off) aren't shown here.
+        // All four marked intents, color-matched to the calendar legend: the two MATCHING factors
+        // (Want to Trade / Want to Work) plus the two PROTECTIVE ones (Keep working shift = green;
+        // Blackout off day = slate). Zero-count categories drop out.
         let items: [(label: String, color: Color, count: Int)] = [
             ("Want to Trade", WorkingIntentState.dontWantToWork.brickColor, wc[.dontWantToWork] ?? 0),
             ("Want to Work",  OffIntentState.wantToWork.brickColor,         oc[.wantToWork] ?? 0),
+            ("Keep",          WorkingIntentState.mustWork.brickColor,       wc[.mustWork] ?? 0),
+            ("Blackout",      OffIntentState.mustBeOff.brickColor,          oc[.mustBeOff] ?? 0),
         ].filter { $0.count > 0 }
         if !items.isEmpty {
             HStack(spacing: 10) {

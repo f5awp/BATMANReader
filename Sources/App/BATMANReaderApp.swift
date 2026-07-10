@@ -21,7 +21,7 @@ struct BATMANReaderApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            MagnifierHost { ContentView() }   // global accessibility magnifier wraps the whole app
         }
         .modelContainer(RosterStore.shared.container)
     }

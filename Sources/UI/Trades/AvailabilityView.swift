@@ -71,10 +71,11 @@ struct FindCandidatesSection: View {
     /// Selected shifts listed by date, annotating the year only when it's not the
     /// current year (e.g. rolls into January).
     private var selectedDatesLabel: String {
+        // Compact numeric dates (7/15, 7/17…) so more fit before truncating; add the year only off-year.
         let cal = Calendar.current
         let thisYear = cal.component(.year, from: Date())
-        let f  = DateFormatter(); f.dateFormat  = "EEE MMM d"
-        let fy = DateFormatter(); fy.dateFormat = "EEE MMM d, yyyy"
+        let f  = DateFormatter(); f.dateFormat  = "M/d"
+        let fy = DateFormatter(); fy.dateFormat = "M/d/yy"
         return selectedShifts.map {
             cal.component(.year, from: $0.date) == thisYear ? f.string(from: $0.date) : fy.string(from: $0.date)
         }.joined(separator: ", ")
@@ -1825,4 +1826,345 @@ struct MiniSchedule: View {
 
 extension ShiftAvailabilityType: Identifiable {
     public var id: String { rawValue }
+}
+
+// MARK: - ECB Accounting (B6-ECB)
+
+/// The ECB bookkeeping register: a balance derived from dated line items, opened from the top-bar ⋯ menu.
+struct ECBAccountingView: View {
+    private var store = ECBAccountingStore.shared
+    @Environment(\.dismiss) private var dismiss
+    @State private var showAdd = false
+    @State private var editing: ECBEntry?
+    @State private var capBlocked = false
+    private var myID: String { SettingsManager.shared.username }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section { balanceHeader }
+                if !store.pendingConfirmations.isEmpty {
+                    Section {
+                        Label("^[\(store.pendingConfirmations.count) shared trade](inflect: true) awaiting confirmation — respond in your Inbox.",
+                              systemImage: "clock.badge.questionmark")
+                            .font(.caption).foregroundStyle(AppColor.pending)
+                    }
+                }
+                if store.register.isEmpty {
+                    Section {
+                        ContentUnavailableView("No ECB activity yet", systemImage: "banknote",
+                            description: Text("Tap + to log overtime, holiday pay, a withdrawal, or a trade with another dispatcher."))
+                    }
+                } else {
+                    Section("Register") {
+                        ForEach(store.register) { e in
+                            row(e)
+                                .contentShape(Rectangle())
+                                .onTapGesture { editing = e }
+                                .swipeActions(edge: .leading) {
+                                    // Mark a scheduled (agreed, un-posted) line as cleared/received.
+                                    if e.isAgreed && !e.cleared {
+                                        Button {
+                                            if !store.markCleared(id: e.id) { capBlocked = true }
+                                        } label: { Label(e.isShared ? "Received" : "Cleared", systemImage: "checkmark.circle") }
+                                        .tint(AppColor.success)
+                                    } else if e.cleared {
+                                        Button { store.markCleared(id: e.id, false) } label: {
+                                            Label("Un-clear", systemImage: "arrow.uturn.backward")
+                                        }.tint(.secondary)
+                                    }
+                                }
+                        }
+                        .onDelete { idx in
+                            let items = store.register
+                            idx.map { items[$0].id }.forEach { store.delete(id: $0) }
+                        }
+                    }
+                }
+            }
+            .navigationTitle("ECB Accounting")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button { showAdd = true } label: { Image(systemName: "plus") }
+                        .accessibilityLabel("Add line item")
+                }
+            }
+            .sheet(isPresented: $showAdd) { ECBAddSheet().magnifiable() }
+            .sheet(item: $editing) { ECBAddSheet(editing: $0).magnifiable() }
+            .alert("Over the 144 cap", isPresented: $capBlocked) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text("Clearing this would push your available ECB over 144. Add a withdrawal first, then clear it.")
+            }
+        }
+    }
+
+    private var balanceHeader: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            // Two headline numbers: Available now (cleared, capped) + Projected (after pending land).
+            HStack(alignment: .top, spacing: 20) {
+                bigStat("Available now", store.available, store.available < 0 ? AppColor.danger : AppColor.success,
+                        caption: "/ \(ecbText(ECBAccounting.maxBalance)) max")
+                bigStat("Projected", store.projected, .primary,
+                        caption: "after pending land")
+                Spacer(minLength: 0)
+            }
+            // Owe / Owed — outstanding IOUs, mid-size so they read from the header.
+            if store.owe > 0.0001 || store.owed > 0.0001 {
+                HStack(spacing: 22) {
+                    midStat("You owe", store.owe, AppColor.danger)
+                    midStat("Owed to you", store.owed, AppColor.success)
+                    Spacer(minLength: 0)
+                }
+            }
+            if store.available >= ECBAccounting.maxBalance - 0.0001 {
+                Label("At the 144 cap — withdraw before clearing more.", systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption2).foregroundStyle(AppColor.pending)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func bigStat(_ label: String, _ value: Double, _ color: Color, caption: String) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(label).font(.caption).foregroundStyle(.secondary)
+            Text(ecbText(value)).font(.system(size: 32, weight: .bold).monospacedDigit()).foregroundStyle(color)
+            Text(caption).font(.caption2).foregroundStyle(.tertiary)
+        }
+    }
+    private func midStat(_ label: String, _ value: Double, _ color: Color) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(label).font(.caption2).foregroundStyle(.secondary)
+            Text(ecbText(value)).font(.title3.weight(.bold).monospacedDigit()).foregroundStyle(color)
+        }
+    }
+
+    @ViewBuilder private func row(_ e: ECBEntry) -> some View {
+        let signed = ECBAccounting.signedAmount(for: myID, e)
+        let pending = e.isShared && e.state != .confirmed
+        HStack(spacing: 10) {
+            Image(systemName: e.category.symbol)
+                .foregroundStyle(signed < 0 ? AppColor.danger : AppColor.success)
+                .frame(width: 22)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(e.isShared ? "Trade · \(e.counterpartyName(myID: myID) ?? "dispatcher")" : e.category.label)
+                    .font(.subheadline.weight(.semibold)).lineLimit(1)
+                Text(subtitle(e)).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+            }
+            Spacer(minLength: 6)
+            VStack(alignment: .trailing, spacing: 1) {
+                Text("\(signed >= 0 ? "+" : "−")\(ecbText(abs(signed)))")
+                    .font(.subheadline.weight(.bold).monospacedDigit())
+                    .foregroundStyle(signed < 0 ? AppColor.danger : AppColor.success)
+                statusChip(e)
+            }
+        }
+        .opacity(pending ? 0.6 : 1)
+    }
+
+    /// Right-aligned status under the amount: confirmation state first, else cleared vs scheduled.
+    @ViewBuilder private func statusChip(_ e: ECBEntry) -> some View {
+        if e.isShared && e.state == .pendingIncoming {
+            Text("Confirm in Inbox").font(.caption2).foregroundStyle(AppColor.pending)
+        } else if e.isShared && e.state == .pendingOutgoing {
+            Text("Awaiting confirm").font(.caption2).foregroundStyle(AppColor.pending)
+        } else if !e.cleared {
+            Text(e.isShared ? "Scheduled · swipe to receive" : "Scheduled · swipe to clear")
+                .font(.caption2).foregroundStyle(AppColor.pending)
+        } else {
+            Label("Cleared", systemImage: "checkmark.circle.fill")
+                .labelStyle(.iconOnly).font(.caption2).foregroundStyle(AppColor.success)
+        }
+    }
+
+    private func subtitle(_ e: ECBEntry) -> String {
+        let f = DateFormatter(); f.dateFormat = "MMM d, yyyy"
+        let date = f.string(from: e.date)
+        return e.memo.isEmpty ? date : "\(date) · \(e.memo)"
+    }
+}
+
+/// Add / edit an ECB line. Segmented type: Add · Subtract · Trade · Set balance.
+struct ECBAddSheet: View {
+    var editing: ECBEntry? = nil
+    private var store = ECBAccountingStore.shared
+    @Environment(\.dismiss) private var dismiss
+    private var myID: String { SettingsManager.shared.username }
+
+    enum Mode: String, CaseIterable, Identifiable { case add = "Add", subtract = "Subtract", trade = "Trade", setBalance = "Set balance"; var id: String { rawValue } }
+    @State private var mode: Mode = .add
+    @State private var creditCat: ECBCategory = .overtime
+    @State private var debitCat: ECBCategory = .withdrawal
+    @State private var amount: Double = 1
+    @State private var memo = ""
+    @State private var target: Double = 0
+    @State private var payDate = Date()         // effective / pay date this line posts
+    @State private var alreadyPosted = false    // add/subtract that already hit the balance → cleared now
+    @State private var overCapacity = false     // IOU/trade exceeds what I can promise
+    // Trade
+    @State private var dispatchers: [(id: String, name: String)] = []
+    @State private var counterpartyID = ""
+    @State private var iPaid = true
+
+    init(editing: ECBEntry? = nil) { self.editing = editing }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                if editing == nil {
+                    Picker("Type", selection: $mode) {
+                        ForEach(Mode.allCases) { Text($0.rawValue).tag($0) }
+                    }.pickerStyle(.segmented)
+                }
+                switch mode {
+                case .add:
+                    Picker("Category", selection: $creditCat) {
+                        ForEach(ECBCategory.creditCases) { Text($0.label).tag($0) }
+                    }
+                    amountStepper
+                    // Preset OT rates — prefill the standard ECB values (payroll conversions).
+                    HStack(spacing: 8) {
+                        Button("1.5× OT · 13.04") { creditCat = .overtime; amount = 13.04 }
+                        Button("2× OT · 17.39") { creditCat = .overtime; amount = 17.39 }
+                        Spacer()
+                    }
+                    .buttonStyle(.bordered).controlSize(.small).font(.caption)
+                    payDateRow
+                    memoField
+                case .subtract:
+                    Picker("Category", selection: $debitCat) {
+                        ForEach(ECBCategory.debitCases) { Text($0.label).tag($0) }
+                    }
+                    amountStepper
+                    payDateRow
+                    memoField
+                case .trade:
+                    Picker("Dispatcher", selection: $counterpartyID) {
+                        Text("Select…").tag("")
+                        ForEach(dispatchers, id: \.id) { Text($0.name).tag($0.id) }
+                    }
+                    Picker("Direction", selection: $iPaid) {
+                        Text("I paid them").tag(true)
+                        Text("They paid me").tag(false)
+                    }.pickerStyle(.segmented)
+                    amountStepper
+                    DatePicker("Arrives / pay date", selection: $payDate, displayedComponents: .date)
+                    memoField
+                    if iPaid {
+                        if store.payableCapacity <= 0.0001 {
+                            Text("You have no ECB to trade yet — log a cleared balance or a scheduled deposit (OT / Holiday) first. You can only promise what you have or will have.")
+                                .font(.caption).foregroundStyle(AppColor.pending)
+                        } else {
+                            Text("You can trade up to \(ecbText(store.payableCapacity)) ECB — your cleared balance plus scheduled deposits. Anything beyond your cleared balance is an IOU that settles when your deposit lands.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                case .setBalance:
+                    HStack {
+                        Text("Available now")
+                        Spacer()
+                        TextField("0", value: $target, format: .number)
+                            .keyboardType(.decimalPad).multilineTextAlignment(.trailing)
+                            .monospacedDigit().frame(maxWidth: 120)
+                    }
+                    Text("Adds a dated Adjustment (cleared) line so your available balance equals the sum of your entries.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            .navigationTitle(editing == nil ? "Add ECB line" : (editing!.isShared ? "Edit trade line" : "Edit line"))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) { Button("Save") { if save() { dismiss() } }.disabled(!canSave) }
+            }
+            .alert("Not enough ECB to promise", isPresented: $overCapacity) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text("You can only trade/IOU up to \(ecbText(store.payableCapacity)) ECB — your cleared balance plus scheduled deposits. Log the deposit first, or lower the amount.")
+            }
+            .task { await loadDispatchers(); preload() }
+        }
+    }
+
+    /// Pay/effective date + an "already posted" shortcut for add/subtract lines.
+    private var payDateRow: some View {
+        Group {
+            DatePicker("Pay date", selection: $payDate, displayedComponents: .date)
+            Toggle("Already posted (counts now)", isOn: $alreadyPosted)
+        }
+    }
+
+    /// Free decimal amount entry (ECB isn't restricted to 0.5 increments).
+    private var amountStepper: some View {
+        HStack {
+            Text("ECB")
+            Spacer()
+            TextField("0", value: $amount, format: .number)
+                .keyboardType(.decimalPad).multilineTextAlignment(.trailing)
+                .monospacedDigit().frame(maxWidth: 120)
+        }
+    }
+    private var memoField: some View {
+        TextField("Note (optional)", text: $memo).font(.subheadline)
+    }
+    private var canSave: Bool {
+        switch mode {
+        case .trade: return !counterpartyID.isEmpty && amount > 0
+        case .setBalance: return true
+        default: return amount > 0
+        }
+    }
+
+    private func preload() {
+        guard let e = editing else { return }
+        memo = e.memo; amount = abs(e.amount == 0 ? 1 : e.amount)
+        payDate = e.date; alreadyPosted = e.cleared
+        if e.isShared {
+            mode = .trade
+            counterpartyID = e.counterpartyID(myID: myID) ?? ""
+            iPaid = e.payerID == myID
+        } else if let credit = e.category.isCredit {
+            mode = credit ? .add : .subtract
+            if credit { creditCat = e.category } else { debitCat = e.category }
+        }
+    }
+
+    /// Returns true on success. Trade/IOU over `payableCapacity` fails (keeps the sheet open + alerts).
+    private func save() -> Bool {
+        if let e = editing {
+            if e.isShared {
+                store.proposeSharedEdit(id: e.id, magnitude: amount, iPaid: iPaid, memo: memo, date: payDate)
+            } else {
+                store.editPersonal(id: e.id, magnitude: amount, memo: memo, date: payDate)
+            }
+            return true
+        }
+        switch mode {
+        case .add:      store.addPersonal(category: creditCat, magnitude: amount, memo: memo, date: payDate, cleared: alreadyPosted)
+        case .subtract: store.addPersonal(category: debitCat, magnitude: amount, memo: memo, date: payDate, cleared: alreadyPosted)
+        case .setBalance: store.setBalance(to: target, date: Date())
+        case .trade:
+            let name = dispatchers.first { $0.id == counterpartyID }?.name ?? counterpartyID
+            if !store.addTradeLine(counterpartyID: counterpartyID, counterpartyName: name,
+                                   magnitude: amount, iPaid: iPaid, memo: memo, date: payDate) {
+                overCapacity = true
+                return false
+            }
+        }
+        return true
+    }
+
+    private func loadDispatchers() async {
+        if !TradeFeedCache.shared.allDispatchers.isEmpty { dispatchers = TradeFeedCache.shared.allDispatchers; return }
+        let now = Date(); let end = Calendar.current.date(byAdding: .month, value: 12, to: now) ?? now
+        let entries = await RosterStore.shared.entries(from: now, to: end)
+        var seen = Set<String>(); var out: [(id: String, name: String)] = []
+        for e in entries where e.workerID != myID && seen.insert(e.workerID).inserted {
+            out.append((e.workerID, TradeNames.resolved(displayName: nil, rosterName: e.workerName, workerID: e.workerID)))
+        }
+        dispatchers = out.sorted { $0.name < $1.name }
+        TradeFeedCache.shared.allDispatchers = dispatchers
+    }
 }

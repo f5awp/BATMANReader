@@ -899,6 +899,12 @@ final class MessagingStore {
             offerID: request.offerID, imageBase64: imageBase64)
         await service.sendResponse(resp)
         responses = (responses.filter { $0.id != resp.id } + [resp]).sorted { $0.createdAt < $1.createdAt }
+        // B6-ECB: an ECB offer accepted via the generic path also auto-posts (de-duped by requestID).
+        if status == .accepted, request.isECB, let amt = request.ecbAmount {
+            ECBAccountingStore.shared.autoInsertAcceptedTrade(
+                requestID: request.id, payerID: request.fromID, payerName: request.fromName,
+                payeeID: myID, payeeName: myName, amount: amt, date: Date())
+        }
     }
 
     func cancelRequest(_ id: String) async {
@@ -1012,6 +1018,12 @@ final class MessagingStore {
             offerID: request.offerID, acceptedDayIDs: days)
         await service.sendResponse(resp)
         responses = (responses.filter { $0.id != resp.id } + [resp]).sorted { $0.createdAt < $1.createdAt }
+        // B6-ECB: accepting an ECB offer auto-posts a CONFIRMED shared ledger line (sender pays accepter).
+        if let amt = request.ecbAmount {
+            ECBAccountingStore.shared.autoInsertAcceptedTrade(
+                requestID: request.id, payerID: request.fromID, payerName: request.fromName,
+                payeeID: myID, payeeName: myName, amount: amt, date: Date())
+        }
     }
 
     /// Sender maintenance: auto-complete pending ledger rows when the recipient

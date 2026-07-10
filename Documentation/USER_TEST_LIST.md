@@ -642,6 +642,19 @@
 - **B6-ECB** — ECB: **tap candidates** to select, then **Send to Selected (N)** sends to just those.
 - **B6-STATS** — a slim **You · PAFCA · period** strip sits above the Home/Trades tab bar; tap → pick period.
 
+### B6-ECB — ECB Accounting  [Auto ✅ core; device-check + needs CloudKit deploy]
+1. ⋯ → **ECB Accounting**. Add Overtime (try the **1.5× OT · 13.04** preset), a Withdrawal, a Holiday deposit
+   with a **future pay date**. Each shows **Scheduled**; swipe to **mark cleared** → it moves into **Available**.
+2. **Available** never exceeds **144** — try clearing past it → blocked with a "withdraw first" alert. Projected
+   shows the after-pay-day total.
+3. **Set balance** adds a cleared Adjustment so Available = the register sum.
+4. **Trade/IOU:** add a trade line with a dispatcher — you can only promise up to **cleared + scheduled
+   deposits** (IOU). It's **pending on both** until they **Confirm in their Inbox** ("ECB confirmations");
+   Decline removes it from both. Editing a confirmed shared line re-confirms.
+5. **Auto-post:** accept an in-app ECB offer → a line auto-appears on both ledgers (sender −N, taker +N),
+   scheduled until the taker marks received.
+6. Amounts accept **decimals** (not just .5). ⚠️ Cross-device/cross-user needs the CloudKit deploy first.
+
 ### Notes for the tester
 - If something here fails, tell me the item number (e.g. "T5 ⚠️") and what you saw.
 - "Auto ✅" means the logic is unit-guarded, but **your device check is still the real proof** — the

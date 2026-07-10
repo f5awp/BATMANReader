@@ -264,6 +264,79 @@ actor CloudKitPrivateStateService {
               let updatedAt = record["intentsUpdatedAt"] as? Date else { return nil }
         return (json, updatedAt)
     }
+
+    /// B6-ECB: the user's PERSONAL ECB ledger lines (adds/subtracts/adjustments) — private, cross-device
+    /// only. Rides the same private_state record in its own fields (needs `ecbLedger`/`ecbLedgerUpdatedAt`
+    /// deployed). Shared trade lines are NOT here — they live in the public `ECBLedgerLine` record.
+    func publishECB(_ json: String, updatedAt: Date) async {
+        let record: CKRecord
+        if let existing = try? await db.record(for: id) { record = existing }
+        else { record = CKRecord(recordType: Self.recordType, recordID: id) }
+        record["ecbLedger"] = json as CKRecordValue
+        record["ecbLedgerUpdatedAt"] = updatedAt as CKRecordValue
+        do { _ = try await db.save(record) }
+        catch { print("⚠️ ECB ledger publish failed: \(error.localizedDescription)") }
+    }
+
+    func fetchECB() async -> (json: String, updatedAt: Date)? {
+        guard let record = try? await db.record(for: id),
+              let json = record["ecbLedger"] as? String,
+              let updatedAt = record["ecbLedgerUpdatedAt"] as? Date else { return nil }
+        return (json, updatedAt)
+    }
+}
+
+// MARK: - ECB shared-line sync (B6-ECB) — public DB, visible to both dispatchers.
+
+/// One record per SHARED ECB trade/IOU line, fetched by `payerID == me OR payeeID == me`. JSON `payload`
+/// + flat queryable `payerID` / `payeeID` / `state` (deploy required). Mirrors the metrics service shape.
+actor CloudKitECBService {
+    private let db = CKContainer(identifier: CloudKitConfig.containerID).publicCloudDatabase
+    private let rt = "ECBLedgerLine"
+
+    func publish(_ e: ECBEntry) async {
+        guard let data = try? JSONEncoder().encode(e), let json = String(data: data, encoding: .utf8) else { return }
+        let recordID = CKRecord.ID(recordName: e.id)
+        let rec: CKRecord
+        if let existing = try? await db.record(for: recordID) { rec = existing }
+        else { rec = CKRecord(recordType: rt, recordID: recordID) }
+        rec["payload"] = json as CKRecordValue
+        rec["payerID"] = (e.payerID ?? "") as CKRecordValue
+        rec["payeeID"] = (e.payeeID ?? "") as CKRecordValue
+        rec["state"]   = e.state.rawValue as CKRecordValue
+        do { _ = try await db.save(rec) } catch { print("⚠️ ECB line publish failed: \(error.localizedDescription)") }
+    }
+
+    func delete(id: String) async {
+        do { _ = try await db.deleteRecord(withID: CKRecord.ID(recordName: id)) }
+        catch { print("⚠️ ECB line delete failed: \(error.localizedDescription)") }
+    }
+
+    func fetch(involving myID: String) async -> [ECBEntry] {
+        let payer = await query(NSPredicate(format: "payerID == %@", myID))
+        let payee = await query(NSPredicate(format: "payeeID == %@", myID))
+        var seen = Set<String>(); var out: [ECBEntry] = []
+        for e in payer + payee where seen.insert(e.id).inserted { out.append(e) }
+        return out
+    }
+
+    private func query(_ predicate: NSPredicate) async -> [ECBEntry] {
+        var out: [ECBEntry] = []
+        let q = CKQuery(recordType: rt, predicate: predicate)
+        do {
+            var page = try await db.records(matching: q, resultsLimit: CKQueryOperation.maximumResults)
+            while true {
+                for (_, result) in page.matchResults {
+                    if let rec = try? result.get(), let json = rec["payload"] as? String,
+                       let data = json.data(using: .utf8),
+                       let e = try? JSONDecoder().decode(ECBEntry.self, from: data) { out.append(e) }
+                }
+                guard let cursor = page.queryCursor else { break }
+                page = try await db.records(continuingMatchFrom: cursor, resultsLimit: CKQueryOperation.maximumResults)
+            }
+        } catch { print("⚠️ ECB line fetch failed: \(error.localizedDescription)") }
+        return out
+    }
 }
 
 // MARK: - Global metrics (H1 #18) — team-wide event log on the public DB.

@@ -345,13 +345,19 @@ struct IntentCalendarView: View {
         let s = SettingsManager.shared
         let hit: Bool
         if let shift, !shift.isOff {
+            // Working day: tint only on the desk/type/region dimensions. The weekday ("Blackout days")
+            // dimension is intentionally EXCLUDED here (pass []), because a blacked-out weekday only ever
+            // suppresses PICKUPS — and pickups require you to be off (canCover's hard isOff gate). Tinting a
+            // working shift for it would misrepresent the matching behavior.
             hit = Blackout.isBlacklisted(desk: shift.desk, startHour: shift.startHour, weekday: weekday,
                                          desks: s.blacklistedDesks, shiftTypes: s.blacklistedShiftTypes,
-                                         regions: s.blacklistedRegions, weekdays: s.blacklistedWeekdays)
+                                         regions: s.blacklistedRegions, weekdays: [])
         } else {
-            hit = s.blacklistedWeekdays.contains(weekday)   // off day: weekday dimension only
+            hit = s.blacklistedWeekdays.contains(weekday)   // off day: weekday blackout applies here
         }
-        return hit ? WorkingIntentState.mustWork.brickColor.opacity(0.28) : nil
+        // Blacklist "blocked" family reads SLATE (same as an off-day Blackout + the Trade-Settings pills),
+        // visually distinct from the green "keep"/must-work intent. (One hue = one meaning.)
+        return hit ? OffIntentState.mustBeOff.brickColor.opacity(0.30) : nil
     }
 
     /// Dispatch "brick" intent fill, or nil when the day has no explicit intent.
@@ -458,7 +464,7 @@ struct DayIntentEditor: View {
                             get: { working == .wantToWork ? .mustWork : (working ?? .neutralOpen) },
                             set: { working = $0 })) {
                             ForEach(WorkingIntentState.allCases.filter { $0 != .wantToWork }) {
-                                Text($0.label).tag($0)   // B4-1: .mustWork label is now "Blackout"
+                                Text($0.label).tag($0)   // .mustWork label = "Keep" (working-day protect; green)
                             }
                         }
                     }
@@ -562,6 +568,59 @@ struct DayIntentEditor: View {
     }
 }
 
+// MARK: - Wrapping pill row + selectable blackout pill (Trade Settings)
+
+/// A simple left-to-right wrapping layout — pills flow onto the next line when a row fills.
+struct FlowLayout: Layout {
+    var spacing: CGFloat = 8
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let maxW = proposal.width ?? .infinity
+        var x: CGFloat = 0, y: CGFloat = 0, rowH: CGFloat = 0, maxRowW: CGFloat = 0
+        for v in subviews {
+            let s = v.sizeThatFits(.unspecified)
+            if x + s.width > maxW, x > 0 { maxRowW = max(maxRowW, x - spacing); x = 0; y += rowH + spacing; rowH = 0 }
+            x += s.width + spacing; rowH = max(rowH, s.height)
+        }
+        maxRowW = max(maxRowW, x - spacing)
+        return CGSize(width: min(maxRowW, maxW), height: y + rowH)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var x = bounds.minX, y = bounds.minY, rowH: CGFloat = 0
+        for v in subviews {
+            let s = v.sizeThatFits(.unspecified)
+            if x + s.width > bounds.maxX, x > bounds.minX { x = bounds.minX; y += rowH + spacing; rowH = 0 }
+            v.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(s))
+            x += s.width + spacing; rowH = max(rowH, s.height)
+        }
+    }
+}
+
+/// A tappable "blackout / blacklist" pill. Selected = excluded (slate Blackout hue, matching the calendar's
+/// Blackout tint). `enabled == false` grays it out (e.g. a region the user isn't qualified for).
+struct BlacklistPill: View {
+    let label: String
+    let selected: Bool
+    var enabled: Bool = true
+    let action: () -> Void
+    private var blackout: Color { OffIntentState.mustBeOff.brickColor }
+
+    var body: some View {
+        Button(action: action) {
+            Text(label)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(!enabled ? Color.secondary.opacity(0.45) : (selected ? .white : .primary))
+                .padding(.horizontal, 13).padding(.vertical, 7)
+                .background(!enabled ? Color(.tertiarySystemFill).opacity(0.4)
+                                     : (selected ? blackout : Color(.tertiarySystemFill)),
+                            in: RoundedRectangle(cornerRadius: DS.controlRadius, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+    }
+}
+
 // MARK: - Tabbed Trade Settings sheet
 
 struct TradeSettingsSheet: View {
@@ -627,6 +686,17 @@ struct TradeSettingsSheet: View {
                 })
     }
     private func publishProfile() { Task { await TradeProfileStore.shared.publishMine() } }
+
+    /// Weekday pills for "Blackout days" — Calendar weekday numbers (1 = Sun … 7 = Sat) → single letters.
+    static let weekdayPills: [(day: Int, letter: String)] =
+        [(1, "S"), (2, "M"), (3, "T"), (4, "W"), (5, "T"), (6, "F"), (7, "S")]
+
+    /// Toggle a value in one of the blacklist sets, then re-publish so peers' matching reflects it. The
+    /// user's OWN feed/calendar update live (SettingsManager is @Observable); publish keeps peers current.
+    private func toggle<T: Hashable>(_ set: inout Set<T>, _ value: T) {
+        if set.contains(value) { set.remove(value) } else { set.insert(value) }
+        publishProfile()
+    }
 
     // ── Relief dispatcher (schedule known only ~45 days out) ─────────────
     private var reliefOn: Binding<Bool> {
@@ -785,36 +855,52 @@ struct TradeSettingsSheet: View {
         } footer: {
             Text("You won't be offered automated pickups on these desks.")
         }
-        Section("Blacklisted shift types") {
-            ForEach(ShiftAvailabilityType.allCases, id: \.self) { type in
-                Toggle(type.rawValue, isOn: Binding(
-                    get: { settings.blacklistedShiftTypes.contains(type.rawValue) },
-                    set: { on in
-                        if on { settings.blacklistedShiftTypes.insert(type.rawValue) }
-                        else { settings.blacklistedShiftTypes.remove(type.rawValue) }
-                    }))
+        Section {
+            FlowLayout(spacing: 8) {
+                ForEach(ShiftAvailabilityType.allCases, id: \.self) { type in
+                    BlacklistPill(label: type.rawValue,
+                                  selected: settings.blacklistedShiftTypes.contains(type.rawValue)) {
+                        toggle(&settings.blacklistedShiftTypes, type.rawValue)
+                    }
+                }
             }
+            .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 2)
+        } header: {
+            Text("Blacklisted shift types")
+        } footer: {
+            Text("Tap a type (AM / PM / MID) to stop being offered those shifts.")
         }
         Section {
-            ForEach(DeskRegion.allCases, id: \.self) { region in
-                Toggle(region.rawValue, isOn: Binding(
-                    get: { settings.blacklistedRegions.contains(region.rawValue) },
-                    set: { on in
-                        if on { settings.blacklistedRegions.insert(region.rawValue) }
-                        else { settings.blacklistedRegions.remove(region.rawValue) }
-                    }))
+            FlowLayout(spacing: 8) {
+                ForEach(DeskRegion.allCases, id: \.self) { region in
+                    let qualed = DeskRules.isQualified(quals: myQuals, forRegion: region)
+                    BlacklistPill(label: region.rawValue,
+                                  selected: settings.blacklistedRegions.contains(region.rawValue),
+                                  enabled: qualed) {
+                        toggle(&settings.blacklistedRegions, region.rawValue)
+                    }
+                }
             }
+            .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 2)
         } header: {
             Text("Blacklisted regions")
         } footer: {
-            Text("High-Demand and Personal Milestone dates are set by long-pressing a date on the calendar.")
+            Text("Grayed regions need a qualification you don't hold. Tap a region to stop being offered its desks.")
         }
         Section {
-            Toggle("Blackout weekends", isOn: Binding(   // B4-4
-                get: { WeekendBlackout.isOn(settings.blacklistedWeekdays) },
-                set: { on in settings.blacklistedWeekdays = WeekendBlackout.apply(on: on, to: settings.blacklistedWeekdays) }))
+            FlowLayout(spacing: 8) {
+                ForEach(Self.weekdayPills, id: \.day) { wd in
+                    BlacklistPill(label: wd.letter,
+                                  selected: settings.blacklistedWeekdays.contains(wd.day)) {
+                        toggle(&settings.blacklistedWeekdays, wd.day)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 2)
+        } header: {
+            Text("Blackout days")
         } footer: {
-            Text("Blacks out every Saturday and Sunday — they won't be offered in trades and show as Blackout on your calendar.")
+            Text("Tap the days you never want offered in trades — they show as Blackout on your calendar.")
         }
 
         qualSwapSettings

@@ -49,6 +49,11 @@ final class SettingsManager {
         didSet { defaults.set(showDebugWebView, forKey: Keys.debugWebView) }
     }
 
+    /// Accessibility: show the floating screen-magnifier button (global pinch-to-zoom) for low-vision users.
+    var magnifierEnabled: Bool {
+        didSet { defaults.set(magnifierEnabled, forKey: Keys.magnifier) }
+    }
+
     // ── Shared dispatcher calendar ───────────────────────────────────
     // The EKCalendar identifier for the shared "AA Dispatch" calendar.
     // Setup (done once by the group coordinator):
@@ -229,6 +234,7 @@ final class SettingsManager {
         notificationLeadHours = savedHours > 0 ? savedHours : 2
 
         showDebugWebView         = defaults.bool(forKey: Keys.debugWebView)
+        magnifierEnabled         = defaults.bool(forKey: Keys.magnifier)
         sharedCalendarEnabled    = defaults.bool(forKey: Keys.sharedCalEnabled)
         sharedCalendarIdentifier = defaults.string(forKey: Keys.sharedCalID) ?? ""
         displayName              = defaults.string(forKey: Keys.displayName) ?? ""
@@ -268,6 +274,7 @@ final class SettingsManager {
         static let password       = "batman.password"
         static let leadHours      = "batman.notificationLeadHours"
         static let debugWebView   = "batman.showDebugWebView"
+        static let magnifier      = "batman.magnifierEnabled"
         static let sharedCalEnabled = "batman.sharedCalendarEnabled"
         static let sharedCalID    = "batman.sharedCalendarID"
         static let displayName    = "batman.displayName"

@@ -98,6 +98,19 @@ enum DeskRules {
         return quals.contains(required)
     }
 
+    /// Whether a worker holding `quals` can work ANY desk in `region`. Drives graying-out regions the user
+    /// isn't qualified for in Trade Settings. Domestic = every dispatcher (D); Coordinator = holding any
+    /// coordinator qual (A/O/R/S). PURE/testable.
+    static func isQualified(quals: [String], forRegion region: DeskRegion) -> Bool {
+        switch region {
+        case .domestic:    return true
+        case .european:    return quals.contains("E")
+        case .latin:       return quals.contains("L")
+        case .pacific:     return quals.contains("P")
+        case .coordinator: return quals.contains { ["A", "O", "R", "S"].contains($0) }
+        }
+    }
+
     /// B1: does the selection include a qual-gated (international) desk? "D" is universal (every
     /// dispatcher holds it), so only a NON-D required qual counts. Drives the "Qual Swap" button
     /// (gray → glowing green) — a give-day on such a desk may need a bridge.

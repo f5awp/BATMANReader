@@ -89,7 +89,7 @@ enum WorkingIntentState: String, Codable, Sendable, CaseIterable, Identifiable {
 
     var label: String {
         switch self {
-        case .mustWork:       return "Blackout"   // B4-1: working-day blackout (never trade away). Case unchanged.
+        case .mustWork:       return "Keep"   // working-day protect: keep this shift, never trade it away (green). Case unchanged.
         case .wantToWork:     return "Want to Work"
         case .neutralOpen:    return "Open"
         case .dontWantToWork: return "Want to Trade Away"

@@ -45,6 +45,7 @@ struct HomeView: View {
     @State private var offIntentBrush: OffIntentState = .wantToWork   // direct off-day intent brush (F1)
     @State private var noteBrush = ""   // F2: when set, each tapped day also gets this note
     @State private var clearNoteMode = false   // when on, tapping a day CLEARS its note (no intent paint)
+    @State private var showColorKey = false    // color key / legend (its own button, left of the layers toggle)
     @State private var pendingConflict: PendingConflict?
     @State private var overwriteConfirmed = false   // #10: ask-overwrite ONCE per mass-action session
     @State private var showLeaveGuard = false        // C1 phase-2: Save-or-Discard when leaving with unsaved edits
@@ -63,7 +64,8 @@ struct HomeView: View {
                         markIntentsPill
                         Spacer(minLength: 8)
                         // Successful-trade stats moved to the shared bottom bar (TradeStatsBar) so the top
-                        // of the calendar isn't crowded (B6-STATS).
+                        // of the calendar isn't crowded (B6-STATS). Color Key sits just left of the layers toggle.
+                        colorKeyButton
                         VisibilityToolbar(layers: $layers)
                     }
                     .padding(.horizontal).padding(.vertical, 6)
@@ -103,8 +105,10 @@ struct HomeView: View {
             .toolbar(.hidden, for: .navigationBar)   // the shared AppTopBar is the header now
             .sheet(item: $editTarget) { target in
                 DayIntentEditor(target: target)
+                    .magnifiable()
                     .presentationDetents([.large])
             }
+            .sheet(isPresented: $showColorKey) { IntentKeySheet() }
             .alert("Overwrite existing marks?", isPresented: Binding(
                 get: { pendingConflict != nil }, set: { if !$0 { pendingConflict = nil } })) {
                 Button("Overwrite", role: .destructive) { pendingConflict?.apply(); pendingConflict = nil }
@@ -154,6 +158,21 @@ struct HomeView: View {
                             in: RoundedRectangle(cornerRadius: DS.controlRadius, style: .continuous))
         }
         .buttonStyle(.plain)
+    }
+
+    /// Color key / legend — a dedicated icon button just left of the layers (visibility) toggle. Same
+    /// control shape as VisibilityToolbar; opens the shared `IntentKeySheet`.
+    private var colorKeyButton: some View {
+        Button { showColorKey = true } label: {
+            Image(systemName: "paintpalette")
+                .font(.system(size: 15, weight: .semibold))
+                .frame(width: DS.controlSize, height: DS.controlSize)
+                .foregroundStyle(Color.primary)
+                .background(Color(.tertiarySystemFill),
+                            in: RoundedRectangle(cornerRadius: DS.controlRadius, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Colors & legend")
     }
 
     /// Read-only one-line view of your private notes (from Trade Settings), swipe to

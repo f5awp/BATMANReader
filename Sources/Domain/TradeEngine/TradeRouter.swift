@@ -630,11 +630,41 @@ enum TradeRouter {
         }
 
         var result: [TradePackage] = []
+
+        // PERF BOUND (B6-INTENTS-CAP): "All" mode explores the WHOLE roster (Mutual skips inactive accounts
+        // up front, so it's already small). Two guards keep it fast:
+        //  1) Result-neutral OVERLAP PRUNE — a peer can only form a deal if our schedules cross: they're OFF
+        //     on a day I work (they could take it) OR I'm OFF on a day they work (I could take theirs). With
+        //     no overlap, `twoWayExplore` yields an empty plan and the deal is dropped anyway — so skipping
+        //     them changes nothing but the runtime.
+        //  2) A best-first HARD CAP so a pathological roster can't run unbounded. Ordered by acceptance prior
+        //     (then workerID for determinism); anything past the cap is the least likely to matter, and we
+        //     log the drop (no silent truncation).
+        let myWorkDays = Set(mineEntries.filter { !$0.isOff }.map(\.day))
+        let myOffDays  = Set(mineEntries.filter {  $0.isOff }.map(\.day))
+        func schedulesCross(_ id: String) -> Bool {
+            let m = maps[id] ?? [:]
+            return myWorkDays.contains { m[$0]?.isOff == true }
+                || myOffDays.contains  { m[$0].map { !$0.isOff } ?? false }
+        }
+        let relevant = universe
+            .filter { schedulesCross($0.workerID) }
+            .sorted {   // acceptance prior desc, then workerID asc (deterministic tiebreak)
+                let a = priors[$0.workerID] ?? 0, b = priors[$1.workerID] ?? 0
+                return a != b ? a > b : $0.workerID < $1.workerID
+            }
+        let candidates = Array(relevant.prefix(Self.intentCandidateCap))
+        #if DEBUG
+        if relevant.count > candidates.count {
+            print("⚠️ intentSolutions: capped candidates \(relevant.count) → \(candidates.count) (intentCandidateCap)")
+        }
+        #endif
+
         // The WHOLE roster is eligible as a counterparty. The INTENT side must be someone who actually
         // marked a day (enforced by `assembleIntentDeal`'s marketplace seed) — but the OTHER side may be
         // an unprofiled peer joining via PREFERENCES (bookend-only by default, A8). Low-intent deals
         // simply score lower and fall off the top-20 cap.
-        for cand in universe.sorted(by: { $0.workerID < $1.workerID }) {
+        for cand in candidates {
             if Task.isCancelled { return [] }   // U-PERF: cancellable mid-scan (Cancel button / supersede)
             await Task.yield()                  // hand the main run loop a turn so the UI never freezes
             // Robot gate is Mutual-only (B6-INTENTS): All shows every peer; Mutual = real accounts only.
@@ -742,6 +772,10 @@ enum TradeRouter {
     }
     /// Safety ceiling — neither feed ever shows more than this, even if the floor passes a huge set.
     static let intentResultCap = 60
+    /// Worst-case bound on how many peers `intentSolutions` explores (after the result-neutral overlap
+    /// prune), best-first by acceptance prior. Well above a typical relevant set, so it only bites huge
+    /// rosters. (B6-INTENTS-CAP.)
+    static let intentCandidateCap = 300
 
     // MARK: - Real per-leg scoring (Step 2: packageLogProb from live data)
 

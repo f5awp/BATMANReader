@@ -4,6 +4,7 @@
 //   Tab 2 — Availability: edit your off-day availability, find trade candidates
 
 import SwiftUI
+import UIKit
 import WebKit
 import UniformTypeIdentifiers
 import AuthenticationServices
@@ -23,10 +24,10 @@ struct ContentView: View {
     @State private var selectedTab = 0
     @State private var showInbox = false
     @State private var showChannel = false
-    @State private var showKey = false            // color key / legend (moved into the dock)
     @State private var showTradeSettings = false  // settings (moved into the dock, on every tab)
     @State private var showAppSettings = false
     @State private var showDashboard = false       // trade-status dashboard (from the top-bar status strip)
+    @State private var showECB = false             // ECB Accounting ledger (⋯ menu)
     @State private var showChangelog = false   // Z2: startup "What's New"
     @State private var launchLoading = true     // spinner during the initial sync so it never looks frozen
     @State private var pendingTab: Int? = nil   // C1 phase-2: tab the user wants to leave Home for
@@ -55,9 +56,9 @@ struct ContentView: View {
         VStack(spacing: 0) {
             // One clean, shared top bar (identity + utilities) — replaces the old floating dock that
             // overlapped the status header. Laid out above the tabs, so nothing overlaps.
-            AppTopBar(showInbox: $showInbox, showChannel: $showChannel, showKey: $showKey,
+            AppTopBar(showInbox: $showInbox, showChannel: $showChannel,
                       showTradeSettings: $showTradeSettings, showAppSettings: $showAppSettings,
-                      showDashboard: $showDashboard)
+                      showDashboard: $showDashboard, showECB: $showECB)
             TabView(selection: tabSelection) {
                 HomeView()
                     .tabItem { Label("Home", systemImage: "calendar") }
@@ -100,12 +101,12 @@ struct ContentView: View {
             }
             Button("Keep Editing", role: .cancel) { pendingTab = nil }
         } message: { Text("You have unsaved marks. Save them so your trades update, or discard to revert.") }
-        .fullScreenCover(isPresented: $showInbox) { InboxView() }
-        .fullScreenCover(isPresented: $showChannel) { ChannelView() }
-        .sheet(isPresented: $showKey) { IntentKeySheet() }
-        .sheet(isPresented: $showTradeSettings) { TradeSettingsSheet() }
-        .sheet(isPresented: $showAppSettings) { SettingsView() }
-        .sheet(isPresented: $showDashboard) { TradeDashboardSheet() }
+        .fullScreenCover(isPresented: $showInbox) { InboxView().magnifiable() }
+        .fullScreenCover(isPresented: $showChannel) { ChannelView().magnifiable() }
+        .sheet(isPresented: $showTradeSettings) { TradeSettingsSheet().magnifiable() }
+        .sheet(isPresented: $showAppSettings) { SettingsView().magnifiable() }
+        .sheet(isPresented: $showDashboard) { TradeDashboardSheet().magnifiable() }
+        .sheet(isPresented: $showECB) { ECBAccountingView().magnifiable() }
         .alert("Not on the app yet", isPresented: Binding(
             get: { messaging.blockedRecipient != nil },
             set: { if !$0 { messaging.blockedRecipient = nil } })) {
@@ -117,6 +118,7 @@ struct ContentView: View {
             WelcomeView {
                 settings.lastSeenChangelogBuild = AppInfo.build   // mark seen on dismiss
             }
+            .magnifiable()
         }
         // First-run identity setup — until signed in with Apple AND an ID claimed.
         .fullScreenCover(isPresented: Binding(
@@ -136,6 +138,7 @@ struct ContentView: View {
             if !settings.username.trimmingCharacters(in: .whitespaces).isEmpty {
                 await TradeProfileStore.shared.publishMine()   // stamp our profile `accountClaimed` so peers see us as active
             }
+            await ECBAccountingStore.shared.syncOnLaunch()     // B6-ECB: shared lines + personal blob
             await CloudPush.setup()                            // register push subscriptions
             WidgetData.update()
             // Refresh the once-a-day summary notification with the latest counts (default ON).
@@ -170,17 +173,18 @@ struct ContentView: View {
 struct AppTopBar: View {
     @Binding var showInbox: Bool
     @Binding var showChannel: Bool
-    @Binding var showKey: Bool
     @Binding var showTradeSettings: Bool
     @Binding var showAppSettings: Bool
     @Binding var showDashboard: Bool
+    @Binding var showECB: Bool
     private var settings = SettingsManager.shared
 
-    init(showInbox: Binding<Bool>, showChannel: Binding<Bool>, showKey: Binding<Bool>,
-         showTradeSettings: Binding<Bool>, showAppSettings: Binding<Bool>, showDashboard: Binding<Bool>) {
-        _showInbox = showInbox; _showChannel = showChannel; _showKey = showKey
+    init(showInbox: Binding<Bool>, showChannel: Binding<Bool>,
+         showTradeSettings: Binding<Bool>, showAppSettings: Binding<Bool>,
+         showDashboard: Binding<Bool>, showECB: Binding<Bool>) {
+        _showInbox = showInbox; _showChannel = showChannel
         _showTradeSettings = showTradeSettings; _showAppSettings = showAppSettings
-        _showDashboard = showDashboard
+        _showDashboard = showDashboard; _showECB = showECB
     }
 
     var body: some View {
@@ -198,9 +202,9 @@ struct AppTopBar: View {
                 }
             }
             Spacer(minLength: 8)
-            MessagingDock(showInbox: $showInbox, showChannel: $showChannel, showKey: $showKey,
+            MessagingDock(showInbox: $showInbox, showChannel: $showChannel,
                           showTradeSettings: $showTradeSettings, showAppSettings: $showAppSettings,
-                          showDashboard: $showDashboard)
+                          showDashboard: $showDashboard, showECB: $showECB)
         }
         .padding(.horizontal, 14).padding(.vertical, 8)
         .background(.bar)
@@ -254,6 +258,159 @@ struct TradeStatsBar: View {
             Text("\(n)").fontWeight(.bold).monospacedDigit()
             Text(label).foregroundStyle(.secondary)
         }
+    }
+}
+
+extension View {
+    /// Wraps a sheet/cover root so the global screen magnifier works inside it too (sheets are separate
+    /// presentation contexts the root `MagnifierHost` can't reach). Each surface gets its own zoom + button.
+    func magnifiable() -> some View { MagnifierHost { self } }
+}
+
+// MARK: - Global screen magnifier (accessibility)
+
+/// Wraps the whole app surface. A draggable, semi-transparent magnifier button (shown only when the
+/// feature is enabled in App Settings) toggles zoom. While active, **two-finger pinch** zooms and
+/// **two-finger drag** pans; **single-finger** touches pass straight through so the user still taps and
+/// scrolls normally — mirroring iOS's built-in Zoom. Sheets are separate presentation contexts and aren't
+/// scaled (v1 limitation).
+struct MagnifierHost<Content: View>: View {
+    @ViewBuilder var content: Content
+    private var settings = SettingsManager.shared
+
+    @State private var active = false
+    @State private var zoom: CGFloat = 1
+    @State private var pan: CGSize = .zero
+    @State private var baseZoom: CGFloat = 1
+    @State private var basePan: CGSize = .zero
+    @State private var buttonPos: CGPoint? = nil
+
+    private let maxZoom: CGFloat = 5
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack {
+                content
+                    .scaleEffect(zoom, anchor: .center)
+                    .offset(pan)
+
+                if active {
+                    ZoomGestureCatcher(
+                        onPinch: { scale, began in
+                            if began { baseZoom = zoom }
+                            zoom = min(max(1, baseZoom * scale), maxZoom)
+                            pan = clampPan(pan, zoom: zoom, in: geo.size)
+                        },
+                        onPan: { t, began in
+                            if began { basePan = pan }
+                            pan = clampPan(CGSize(width: basePan.width + t.width, height: basePan.height + t.height),
+                                           zoom: zoom, in: geo.size)
+                        })
+                    .allowsHitTesting(false)   // it installs window-level recognizers; nothing to hit here
+                }
+
+                if settings.magnifierEnabled {
+                    magnifierButton(in: geo.size)
+                }
+            }
+        }
+    }
+
+    private func clampPan(_ p: CGSize, zoom: CGFloat, in size: CGSize) -> CGSize {
+        let maxX = size.width * (zoom - 1) / 2
+        let maxY = size.height * (zoom - 1) / 2
+        return CGSize(width: min(max(p.width, -maxX), maxX), height: min(max(p.height, -maxY), maxY))
+    }
+
+    @ViewBuilder private func magnifierButton(in size: CGSize) -> some View {
+        let pos = buttonPos ?? CGPoint(x: size.width - 40, y: size.height - 150)
+        Image(systemName: active ? "minus.magnifyingglass" : "plus.magnifyingglass")
+            .font(.system(size: 20, weight: .bold))
+            .foregroundStyle(active ? Color.white : AppColor.primary)
+            .frame(width: 48, height: 48)
+            .background(active ? AnyShapeStyle(AppColor.primary) : AnyShapeStyle(.ultraThinMaterial), in: Circle())
+            .overlay(Circle().stroke(AppColor.primary.opacity(0.5), lineWidth: 1.5))
+            .opacity(0.92)
+            .shadow(radius: 3, y: 1)
+            .position(pos)
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { v in
+                        // Only treat as a drag past a small threshold; otherwise it's a tap (handled onEnded).
+                        if abs(v.translation.width) + abs(v.translation.height) > 8 {
+                            buttonPos = CGPoint(x: min(max(24, v.location.x), size.width - 24),
+                                                y: min(max(60, v.location.y), size.height - 60))
+                        }
+                    }
+                    .onEnded { v in
+                        if abs(v.translation.width) + abs(v.translation.height) <= 8 {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                active.toggle()
+                                if !active { zoom = 1; pan = .zero }
+                            }
+                        }
+                    })
+            .accessibilityLabel(active ? "Turn off magnifier" : "Magnifier — pinch with two fingers to zoom")
+    }
+}
+
+/// Installs app-wide 2-finger pinch + 2-finger pan recognizers on the key window (with
+/// `cancelsTouchesInView = false` + `minimumNumberOfTouches = 2`), so single-finger taps/scrolls are never
+/// stolen and both fingers of a gesture are always seen regardless of which view they land on.
+struct ZoomGestureCatcher: UIViewRepresentable {
+    var onPinch: (CGFloat, Bool) -> Void   // (cumulative scale, began)
+    var onPan: (CGSize, Bool) -> Void      // (cumulative translation, began)
+
+    func makeCoordinator() -> Coordinator { Coordinator(onPinch: onPinch, onPan: onPan) }
+
+    func makeUIView(context: Context) -> UIView {
+        let v = UIView(frame: .zero)
+        v.isUserInteractionEnabled = false
+        DispatchQueue.main.async {
+            guard let window = v.window ?? UIApplication.shared.connectedScenes
+                    .compactMap({ ($0 as? UIWindowScene)?.keyWindow }).first else { return }
+            context.coordinator.attach(to: window)
+        }
+        return v
+    }
+    func updateUIView(_ uiView: UIView, context: Context) {
+        context.coordinator.onPinch = onPinch; context.coordinator.onPan = onPan
+    }
+    static func dismantleUIView(_ uiView: UIView, coordinator: Coordinator) { coordinator.detach() }
+
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        var onPinch: (CGFloat, Bool) -> Void
+        var onPan: (CGSize, Bool) -> Void
+        private weak var window: UIWindow?
+        private var pinch: UIPinchGestureRecognizer?
+        private var pan: UIPanGestureRecognizer?
+        /// Only ONE catcher owns the window recognizers at a time — so a sheet's magnifier takes over from
+        /// the main surface's cleanly (no duplicate recognizers). The most-recently-activated wins.
+        private static weak var current: Coordinator?
+
+        init(onPinch: @escaping (CGFloat, Bool) -> Void, onPan: @escaping (CGSize, Bool) -> Void) {
+            self.onPinch = onPinch; self.onPan = onPan
+        }
+        func attach(to window: UIWindow) {
+            Self.current?.detach()
+            let p = UIPinchGestureRecognizer(target: self, action: #selector(handlePinch(_:)))
+            let d = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
+            d.minimumNumberOfTouches = 2; d.maximumNumberOfTouches = 2
+            [p, d].forEach { $0.delegate = self; $0.cancelsTouchesInView = false; window.addGestureRecognizer($0) }
+            self.window = window; self.pinch = p; self.pan = d
+            Self.current = self
+        }
+        func detach() {
+            if let p = pinch { window?.removeGestureRecognizer(p) }
+            if let d = pan { window?.removeGestureRecognizer(d) }
+            pinch = nil; pan = nil; window = nil
+            if Self.current === self { Self.current = nil }
+        }
+        @objc private func handlePinch(_ g: UIPinchGestureRecognizer) { onPinch(g.scale, g.state == .began) }
+        @objc private func handlePan(_ g: UIPanGestureRecognizer) {
+            let t = g.translation(in: g.view); onPan(CGSize(width: t.x, height: t.y), g.state == .began)
+        }
+        func gestureRecognizer(_ g: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
     }
 }
 

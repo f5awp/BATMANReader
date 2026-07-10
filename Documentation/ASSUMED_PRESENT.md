@@ -195,6 +195,50 @@
   tap = period menu. `HomeMetricsHeader` deleted (relocated, not duplicated). Assumption: `safeAreaInset`
   sits above the native tab bar without overlap on all devices. ⚠️ device-verify (placement, no overlap, period switch)
 
+## Build 6 batch-5 — ECB Accounting (B6-ECB)
+- **Two-balance model.** `available` = agreed + CLEARED lines only (the number capped at **144**); `projected`
+  = agreed incl. scheduled (pay-day adds/withdraws + landing IOUs). Awaiting-confirmation shared lines count
+  toward neither. Pure + tested (`ECBAccounting`). ✅ proven by test
+- **Nothing clears automatically.** Every add/subtract/IOU is SCHEDULED until the user taps mark-cleared
+  (taker taps mark-received for an IOU) — "only happens on pay days." `date` = the effective/pay date.
+- **144 cap on cleared.** `markCleared` is blocked (returns false → alert) if it would push `available` over
+  144; pendings may still queue past it. Withdraw first. ✅ proven by test
+- **IOU against future deposits.** Outgoing trade/IOU magnitude ≤ `payableCapacity` (cleared + net scheduled
+  deposits); over-cap is blocked in the add sheet. Taker sees "arrives ~date", marks received → clears both
+  sides. ✅ proven by test
+- **Auto-post on accepted in-app ECB trade** (sender pays taker), CONFIRMED but uncleared, de-duped by
+  `tradeRequestID`. Hooked in `respond`/`acceptECB`.
+- **Split sync + INV-4.** Personal lines → private DB `ecbLedger` blob (LWW, your devices); shared lines →
+  public `ECBLedgerLine` (union merge, `keepCacheOnEmpty` so empty fetch never wipes). Confirmations surface
+  in the Inbox ("ECB confirmations" + Inbox badge). INV-3 custom decode; INV-5 all in existing files.
+  ⚠️ **DEPLOY REQUIRED** before cross-device/cross-user works: CloudKit `ECBLedgerLine` type + queryable
+  `payerID`/`payeeID`/`state`, and `PrivateState` `ecbLedger`/`ecbLedgerUpdatedAt` fields (Dev→Prod). Local +
+  auto-insert work before the deploy. ⚠️ device-verify after deploy
+- **OT presets** 1.5× = 13.04, 2× = 17.39 (prefill buttons); amounts are free decimals (not 0.5-locked).
+
+## Build 6 — screen magnifier (B6-MAG)
+- **Global magnifier** wraps the app root (`MagnifierHost` in `BATMANReaderApp`). A `SettingsManager.magnifierEnabled`
+  toggle (App Settings → Accessibility) shows a draggable, semi-transparent magnifier button (bottom-right).
+  Tap → active; **2-finger pinch** zooms (≤5×), **2-finger drag** pans (clamped), **1-finger** passes through
+  to tap/scroll. Implemented with WINDOW-level `UIPinchGestureRecognizer` + 2-touch `UIPanGestureRecognizer`
+  (`cancelsTouchesInView=false`) so single-finger interaction is never stolen and both fingers are always
+  seen. ⚠️ device-verify.
+- **B6-MAG-2 — sheets magnify too (v1 limit RESOLVED).** A `.magnifiable()` modifier (`MagnifierHost { self }`)
+  wraps each presented root (Inbox, Channel, Trade Settings, App Settings, Trade status, ECB Accounting,
+  Welcome, day editor, ECB add/edit). Each surface has its own zoom; `ZoomGestureCatcher.Coordinator.current`
+  (static) keeps ONE catcher owning the window pinch/pan recognizers, so a sheet's magnifier takes over from
+  the main surface cleanly (no duplicates). Not wrapped yet: deep sub-sheets inside Trade Settings
+  (date-range/notes editors) + system photo pickers (low priority). ⚠️ device-verify each sheet.
+
+## Build 6 batch-4 assumptions (flag if wrong)
+- **B6-SETTINGS — Trade Settings pill revamp.** AM/PM/MID, regions, and blackout days are now horizontal
+  `BlacklistPill`s in a `FlowLayout` (selected = slate Blackout hue). Regions the user isn't qualified for
+  are grayed + non-tappable via pure `DeskRules.isQualified(quals:forRegion:)` (D=all, E/L/P by qual,
+  Coordinator by A/O/R/S). "Blackout weekends" → **"Blackout days"** = 7 weekday pills writing
+  `blacklistedWeekdays` (Set<Int>). All three write the SAME `SettingsManager` sets the matcher already
+  consumes (`Blackout.isBlacklisted` / `TradeProfile.passesBlacklist`) and `publishProfile()` on each tap,
+  so the user's feed updates live and peers re-match. ✅ proven by test (B6-QUAL, B6-BLACKOUT); ⚠️ device-verify layout/graying
+
 ## Build 6 batch-3 assumptions (flag if wrong)
 - **B6-VAC-DEDUP — overlapping strips were fighting (root cause of the July 26-29 bug).** The expanded
   schedule repeats a date window across multiple strips; the user's row appears in each. Two strips both

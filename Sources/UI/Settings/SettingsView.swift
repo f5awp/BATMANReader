@@ -78,6 +78,15 @@ struct SettingsView: View {
                     Text("“Automatic” follows your device's light/dark (day-night) setting.")
                 }
 
+                // ── Accessibility ────────────────────────────────────
+                Section {
+                    Toggle(isOn: $settings.magnifierEnabled) {
+                        Label("Screen magnifier", systemImage: "plus.magnifyingglass")
+                    }
+                } footer: {
+                    Text("Shows a floating magnifier button (drag it anywhere). Tap it, then pinch with two fingers to zoom and drag with two fingers to pan — one finger still taps and scrolls normally.")
+                }
+
                 // ── Daily summary ────────────────────────────────────
                 Section {
                     Toggle(isOn: $settings.dailyDigestEnabled) {
