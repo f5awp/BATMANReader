@@ -1946,13 +1946,17 @@ struct ECBAccountingView: View {
                         caption: "once scheduled + IOUs clear")
                 Spacer(minLength: 0)
             }
-            // Owe / Owed — outstanding IOUs, mid-size so they read from the header.
-            if store.owe > 0.0001 || store.owed > 0.0001 {
-                HStack(spacing: 22) {
-                    midStat("You owe", store.owe, AppColor.danger)
-                    midStat("Owed to you", store.owed, AppColor.success)
-                    Spacer(minLength: 0)
-                }
+            // Owe / Owed — ALWAYS shown so your position is visible. Counts every uncleared shared
+            // line by side, INCLUDING awaiting-confirm ones (matches what the register lists), so a
+            // pending outgoing offer reads as "you owe" before the other party confirms.
+            HStack(spacing: 22) {
+                midStat("You owe", outstandingOwe, AppColor.danger)
+                midStat("Owed to you", outstandingOwed, AppColor.success)
+                Spacer(minLength: 0)
+            }
+            if pendingCount > 0 {
+                Text("^[\(pendingCount) line](inflect: true) still awaiting confirmation — counts once confirmed and cleared.")
+                    .font(.caption2).foregroundStyle(.tertiary)
             }
             if store.available >= ECBAccounting.maxBalance - 0.0001 {
                 Label("At the 144 cap — withdraw before clearing more.", systemImage: "exclamationmark.triangle.fill")
@@ -1974,6 +1978,21 @@ struct ECBAccountingView: View {
             Text(label).font(.caption2).foregroundStyle(.secondary)
             Text(ecbText(value)).font(.title3.weight(.bold).monospacedDigit()).foregroundStyle(color)
         }
+    }
+
+    /// Every uncleared shared line where I'm the payer (I'll pay ECB), incl. awaiting-confirm.
+    private var outstandingOwe: Double {
+        store.entries.filter { $0.isShared && !$0.cleared && $0.payerID == myID }
+            .reduce(0) { $0 + abs($1.amount) }
+    }
+    /// Every uncleared shared line where I'm the payee (they'll pay me), incl. awaiting-confirm.
+    private var outstandingOwed: Double {
+        store.entries.filter { $0.isShared && !$0.cleared && $0.payeeID == myID }
+            .reduce(0) { $0 + abs($1.amount) }
+    }
+    /// Shared lines not yet confirmed by the counterparty.
+    private var pendingCount: Int {
+        store.entries.filter { $0.isShared && $0.state != .confirmed }.count
     }
 
     @ViewBuilder private func row(_ e: ECBEntry) -> some View {
