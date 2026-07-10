@@ -57,7 +57,36 @@ struct FindCandidatesSection: View {
     @State private var rosterPeople: [(id: String, name: String)] = []
     @State private var allDispatchers: [(id: String, name: String)] = []   // D2: full-roster lookup (was Just 2)
     @State private var searchTask: Task<Void, Never>?   // A1: cancellable Lucky search
-    private var filteredPackages: [TradePackage] { searchFilter.filter(packages) }
+    // More-filter resolution maps for the receive-type / desk-qual criteria (need roster data):
+    @State private var dayType: [String: ShiftAvailabilityType] = [:]   // "workerID|dayID" → that shift's type
+    @State private var dayQual: [String: String] = [:]                  // "workerID|dayID" → desk's required qual
+    @State private var myDayQual: [String: String] = [:]                // my give-day id → desk's required qual
+    private var filteredPackages: [TradePackage] { searchFilter.filter(packages).filter(criteriaMatch) }
+    /// Quals present across the current results — the qual filter's option list.
+    private var availableQuals: [String] { Set(dayQual.values).union(myDayQual.values).sorted() }
+    /// Apply the roster-backed More-filter criteria (receive shift-type + desk qual). Date range,
+    /// engine, max-people and required-person are handled by `searchFilter.filter`.
+    private func criteriaMatch(_ p: TradePackage) -> Bool {
+        let types = searchFilter.receiveTypes
+        let qual = searchFilter.deskQual
+        if types.isEmpty && qual == nil { return true }
+        var recvTypes: Set<ShiftAvailabilityType> = []
+        var deskQuals: Set<String> = []
+        for a in p.assignments {
+            for d in a.takeDayIDs {                     // days I PICK UP (partner shifts)
+                if let t = dayType["\(a.workerID)|\(d)"] { recvTypes.insert(t) }
+                if let q = dayQual["\(a.workerID)|\(d)"] { deskQuals.insert(q) }
+            }
+            for d in a.giveDayIDs { if let q = myDayQual[d] { deskQuals.insert(q) } }   // my give desks
+        }
+        for leg in p.route?.legs ?? [] {
+            if leg.toID == settings.username { recvTypes.insert(.infer(fromStartHour: leg.startHour)) }
+            if let q = DeskRules.requiredQual(forDesk: leg.desk) { deskQuals.insert(q) }
+        }
+        if !types.isEmpty, recvTypes.isDisjoint(with: types) { return false }
+        if let qual, !deskQuals.contains(qual) { return false }
+        return true
+    }
     // B1: international-desk qual-swap entry — the button glows green only when a selected desk is gated.
     @State private var showQualSwaps = false
     @State private var qualSwapResults: [TradePackage] = []
@@ -99,7 +128,7 @@ struct FindCandidatesSection: View {
             TwoWaySheet(candidate: c)
         }
         .sheet(isPresented: $showFilter) {
-            MasterFilterSheet(filter: $searchFilter, people: rosterPeople,
+            MasterFilterSheet(filter: $searchFilter, people: rosterPeople, availableQuals: availableQuals,
                               onGenerate: { f in if !selectedIDs.isEmpty { runSearch { await search(generation: f, lucky: true) } } },
                               onReset: { if !selectedIDs.isEmpty { runSearch { await searchFast() } } })
         }
@@ -446,6 +475,20 @@ struct FindCandidatesSection: View {
         let result = await TradeRouter.packages(forGiveShifts: shifts, excluding: settings.username, generation: generation, lucky: lucky)
         if Task.isCancelled { return }   // A1: superseded by a newer search — don't clobber its state
         packages = result
+
+        // Resolve type + desk-qual for every result day so the More-filter (shift-time / qual) can
+        // apply synchronously. Partner shifts come from their cached schedules; mine from the store.
+        var dt: [String: ShiftAvailabilityType] = [:]; var dq: [String: String] = [:]
+        for wid in Set(packages.flatMap { $0.assignments.map(\.workerID) }) {
+            for e in await RosterStore.shared.schedule(forWorker: wid) where !e.isOff {
+                dt["\(wid)|\(e.day)"] = ShiftAvailabilityType.infer(fromStartHour: e.startHour)
+                if let q = DeskRules.requiredQual(forDesk: e.desk) { dq["\(wid)|\(e.day)"] = q }
+            }
+        }
+        dayType = dt; dayQual = dq
+        myDayQual = Dictionary(uniqueKeysWithValues: store.shifts.compactMap { s in
+            (!s.isOff ? DeskRules.requiredQual(forDesk: s.desk) : nil).map { (s.id, $0) }
+        })
 
         // A2: people for the Connection dropdown — candidates + published peers + result participants.
         var seen = Set<String>(); var people: [(id: String, name: String)] = []

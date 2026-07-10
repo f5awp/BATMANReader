@@ -338,17 +338,21 @@ struct MaxPeoplePicker: View {
 struct MasterFilterSheet: View {
     @Binding var filter: SearchFilter
     let people: [(id: String, name: String)]
+    var availableQuals: [String] = []
     /// One-time HEAVY generation with the chosen criteria (runs 3+ / N-Way).
     var onGenerate: (SearchFilter) -> Void = { _ in }
     /// Back to the section's fast NORMAL generation (2-person only).
     var onReset: () -> Void = {}
     @Environment(\.dismiss) private var dismiss
     @State private var draft: SearchFilter
+    @State private var limitDates = false   // gate the date-range pickers
 
-    init(filter: Binding<SearchFilter>, people: [(id: String, name: String)],
+    init(filter: Binding<SearchFilter>, people: [(id: String, name: String)], availableQuals: [String] = [],
          onGenerate: @escaping (SearchFilter) -> Void = { _ in }, onReset: @escaping () -> Void = {}) {
-        _filter = filter; self.people = people; self.onGenerate = onGenerate; self.onReset = onReset
+        _filter = filter; self.people = people; self.availableQuals = availableQuals
+        self.onGenerate = onGenerate; self.onReset = onReset
         _draft = State(initialValue: filter.wrappedValue)
+        _limitDates = State(initialValue: filter.wrappedValue.dateStart != nil || filter.wrappedValue.dateEnd != nil)
     }
 
     var body: some View {
@@ -376,6 +380,53 @@ struct MasterFilterSheet: View {
                         ForEach(people, id: \.id) { Text($0.name).tag($0.id) }
                     }
                     Text("Only show trades that include this dispatcher.").font(.caption2).foregroundStyle(.secondary)
+                }
+                Section {
+                    Toggle("Limit to a date range", isOn: Binding(
+                        get: { limitDates },
+                        set: { on in
+                            limitDates = on
+                            if on {
+                                if draft.dateStart == nil { draft.dateStart = Date() }
+                                if draft.dateEnd == nil { draft.dateEnd = Date() }
+                            } else { draft.dateStart = nil; draft.dateEnd = nil }
+                        }))
+                    if limitDates {
+                        DatePicker("From", selection: Binding(get: { draft.dateStart ?? Date() },
+                                                              set: { draft.dateStart = $0 }), displayedComponents: .date)
+                        DatePicker("To", selection: Binding(get: { draft.dateEnd ?? Date() },
+                                                            set: { draft.dateEnd = $0 }), displayedComponents: .date)
+                    }
+                } header: { Text("Date range") }
+                footer: { Text("Only show trades where every moved day falls inside this window.") }
+
+                Section {
+                    HStack(spacing: 8) {
+                        ForEach(ShiftAvailabilityType.allCases, id: \.self) { t in
+                            let on = draft.receiveTypes.contains(t)
+                            Button {
+                                if on { draft.receiveTypes.remove(t) } else { draft.receiveTypes.insert(t) }
+                            } label: {
+                                Text(t.rawValue).font(.subheadline.weight(.semibold))
+                                    .padding(.horizontal, 14).padding(.vertical, 7)
+                                    .background(on ? AppColor.primary : Color(.tertiarySystemFill), in: Capsule())
+                                    .foregroundStyle(on ? .white : .primary)
+                            }.buttonStyle(.plain)
+                        }
+                        Spacer()
+                    }
+                } header: { Text("Shift time you'd pick up") }
+                footer: { Text("Only show trades where the shifts you'd receive are these types.") }
+
+                if !availableQuals.isEmpty {
+                    Section {
+                        Picker("Qual", selection: Binding(get: { draft.deskQual ?? "" },
+                                                          set: { draft.deskQual = $0.isEmpty ? nil : $0 })) {
+                            Text("Any").tag("")
+                            ForEach(availableQuals, id: \.self) { Text($0).tag($0) }
+                        }
+                    } header: { Text("Desk qualification") }
+                    footer: { Text("Only show trades involving desks that require this qual.") }
                 }
                 Section {
                     // One-time HEAVY generation for the chosen criteria (3+ / N-Way included).

@@ -428,6 +428,10 @@ struct SearchFilter: Equatable, Sendable {
     var engine: Engine = .both
     var maxPeople: Int = 4          // 1…4 distinct participants (incl. you)
     var requiredWorkerID: String?   // when set, only solutions that INCLUDE this person
+    var dateStart: Date?            // only solutions where EVERY moved day is on/after this date
+    var dateEnd: Date?              // …and on/before this date
+    var receiveTypes: Set<ShiftAvailabilityType> = []  // days you PICK UP must be one of these (empty = any)
+    var deskQual: String?           // only trades involving desks that require this qual (resolved in the view)
 
     /// The default "normal" criteria — every engine, up to 4 people, anyone.
     static let normal = SearchFilter()
@@ -446,6 +450,9 @@ struct SearchFilter: Equatable, Sendable {
         if engine != .both { parts.append(engine == .minCost ? "Min-Cost" : "N-Way") }
         if maxPeople != 4 { parts.append("≤\(maxPeople)") }
         if let r = requiredWorkerID { parts.append("with \(nameFor(r))") }
+        if dateStart != nil || dateEnd != nil { parts.append("dates") }
+        if !receiveTypes.isEmpty { parts.append(receiveTypes.map(\.rawValue).sorted().joined(separator: "/")) }
+        if let q = deskQual { parts.append("\(q) desks") }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
@@ -453,12 +460,32 @@ struct SearchFilter: Equatable, Sendable {
     private func contains(_ id: String, _ p: TradePackage) -> Bool {
         p.assignments.contains { $0.workerID == id } || (p.route?.participants.contains(id) ?? false)
     }
-    /// Apply the filter to a result set (post-search). Engine selects methodology, maxPeople caps
-    /// participants, requiredWorkerID forces a person into every kept solution.
+    /// Every day moved by a package (your gives + your gets + circular legs).
+    private func movedDayIDs(_ p: TradePackage) -> [String] {
+        var d = p.assignments.flatMap { $0.giveDayIDs + $0.takeDayIDs }
+        if let legs = p.route?.legs { d += legs.map(\.dayID) }
+        return d
+    }
+    private static let isoFmt: DateFormatter = {
+        let f = DateFormatter(); f.calendar = Calendar(identifier: .gregorian); f.dateFormat = "yyyy-MM-dd"; return f
+    }()
+    static func iso(_ d: Date) -> String { isoFmt.string(from: d) }
+
+    /// Apply the package-intrinsic filters (post-search): engine/methodology, maxPeople, a required
+    /// participant, and the date range (every moved day must fall inside it). The receive-type and
+    /// desk-qual criteria need roster data and are applied in the view via `receiveTypes`/`deskQual`.
     func filter(_ packages: [TradePackage]) -> [TradePackage] {
-        packages.filter { p in
+        let lo = dateStart.map(Self.iso)
+        let hi = dateEnd.map(Self.iso)
+        return packages.filter { p in
             if p.peopleCount > maxPeople { return false }
             if let req = requiredWorkerID, !contains(req, p) { return false }
+            if lo != nil || hi != nil {
+                let days = movedDayIDs(p)
+                if days.isEmpty { return false }
+                if let lo, days.contains(where: { $0 < lo }) { return false }
+                if let hi, days.contains(where: { $0 > hi }) { return false }
+            }
             switch engine {
             case .minCost: return p.methodology != .circular
             case .nWay:    return p.methodology == .circular

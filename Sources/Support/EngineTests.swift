@@ -241,6 +241,24 @@ enum TradeEngineTests {
                   "B6-ECB60: no recent work (robot/inactive) → excluded from any offer")
         }
 
+        // B6-FILTER: the Trade Solutions date-range criterion keeps only solutions whose EVERY moved
+        // day (give + get) falls inside the window; a package with any day outside is dropped.
+        do {
+            func pkg(_ give: [String], _ take: [String]) -> TradePackage {
+                TradePackage(id: give.joined() + take.joined(), methodology: .greedy,
+                             assignments: [PackageAssignment(workerID: "x", name: "X", giveDayIDs: give, takeDayIDs: take)],
+                             route: nil)
+            }
+            let inWindow  = pkg(["2026-07-10"], ["2026-07-20"])
+            let outWindow = pkg(["2026-07-10"], ["2026-08-05"])   // Aug 5 is past the end
+            let df = DateFormatter(); df.calendar = Calendar(identifier: .gregorian); df.dateFormat = "yyyy-MM-dd"
+            func d(_ iso: String) -> Date { df.date(from: iso) ?? Date() }
+            var f = SearchFilter(); f.dateStart = d("2026-07-01"); f.dateEnd = d("2026-07-31")
+            let kept = f.filter([inWindow, outWindow])
+            check(kept.contains(inWindow) && !kept.contains(outWindow),
+                  "B6-FILTER: date range keeps all-in-window solutions, drops any with a day outside")
+        }
+
         // MARK: Vacation auto-intent (SPEC S-PARSE-2). A day flipping to vacation auto-
         // sets a SOFT, user-changeable Must-Be-Off + "vacation" note. Sentinel day, cleaned up.
         do {
