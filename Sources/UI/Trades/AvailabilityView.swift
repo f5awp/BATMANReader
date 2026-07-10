@@ -1726,13 +1726,16 @@ struct MiniScheduleGrid: View {
                     .foregroundStyle(marker == nil ? .primary
                         : (topology(key) == .highDemand ? Color.black.opacity(0.85) : .white))
             }
-            .frame(height: 32)
+            .frame(height: fill ? 27 : 32)
             Text(label.isEmpty ? " " : label)
                 .font(.caption.weight(.heavy))
                 .foregroundStyle(working ? accent : .secondary)
                 .lineLimit(1).minimumScaleFactor(0.55)
+                // Clear the 5-pt intent bar that overlays the bottom edge, so shift labels
+                // (e.g. "AM 82") aren't clipped by it in fill mode.
+                .padding(.bottom, fill ? 5 : 0)
         }
-        .frame(maxWidth: .infinity, minHeight: fill ? 30 : 50, maxHeight: fill ? .infinity : nil)
+        .frame(maxWidth: .infinity, minHeight: fill ? 40 : 50, maxHeight: fill ? .infinity : nil)
         .background(background(key: key, working: working))
         .overlay(alignment: .bottom) { intentBar(key: key) }
         .clipShape(RoundedRectangle(cornerRadius: 7))

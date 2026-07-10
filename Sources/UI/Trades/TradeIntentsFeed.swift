@@ -955,42 +955,48 @@ struct PackageDetailView: View {
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 12) {
-                chipIndex
+            GeometryReader { geo in
+                // Landscape (wider than tall): calendars go SIDE BY SIDE and the chrome (chip index,
+                // legend) collapses so the two calendars scale to fill the screen instead of being
+                // squished into an unusable sliver.
+                let wide = geo.size.width > geo.size.height
+                VStack(spacing: wide ? 6 : 12) {
+                    if !wide { chipIndex }
 
-                HStack {
-                    Button { if monthIndex > 0 { monthIndex -= 1 } } label: { Image(systemName: "chevron.left").font(.headline) }
-                        .disabled(monthIndex == 0)
-                    Spacer()
-                    Text(Self.monthF.string(from: monthAnchor(monthIndex))).font(.headline)
-                    Button { withAnimation { showIntents.toggle() } } label: {
-                        Image(systemName: showIntents ? "paintpalette.fill" : "paintpalette")
-                            .foregroundStyle(showIntents ? Color.accentColor : .secondary)
+                    HStack {
+                        Button { if monthIndex > 0 { monthIndex -= 1 } } label: { Image(systemName: "chevron.left").font(.headline) }
+                            .disabled(monthIndex == 0)
+                        Spacer()
+                        Text(Self.monthF.string(from: monthAnchor(monthIndex))).font(.headline)
+                        Button { withAnimation { showIntents.toggle() } } label: {
+                            Image(systemName: showIntents ? "paintpalette.fill" : "paintpalette")
+                                .foregroundStyle(showIntents ? Color.accentColor : .secondary)
+                        }
+                        .accessibilityLabel(showIntents ? "Hide intent colors" : "Show intent colors")
+                        Spacer()
+                        Button { if monthIndex < monthOffsets.count - 1 { monthIndex += 1 } } label: { Image(systemName: "chevron.right").font(.headline) }
+                            .disabled(monthIndex >= monthOffsets.count - 1)
                     }
-                    .accessibilityLabel(showIntents ? "Hide intent colors" : "Show intent colors")
-                    Spacer()
-                    Button { if monthIndex < monthOffsets.count - 1 { monthIndex += 1 } } label: { Image(systemName: "chevron.right").font(.headline) }
-                        .disabled(monthIndex >= monthOffsets.count - 1)
-                }
-                .padding(.horizontal)
+                    .padding(.horizontal)
 
-                TabView(selection: $monthIndex) {
-                    ForEach(monthOffsets, id: \.self) { off in
-                        stepCalendars(for: off).tag(off).padding(.horizontal)
+                    TabView(selection: $monthIndex) {
+                        ForEach(monthOffsets, id: \.self) { off in
+                            stepCalendars(for: off, wide: wide).tag(off).padding(.horizontal)
+                        }
                     }
-                }
-                .tabViewStyle(.page(indexDisplayMode: .never))
+                    .tabViewStyle(.page(indexDisplayMode: .never))
 
-                MiniScheduleLegend().padding(.horizontal)
+                    if !wide { MiniScheduleLegend().padding(.horizontal) }
 
-                Button {
-                    isCircular ? onExecute() : onPropose()
-                    dismiss()
-                } label: {
-                    Label("Propose", systemImage: isCircular ? "arrow.triangle.2.circlepath" : "paperplane.fill")   // D4: generic
-                        .frame(maxWidth: .infinity)
+                    Button {
+                        isCircular ? onExecute() : onPropose()
+                        dismiss()
+                    } label: {
+                        Label("Propose", systemImage: isCircular ? "arrow.triangle.2.circlepath" : "paperplane.fill")   // D4: generic
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent).padding(.horizontal).padding(.bottom, 8)
                 }
-                .buttonStyle(.borderedProminent).padding(.horizontal).padding(.bottom, 8)
             }
             .navigationTitle(dateTitle)
             .navigationBarTitleDisplayMode(.inline)
@@ -1066,16 +1072,24 @@ struct PackageDetailView: View {
 
     /// The selected leg's two calendars — YOU pinned on top whenever the leg involves you (stable, no
     /// give/get flip); a loop hop between two OTHER people shows that hop's giver→receiver.
-    @ViewBuilder private func stepCalendars(for off: Int) -> some View {
+    @ViewBuilder private func stepCalendars(for off: Int, wide: Bool) -> some View {
         if steps.indices.contains(selectedStep) {
             let s = steps[selectedStep]
             let involvesMe = s.fromID == myID || s.toID == myID
             let topID = involvesMe ? myID : s.fromID
             let bottomID = involvesMe ? (s.fromID == myID ? s.toID : s.fromID) : s.toID
-            VStack(spacing: 8) {
-                personCalendar(topID, off: off, focus: s.dayID)
-                Image(systemName: "arrow.down").font(.subheadline).foregroundStyle(.secondary)
-                personCalendar(bottomID, off: off, focus: s.dayID)
+            if wide {
+                // Side by side in landscape → each calendar gets full height and stays readable.
+                HStack(alignment: .top, spacing: 12) {
+                    personCalendar(topID, off: off, focus: s.dayID)
+                    personCalendar(bottomID, off: off, focus: s.dayID)
+                }
+            } else {
+                VStack(spacing: 8) {
+                    personCalendar(topID, off: off, focus: s.dayID)
+                    Image(systemName: "arrow.down").font(.subheadline).foregroundStyle(.secondary)
+                    personCalendar(bottomID, off: off, focus: s.dayID)
+                }
             }
         }
     }
@@ -1097,11 +1111,14 @@ struct PackageDetailView: View {
             .frame(maxHeight: .infinity)   // the two calendars split the available height → fit, no scroll
     }
 
-    /// My intents on the "You" calendar (hidden when the overlay toggle is off).
+    /// My intents on the "You" calendar (hidden when the overlay toggle is off). Standardized to a
+    /// single bottom bar covering EVERY intent — working, off-day intent, AND off-day availability
+    /// (AM/PM/MID pickup) — so off-day marks are no longer invisible here.
     private func myIntent(_ day: String) -> Color? {
         guard showIntents else { return nil }
         if let w = DayIntentStore.shared.workingIntent(forDay: day) { return w.brickColor }
         if let o = DayIntentStore.shared.offIntent(forDay: day) { return o.brickColor }
+        if !DayIntentStore.shared.availability(forDay: day).isEmpty { return BrickPalette.availableOff }
         return nil
     }
 
