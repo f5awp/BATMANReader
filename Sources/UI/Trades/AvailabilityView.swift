@@ -125,7 +125,7 @@ struct FindCandidatesSection: View {
             content
         }
         .fullScreenCover(item: $twoWayCandidate) { c in
-            TwoWaySheet(candidate: c)
+            TwoWaySheet(candidate: c).magnifiable()
         }
         .sheet(isPresented: $showFilter) {
             MasterFilterSheet(filter: $searchFilter, people: rosterPeople, availableQuals: availableQuals,
@@ -179,6 +179,7 @@ struct FindCandidatesSection: View {
             PackageDetailView(package: pkg,
                               onPropose: { Task { await propose(pkg) } },
                               onExecute: { if let r = pkg.route { execRoute = r } })
+                .magnifiable()
         }
         .alert("Package sent", isPresented: Binding(
             get: { packageSent != nil }, set: { if !$0 { packageSent = nil } })) {
@@ -1786,7 +1787,7 @@ struct MiniScheduleGrid: View {
                     .foregroundStyle(marker == nil ? .primary
                         : (topology(key) == .highDemand ? Color.black.opacity(0.85) : .white))
             }
-            .frame(height: fill ? 27 : 32)
+            .frame(height: fill ? 23 : 32)
             Text(label.isEmpty ? " " : label)
                 .font(.caption.weight(.heavy))
                 .foregroundStyle(working ? accent : .secondary)
@@ -1795,7 +1796,7 @@ struct MiniScheduleGrid: View {
                 // (e.g. "AM 82") aren't clipped by it in fill mode.
                 .padding(.bottom, fill ? 5 : 0)
         }
-        .frame(maxWidth: .infinity, minHeight: fill ? 40 : 50, maxHeight: fill ? .infinity : nil)
+        .frame(maxWidth: .infinity, minHeight: fill ? 30 : 50, maxHeight: fill ? .infinity : nil)
         .background(background(key: key, working: working))
         .overlay(alignment: .bottom) { intentBar(key: key) }
         .clipShape(RoundedRectangle(cornerRadius: 7))
@@ -2001,21 +2002,24 @@ struct ECBAccountingView: View {
 
     private var balanceHeader: some View {
         VStack(alignment: .leading, spacing: 8) {
-            // Two headline numbers: Available now (cleared, capped) + Projected (after pending land).
-            HStack(alignment: .top, spacing: 20) {
-                bigStat("Available now", store.available, store.available < 0 ? AppColor.danger : AppColor.success,
-                        caption: "/ \(ecbText(ECBAccounting.maxBalance)) max")
-                bigStat("Projected", store.projected, .primary,
-                        caption: "once scheduled + IOUs clear")
-                Spacer(minLength: 0)
-            }
-            // Owe / Owed — ALWAYS shown so your position is visible. Counts every uncleared shared
-            // line by side, INCLUDING awaiting-confirm ones (matches what the register lists), so a
-            // pending outgoing offer reads as "you owe" before the other party confirms.
-            HStack(spacing: 22) {
-                midStat("You owe", outstandingOwe, AppColor.danger)
-                midStat("Owed to you", outstandingOwed, AppColor.success)
-                Spacer(minLength: 0)
+            // Left: the two headline numbers (Available now + Projected). Right: a smaller card with
+            // Owe / Owed stacked vertically — same row, visually secondary to the big balances.
+            HStack(alignment: .top, spacing: 16) {
+                HStack(alignment: .top, spacing: 20) {
+                    bigStat("Available now", store.available, store.available < 0 ? AppColor.danger : AppColor.success,
+                            caption: "/ \(ecbText(ECBAccounting.maxBalance)) max")
+                    bigStat("Projected", store.projected, .primary,
+                            caption: "once scheduled + IOUs clear")
+                }
+                Spacer(minLength: 8)
+                // Owe / Owed card — ALWAYS shown so your position is visible; counts every uncleared
+                // shared line by side, incl. awaiting-confirm ones (matches the register).
+                VStack(alignment: .leading, spacing: 8) {
+                    midStat("You owe", outstandingOwe, AppColor.danger)
+                    midStat("Owed to you", outstandingOwed, AppColor.success)
+                }
+                .padding(.horizontal, 12).padding(.vertical, 10)
+                .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
             }
             if pendingCount > 0 {
                 Text("^[\(pendingCount) line](inflect: true) still awaiting confirmation — counts once confirmed and cleared.")

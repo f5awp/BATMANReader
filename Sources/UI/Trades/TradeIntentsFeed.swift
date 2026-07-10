@@ -146,6 +146,7 @@ struct TradeByIntentsFeed: View {
             PackageDetailView(package: pkg,
                               onPropose: { Task { await propose(pkg) } },
                               onExecute: { if let r = pkg.route { execRoute = r } })
+                .magnifiable()
         }
         .sheet(item: $execRoute) { ExecutionConfirmationView(route: $0, origin: .intents) }
         .sheet(item: $pkgSwap) { ctx in
@@ -967,6 +968,7 @@ struct PackageDetailView: View {
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.horizontalSizeClass) private var hSize
+    @Environment(\.verticalSizeClass) private var vSize   // .compact ⇔ iPhone landscape (iPad stays .regular)
     @State private var selectedStep = 0
     @State private var monthIndex = 0
     @State private var schedules: [String: [String: String]] = [:]   // workerID → day labels
@@ -1036,7 +1038,10 @@ struct PackageDetailView: View {
                 // squished into an unusable sliver.
                 let wide = geo.size.width > geo.size.height
                 VStack(spacing: wide ? 6 : 12) {
-                    if !wide { chipIndex }
+                    // The selectable date chips stay visible in every orientation (in landscape they
+                    // stand in for the verbose "Swap · give N, get N" title, which we drop to reclaim
+                    // vertical space on iPhone — iPad keeps both since it has the room).
+                    chipIndex
 
                     HStack {
                         Button { if monthIndex > 0 { monthIndex -= 1 } } label: { Image(systemName: "chevron.left").font(.headline) }
@@ -1075,7 +1080,7 @@ struct PackageDetailView: View {
                     }
                 }
             }
-            .navigationTitle(dateTitle)
+            .navigationTitle(vSize == .compact ? "" : dateTitle)   // iPhone landscape: chips carry the dates
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } } }
             .task { await load() }
