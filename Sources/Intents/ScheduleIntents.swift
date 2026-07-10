@@ -196,7 +196,7 @@ struct EnableShiftAlertsIntent: AppIntent {
         let granted = await NotificationManager.shared.requestPermission()
         guard granted else {
             return .result(dialog: IntentDialog(stringLiteral:
-                "Notifications aren't allowed yet. Enable them in Settings › BATMAN Watcher › Notifications, then run this again."))
+                "Notifications aren't allowed yet. Enable them in Settings › \(AppGuide.appName) › Notifications, then run this again."))
         }
         let shifts = ShiftStore.shared.upcomingAllShifts()
         await NotificationManager.shared.scheduleAll(for: shifts)

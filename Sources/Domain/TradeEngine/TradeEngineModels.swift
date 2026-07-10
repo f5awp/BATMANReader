@@ -696,12 +696,12 @@ struct ReleaseNote: Sendable, Identifiable {
 /// All the static copy behind the Welcome flow: the purpose pitch, the engineer-level
 /// mechanisms tour, and the version history. Pure data so it's testable + lives in a compiled file.
 enum AppGuide {
-    static let appName  = "BATMAN Watcher"
-    static let tagline  = "Schedule reading + shift trading for AA dispatchers — matched, scored, and synced."
+    static let appName  = "DX Trader"
+    static let tagline  = "Schedule reading + shift trading for dispatchers — matched, scored, and synced."
 
     /// The "why this exists" pitch, shown on the welcome page (operator-facing — no jargon).
     static let purpose: [String] = [
-        "BATMAN Watcher reads the dispatch master schedule for you — your shifts, days off, vacation, and qualifications — with no file to import and nothing to maintain by hand.",
+        "DX Trader reads the dispatch master schedule for you — your shifts, days off, vacation, and qualifications — with no file to import and nothing to maintain by hand.",
         "Then it does the hard part. You mark the days you want to give away, and it searches the entire roster for trades that would actually work — checking each one against the real rules (desk qualification, the 8-hour rest gap) and each person's own preferences before it ever shows up. It looks at straight two-person swaps, larger multi-person packages, and full circular trades where everyone covers someone else — then puts the ones most likely to get a yes at the top.",
         "It's built to be consistent and trustworthy: the same rules and the same ranking sit behind every search. And everything — your trades, the channel, statuses, and team stats — syncs across the shop through iCloud, so everyone is working from the same board.",
     ]
@@ -877,7 +877,7 @@ enum AppGuide {
             summary: "Hand a shift off for ECB credit, claimed fairly in queue order.",
             details: [
                 "When you want a shift covered rather than swapped, broadcast it with an ECB value in 0.5 steps (5–25; a 1.5× OT shift = 13.5). The value is carried losslessly everywhere — request, offer, accept, receipt, history.",
-                "Interested dispatchers accept per shift and are ordered into a fair queue (each sees their position); the same eligibility gates apply via canCover(.physicalOnly). The recipient confirms receipt; the official ECB form is filed outside the app — BATMAN Watcher coordinates the agreement, ARIS/WorkNet records the change.",
+                "Interested dispatchers accept per shift and are ordered into a fair queue (each sees their position); the same eligibility gates apply via canCover(.physicalOnly). The recipient confirms receipt; the official ECB form is filed outside the app — DX Trader coordinates the agreement, ARIS/WorkNet records the change.",
             ]),
         MechanismSection(
             title: "Sync, conflict-resolution & push",
@@ -919,7 +919,7 @@ enum AppGuide {
             why: "Your real schedule lives in the calendar you already check — no double entry."),
         Build6Highlight(
             symbol: "apps.iphone", title: "Home Screen widgets",
-            what: "Long-press your Home Screen → tap ＋ → search \"BATMAN.\" \"Next Shift\" shows your next shift and a week-at-a-glance strip; \"Trade Requests\" shows how many requests are waiting to reply to.",
+            what: "Long-press your Home Screen → tap ＋ → search \"DX Trader.\" \"Next Shift\" shows your next shift and a week-at-a-glance strip; \"Trade Requests\" shows how many requests are waiting to reply to.",
             why: "Your next shift and pending trades sit on your Home Screen — a glance instead of opening the app."),
         Build6Highlight(
             symbol: "plus.magnifyingglass", title: "Screen magnifier",
@@ -954,7 +954,7 @@ enum AppGuide {
                 "Screen magnifier — now ON by default (turn it off in ⋯ → App Settings → Accessibility → Screen magnifier). A DRAGGABLE floating button appears on every screen; drag it wherever, tap it, and pinch with two fingers to zoom and pan (one finger still taps/scrolls). Works on the whole app, including pop-up sheets.",
                 "Intents now has two sections — \"Mutual\" (both of you marked the day) and \"All\" (every possible partner); switching is instant, and the heavy 3+person/circular search is opt-in via \"More: 3+ & loops.\"",
                 "Cleaner, less-cluttered layout: redesigned trade/package cards (one compact \"Name — dates\" line per person) and a refreshed calendar view; Trade Settings are now tap pills (shift types, regions grayed when unqualified, blackout days); a tidier top bar (Inbox · Channel · Trade status with badges · ⋯) with the color key by the Home layers button; and tapping any day opens the full editor directly. \"Keep\" (green) vs \"Blackout\" (slate) are consistent everywhere.",
-                "Home Screen widgets: long-press the Home Screen → ＋ → search \"BATMAN\" to add \"Next Shift\" (your next shift + a week-at-a-glance strip) and \"Trade Requests\" (how many are waiting) — updated automatically.",
+                "Home Screen widgets: long-press the Home Screen → ＋ → search \"DX Trader\" to add \"Next Shift\" (your next shift + a week-at-a-glance strip) and \"Trade Requests\" (how many are waiting) — updated automatically.",
                 "Live daily digest refreshes its counts in the background, and @-mentioning a dispatcher in a channel sends them a push.",
                 "— Refinements —",
                 "Trade Inbox is now split into Intents · Search · ECB · Misc, so requests are filed by where they came from. ECB offers live in their own tab: tap an offer to see everyone you sent it to and their response, and tap a name to open the exact card they got.",
@@ -1032,7 +1032,7 @@ enum TradeEmail {
         if !takeDays.isEmpty { parts.append("\(taker) gives \(takeDays.joined(separator: ", "))") }
         var s = "Trade request: \(giver) ⇄ \(taker)"
         if !parts.isEmpty { s += " — " + parts.joined(separator: "; ") }
-        s += ". Sent via BATMAN Watcher."
+        s += ". Sent via DX Trader."
         if !blackoutDays.isEmpty {
             s += "\n\nBlackout days (unavailable): \(blackoutDays.joined(separator: ", "))."
         }
@@ -1045,7 +1045,7 @@ enum TradeEmail {
     /// + the sender's Must-Be-Off blackout days.
     static func dispatchBody(giver: String, giveDays: [String], blackoutDays: [String]) -> String {
         let days = giveDays.isEmpty ? "(no days selected)" : giveDays.joined(separator: ", ")
-        var s = "\(giver) is looking to trade away: \(days). Sent via BATMAN Watcher."
+        var s = "\(giver) is looking to trade away: \(days). Sent via DX Trader."
         if !blackoutDays.isEmpty { s += "\n\nBlackout days (unavailable): \(blackoutDays.joined(separator: ", "))." }
         return s
     }
@@ -1054,7 +1054,7 @@ enum TradeEmail {
     /// #7: ECB broadcast email — states the ECB offered for the days, and (per spec) NO blackout days.
     static func ecbBody(giver: String, giveDays: [String], ecb: Double) -> String {
         let days = giveDays.isEmpty ? "(no days selected)" : giveDays.joined(separator: ", ")
-        return "\(giver) is offering \(ecbText(ecb)) ECB to cover: \(days). Sent via BATMAN Watcher."
+        return "\(giver) is offering \(ecbText(ecb)) ECB to cover: \(days). Sent via DX Trader."
     }
     static func ecbSubject(giver: String, ecb: Double) -> String { "ECB trade — \(ecbText(ecb)) ECB — \(giver)" }
 

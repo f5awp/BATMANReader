@@ -178,7 +178,7 @@ final class EventKitManager {
         var removed = 0, readOnly = 0
         for ev in ekStore.events(matching: pred) {
             let title = ev.title ?? ""
-            let mine = (ev.notes ?? "").contains("BATMANReader")        // app marker (personal + shared)
+            let mine = (ev.notes ?? "").contains("DX Trader") || (ev.notes ?? "").contains("BATMANReader")   // app marker (new + legacy)
                 || ev.calendar.title == "AA Schedule"                   // app-owned personal calendar (any copy)
                 || title == myAvail                                     // my shared availability event
                 || (!title.isEmpty && shiftTitles.contains(title))      // a shift event by its label (catches copies)
@@ -315,7 +315,7 @@ final class EventKitManager {
             "\(shift.startTimeString)–\(shift.endTimeString)"
         ]
         if let lc = shift.leaveCode, !lc.isEmpty { lines.append("Leave: \(lc)") }
-        lines.append("Added by BATMANReader")
+        lines.append("Added by DX Trader")
         return lines.joined(separator: "\n")
     }
 }

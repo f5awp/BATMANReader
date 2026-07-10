@@ -100,7 +100,7 @@ struct HomeView: View {
 
                 // (Last-synced + app version moved to App Settings; the Home page ends at the calendar.)
             }
-            .navigationTitle("BATMAN Watcher")
+            .navigationTitle(AppGuide.appName)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar(.hidden, for: .navigationBar)   // the shared AppTopBar is the header now
             .sheet(item: $editTarget) { target in

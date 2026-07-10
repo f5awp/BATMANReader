@@ -91,7 +91,7 @@ final class NotificationManager {
         center.removePendingNotificationRequests(withIdentifiers: [digestID])
         guard enabled else { return }
         let content = UNMutableNotificationContent()
-        content.title = "BATMAN Watcher — daily check-in"
+        content.title = "\(AppGuide.appName) — daily check-in"
         content.body = Self.digestBody(pending: pending, unread: unread)
         content.sound = .default
         let total = pending + unread

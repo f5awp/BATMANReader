@@ -112,7 +112,7 @@ struct ContentView: View {
             set: { if !$0 { messaging.blockedRecipient = nil } })) {
             Button("OK", role: .cancel) {}
         } message: {
-            Text("\(messaging.blockedRecipient ?? "This dispatcher") doesn't have an active BATMAN Watcher profile, so they can't receive trade requests or messages yet. They still show in your matches — reach out another way, or wait until they set up trading in the app.")
+            Text("\(messaging.blockedRecipient ?? "This dispatcher") doesn't have an active \(AppGuide.appName) profile, so they can't receive trade requests or messages yet. They still show in your matches — reach out another way, or wait until they set up trading in the app.")
         }
         .sheet(isPresented: $showChangelog) {
             WelcomeView {
@@ -528,7 +528,7 @@ struct OnboardingView: View {
         NavigationStack {
             Form {
                 Section {
-                    Text("Welcome to BATMAN Watcher").font(.title2.bold())
+                    Text("Welcome to \(AppGuide.appName)").font(.title2.bold())
                     Text("Sign in with Apple to secure your account, then link your employee ID. Your schedule loads automatically from the dispatch master.")
                         .font(.subheadline).foregroundStyle(.secondary)
                 }

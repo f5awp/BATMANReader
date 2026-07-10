@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>NSUserNotificationsUsageDescription</key>
-	<string>BATMAN Reader sends shift reminders and trade alerts.</string>
+	<string>DX Trader sends shift reminders and trade alerts.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>remote-notification</string>

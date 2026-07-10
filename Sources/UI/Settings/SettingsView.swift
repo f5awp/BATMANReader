@@ -54,7 +54,7 @@ struct SettingsView: View {
                         Label("Welcome & how it works", systemImage: "sparkles")
                     }
                     Button { showHelp = true } label: {
-                        Label("How to use BATMAN Watcher", systemImage: "questionmark.circle")
+                        Label("How to use \(AppGuide.appName)", systemImage: "questionmark.circle")
                     }
                     Button { showTesterGuide = true } label: {
                         Label("Tester guide", systemImage: "checklist")
@@ -213,7 +213,7 @@ struct SettingsView: View {
                                 _ = await EventKitManager.shared.requestPermission()
                             }
                             guard EventKitManager.shared.isAuthorized else {
-                                calendarResetMessage = "Full calendar access is needed to remove events. Enable it in iOS Settings → Privacy & Security → Calendars → BATMAN Watcher (Full Access), then try again."
+                                calendarResetMessage = "Full calendar access is needed to remove events. Enable it in iOS Settings → Privacy & Security → Calendars → \(AppGuide.appName) (Full Access), then try again."
                                 return
                             }
                             let removed = EventKitManager.shared.removeAllEvents()                                // clear ALL app events across every calendar

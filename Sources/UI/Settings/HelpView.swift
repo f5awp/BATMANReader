@@ -567,7 +567,7 @@ struct TesterGuideView: View {
 
                 section("Reminders, widgets, Siri", "bell.badge", [
                     "Set lead time; confirm a shift reminder fires; add the widgets.",
-                    "Ask Siri: \"Do I work tomorrow in BATMAN Watcher\", \"Who can trade with me…\".",
+                    "Ask Siri: \"Do I work tomorrow in \(AppGuide.appName)\", \"Who can trade with me…\".",
                     "**Break it:** ask Siri before fetching a schedule." ])
 
                 section("General", "exclamationmark.triangle", [
