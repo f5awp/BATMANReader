@@ -1044,7 +1044,6 @@ struct TwoWaySheet: View {
     @State private var peerDisplayName: String?              // G2a: published displayName (resolved into peerName)
     @State private var ignoreMyBlacklist = false            // active-outbound override
     @State private var zoom: CGFloat = 1
-    @State private var showIntents = true                   // intent tint overlay on both calendars
     @State private var qualSwapPicker: QualSwapPickerContext?  // Q1/Q2: blast-picker when a give-desk needs a qual swap
     @State private var qualSwapNoBridge: String?               // Q1: a needed swap has no eligible bridge
 
@@ -1170,11 +1169,6 @@ struct TwoWaySheet: View {
                 Text(Self.monthF.string(from: monthAnchor(monthIndex)))
                     .font(.caption.bold())
                     .frame(maxWidth: .infinity)
-                Button { withAnimation { showIntents.toggle() } } label: {
-                    Image(systemName: showIntents ? "paintpalette.fill" : "paintpalette")
-                        .foregroundStyle(showIntents ? Color.accentColor : .secondary)
-                }
-                .accessibilityLabel(showIntents ? "Hide intent colors" : "Show intent colors")
                 Button { setZoom(zoom + 0.5) } label: {
                     Image(systemName: "plus.magnifyingglass")
                 }
@@ -1230,19 +1224,28 @@ struct TwoWaySheet: View {
         withAnimation { zoom = min(max(value, 1), 3) }
     }
 
-    /// Your intent as a corner chip on the "You" calendar (hidden when toggled off).
-    private func myIntent(_ day: String) -> Color? {
-        guard showIntents else { return nil }
-        if let w = DayIntentStore.shared.workingIntent(forDay: day) { return w.brickColor }
-        if let o = DayIntentStore.shared.offIntent(forDay: day) { return o.brickColor }
+    /// Your intent (name + color) on the "You" calendar — Want to Trade Away / Keep / Blackout /
+    /// Want to Work — shown as the cell's corner dot + the tap popover. "Open" is skipped.
+    private func myIntent(_ day: String) -> (label: String, color: Color)? {
+        let store = DayIntentStore.shared
+        if let w = store.workingIntent(forDay: day), w != .neutralOpen {
+            let name = w == .dontWantToWork ? "Want to Trade" : (w == .mustWork ? "Keep" : "Want to Work")
+            return (name, w.brickColor)
+        }
+        if let o = store.offIntent(forDay: day), o != .neutralOpen {
+            return (o == .mustBeOff ? "Blackout Day" : "Want to Work", o.brickColor)
+        }
+        if !store.availability(forDay: day).isEmpty { return ("Want to Work", BrickPalette.availableOff) }
         return nil
     }
 
-    /// G2c: their FULL published intent palette as a corner chip (was only trade-away).
-    private func theirIntent(_ day: String) -> Color? {
-        guard showIntents else { return nil }
-        return PeerIntentColor.forDay(day, seeking: theirSeeking, wantToWork: theirWantToWork,
-                                      mustBeOff: theirMustBeOff, keep: theirKeep)
+    /// The peer's published intent for a day (name + color).
+    private func theirIntent(_ day: String) -> (label: String, color: Color)? {
+        if theirSeeking.contains(day)    { return ("Wants to Trade", BrickPalette.change) }
+        if theirWantToWork.contains(day) { return ("Wants to Work", BrickPalette.availableOff) }
+        if theirMustBeOff.contains(day)  { return ("Blackout Day", OffIntentState.mustBeOff.brickColor) }
+        if theirKeep.contains(day)       { return ("Keeping", WorkingIntentState.mustWork.brickColor) }
+        return nil
     }
 
     /// Your own day markers (high-demand or personal milestone) and their detail text.
@@ -1283,7 +1286,6 @@ struct TwoWaySheet: View {
                     .background(themColor.opacity(0.10), in: RoundedRectangle(cornerRadius: 10))
                 }
                 scheduleGlance(geo.size)
-                MiniScheduleLegend()
                 Toggle(isOn: $ignoreMyBlacklist.animation()) {
                     Label("Show my blacklisted shifts (override)", systemImage: "eye.slash")
                         .font(.caption.weight(.semibold))
@@ -1714,7 +1716,7 @@ struct MiniScheduleGrid: View {
     var loopDays: Set<String> = []       // circular handoff between OTHERS → violet fill+border
     var focusDay: String? = nil          // the selected step's day → bold focus ring
     var gold: Set<String> = []           // mutually-wanted → gold border
-    var intent: (String) -> Color? = { _ in nil }              // thick bottom bar (toggle-able by caller)
+    var intent: (String) -> (label: String, color: Color)? = { _ in nil }   // the day's intent (name + color), shown in the popover
     var topology: (String) -> DayTopology = { _ in .standard } // high-impact / personal-day circle
     var eventName: (String) -> String? = { _ in nil }          // popover text when a marked day is tapped
     var fill: Bool = false               // stretch rows to fill the container's height (scale-to-fit on iPad)
@@ -1761,8 +1763,9 @@ struct MiniScheduleGrid: View {
         .frame(maxWidth: .infinity, maxHeight: fill ? .infinity : nil)
         // Scale with Dynamic Type, but cap it so the fixed-size day cells don't overflow.
         .dynamicTypeSize(...DynamicTypeSize.xLarge)
-        // ONE popover for the whole grid (stable), driven by the tapped day.
-        .popover(item: $popDay) { day in dayDetailPopover(key: day.id) }
+        // ONE sheet for the whole grid, driven by the tapped day. A sheet (not a per-cell popover)
+        // presents at the window level, so the paging TabView can't dismiss it — it stays until closed.
+        .sheet(item: $popDay) { day in dayDetailPopover(key: day.id) }
     }
 
     private func cell(dayOffset: Int) -> some View {
@@ -1794,6 +1797,15 @@ struct MiniScheduleGrid: View {
         .padding(.vertical, 2)
         .background(background(key: key, working: working), in: RoundedRectangle(cornerRadius: 7))
         .overlay { border(key: key) }
+        // Small intent dot (top-trailing) so the intent COLOR reads at a glance without cluttering the
+        // cell; the named intent (Want to trade / Blackout / Want to work …) is in the tap popover.
+        .overlay(alignment: .topTrailing) {
+            if let info = intent(key) {
+                Circle().fill(info.color).frame(width: 7, height: 7)
+                    .overlay(Circle().stroke(.white.opacity(0.6), lineWidth: 0.5))
+                    .padding(2)
+            }
+        }
         .opacity(inMonth ? 1 : 0.18)
         .contentShape(Rectangle())
         .onTapGesture { popDay = PopDay(id: key) }   // any day → the single grid popover
@@ -1846,6 +1858,9 @@ struct MiniScheduleGrid: View {
             }
             if gold.contains(key) { tradeTag("Both sides want this", "flame.fill", goldBorder) }
 
+            // The day's marked intent, named (Want to trade / Blackout / Want to work …) in its color.
+            if let info = intent(key) { tradeTag(info.label, "paintpalette.fill", info.color) }
+
             // Only surface a holiday / personal day if it actually applies (concrete, not "marked").
             switch topology(key) {
             case .highDemand:
@@ -1855,9 +1870,12 @@ struct MiniScheduleGrid: View {
             case .standard:
                 EmptyView()
             }
+            Spacer(minLength: 0)
         }
-        .padding(14)
-        .presentationCompactAdaptation(.popover)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(20)
+        .presentationDetents([.height(280)])
+        .presentationDragIndicator(.visible)
     }
     private func tradeTag(_ text: String, _ symbol: String, _ color: Color) -> some View {
         Label(text, systemImage: symbol)

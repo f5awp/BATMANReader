@@ -971,7 +971,6 @@ struct PackageDetailView: View {
     @State private var selectedStep = 0
     @State private var monthIndex = 0
     @State private var schedules: [String: [String: String]] = [:]   // workerID → day labels
-    @State private var showIntents = true
 
     private let cal = Calendar.current
     private let youColor = BrickPalette.mineScheme
@@ -1056,11 +1055,6 @@ struct PackageDetailView: View {
                             .disabled(monthIndex == 0)
                         Spacer()
                         Text(Self.monthF.string(from: monthAnchor(monthIndex))).font(.headline)
-                        Button { withAnimation { showIntents.toggle() } } label: {
-                            Image(systemName: showIntents ? "paintpalette.fill" : "paintpalette")
-                                .foregroundStyle(showIntents ? Color.accentColor : .secondary)
-                        }
-                        .accessibilityLabel(showIntents ? "Hide intent colors" : "Show intent colors")
                         Spacer()
                         Button { if monthIndex < monthOffsets.count - 1 { monthIndex += 1 } } label: { Image(systemName: "chevron.right").font(.headline) }
                             .disabled(monthIndex >= monthOffsets.count - 1)
@@ -1073,8 +1067,6 @@ struct PackageDetailView: View {
                         }
                     }
                     .tabViewStyle(.page(indexDisplayMode: .never))
-
-                    if !wide { MiniScheduleLegend().padding(.horizontal) }
 
                     if !readOnly {
                         Button {
@@ -1193,7 +1185,7 @@ struct PackageDetailView: View {
 
     private func personCalendar(_ id: String, off: Int, focus: String) -> some View {
         let isMe = id == myID
-        let intentClosure: (String) -> Color? = { isMe ? myIntent($0) : peerIntent($0, workerID: id) }
+        let intentClosure: (String) -> (label: String, color: Color)? = { isMe ? myIntent($0) : peerIntent($0, workerID: id) }
         let topoClosure: (String) -> DayTopology = {
             isMe ? DayIntentStore.shared.topology(forDay: $0) : TwoWaySheet.globalTopology($0)
         }
@@ -1208,22 +1200,25 @@ struct PackageDetailView: View {
             .frame(maxHeight: .infinity)   // the two calendars split the available height → fit, no scroll
     }
 
-    /// My intents on the "You" calendar (hidden when the overlay toggle is off). Standardized to a
-    /// single bottom bar covering EVERY intent — working, off-day intent, AND off-day availability
-    /// (AM/PM/MID pickup) — so off-day marks are no longer invisible here.
-    private func myIntent(_ day: String) -> Color? {
-        guard showIntents else { return nil }
-        if let w = DayIntentStore.shared.workingIntent(forDay: day) { return w.brickColor }
-        if let o = DayIntentStore.shared.offIntent(forDay: day) { return o.brickColor }
-        if !DayIntentStore.shared.availability(forDay: day).isEmpty { return BrickPalette.availableOff }
+    /// My intent on the "You" calendar (name + color) — Want to Trade Away / Keep / Blackout / Want to
+    /// Work — surfaced as the cell's corner dot + the tap popover. "Open" (no real intent) is skipped.
+    private func myIntent(_ day: String) -> (label: String, color: Color)? {
+        let store = DayIntentStore.shared
+        if let w = store.workingIntent(forDay: day), w != .neutralOpen {
+            let name = w == .dontWantToWork ? "Want to Trade" : (w == .mustWork ? "Keep" : "Want to Work")
+            return (name, w.brickColor)
+        }
+        if let o = store.offIntent(forDay: day), o != .neutralOpen {
+            return (o == .mustBeOff ? "Blackout Day" : "Want to Work", o.brickColor)
+        }
+        if !store.availability(forDay: day).isEmpty { return ("Want to Work", BrickPalette.availableOff) }
         return nil
     }
 
-    /// A peer's published intent (days they're seeking to trade away) as a corner chip.
-    private func peerIntent(_ day: String, workerID: String) -> Color? {
-        guard showIntents else { return nil }
+    /// A peer's published intent (days they're seeking to trade away).
+    private func peerIntent(_ day: String, workerID: String) -> (label: String, color: Color)? {
         let seeks = TradeProfileStore.shared.profile(forWorker: workerID)?.seekingDayIDs ?? []
-        return seeks.contains(day) ? BrickPalette.change : nil
+        return seeks.contains(day) ? ("Wants to Trade", BrickPalette.change) : nil
     }
 
     private func load() async {
