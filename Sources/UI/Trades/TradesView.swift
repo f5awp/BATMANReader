@@ -164,6 +164,7 @@ struct TradeDashboardSheet: View {
 private struct AcceptedZone: View {
     private var messaging = MessagingStore.shared
     private var history   = TradeHistoryStore.shared
+    private var myID: String { SettingsManager.shared.username }
 
     private var accepted: [TradeRequest] {
         messaging.requests.filter { messaging.status(of: $0) == .accepted }
@@ -175,7 +176,7 @@ private struct AcceptedZone: View {
         } else {
             List(accepted) { req in
                 VStack(alignment: .leading, spacing: 8) {
-                    TradeRequestSummary(req: req)
+                    RequestRow(request: req, myID: myID)
                     Button {
                         Task { await confirmOfficial(req) }
                     } label: {
@@ -203,6 +204,7 @@ private struct AcceptedZone: View {
 
 private struct PendingZone: View {
     private var messaging = MessagingStore.shared
+    private var myID: String { SettingsManager.shared.username }
     private var pending: [TradeRequest] {
         messaging.requests.filter {
             let s = messaging.status(of: $0)
@@ -213,13 +215,14 @@ private struct PendingZone: View {
         if pending.isEmpty {
             ZoneEmpty("Nothing pending", "Outbound proposals and circular-trade confirmations awaiting a reply show here.")
         } else {
-            List(pending) { TradeRequestSummary(req: $0) }.listStyle(.plain)
+            List(pending) { RequestRow(request: $0, myID: myID) }.listStyle(.plain)
         }
     }
 }
 
 private struct DeniedZone: View {
     private var messaging = MessagingStore.shared
+    private var myID: String { SettingsManager.shared.username }
     private var denied: [TradeRequest] {
         messaging.requests.filter {
             let s = messaging.status(of: $0)
@@ -230,7 +233,7 @@ private struct DeniedZone: View {
         if denied.isEmpty {
             ZoneEmpty("No denied trades", "Rejected or expired proposals show here so you know instantly.")
         } else {
-            List(denied) { TradeRequestSummary(req: $0).opacity(0.7) }.listStyle(.plain)
+            List(denied) { RequestRow(request: $0, myID: myID).opacity(0.7) }.listStyle(.plain)
         }
     }
 }
@@ -276,21 +279,6 @@ private struct HistoryZone: View {
 }
 
 // MARK: - Shared small views
-
-private struct TradeRequestSummary: View {
-    let req: TradeRequest
-    var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text("\(req.fromName) ⇄ \(req.toName)").font(.subheadline.bold())
-            if !req.note.isEmpty {
-                Text(req.note).font(.caption).foregroundStyle(.secondary).lineLimit(2)
-            }
-            if !(req.giveDayIDs.isEmpty && req.takeDayIDs.isEmpty) {
-                Text(tradeSummary(req)).font(.caption2).foregroundStyle(.tertiary)
-            }
-        }
-    }
-}
 
 private struct ZoneEmpty: View {
     let title: String; let message: String
