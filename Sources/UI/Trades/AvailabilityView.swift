@@ -1767,58 +1767,32 @@ struct MiniScheduleGrid: View {
         let working = !label.isEmpty
         let inMonth = cal.isDate(date, equalTo: month, toGranularity: .month)
         let isToday = cal.isDateInToday(date)
+        let filled  = takeDays.contains(key) || loopDays.contains(key)   // solid fill → white text reads
 
-        let marker = markerColor(key: key, isToday: isToday)
-        let hasEvent = eventName(key) != nil
-
+        // Decluttered cell (UX): only the swap-critical signals inline — big date, big shift label, and
+        // the trade role via fill/border. Intent, holiday/personal, and mutual-gold move to the tap
+        // popover so nothing overlaps and the text stays large. Every day is tappable.
         return VStack(spacing: 1) {
-            ZStack {
-                // Today + a marked day → marker circle ringed in blue. Either alone →
-                // a single filled circle (blue for today, gold/pink for marked days).
-                if let marker {
-                    Circle().fill(marker).frame(width: 26, height: 26)
-                    if isToday && marker != blue {
-                        Circle().stroke(blue, lineWidth: 2.5).frame(width: 31, height: 31)
-                    }
-                }
-                Text("\(cal.component(.day, from: date))")
-                    // Match the Home calendar: prominent headline day number.
-                    .font(.headline).fontWeight(.semibold)
-                    // Dark text on the light gold circle; white on blue/pink.
-                    .foregroundStyle(marker == nil ? .primary
-                        : (topology(key) == .highDemand ? Color.black.opacity(0.85) : .white))
-            }
-            .frame(height: fill ? 26 : 32)
+            Text("\(cal.component(.day, from: date))")
+                .font(.headline).fontWeight(isToday ? .black : .semibold)
+                .foregroundStyle(filled ? .white : (isToday ? blue : .primary))
+                .frame(height: fill ? 26 : 32)
             Text(label.isEmpty ? " " : label)
-                // Match the Home calendar's shift label (subheadline, heavy). A gentle scale floor keeps
-                // it large; the reserved min-height + bottom padding stop it overlapping the intent bar.
                 .font(.subheadline.weight(.heavy))
-                .foregroundStyle(working ? accent : .secondary)
+                .foregroundStyle(filled ? .white : (working ? accent : .secondary))
                 .lineLimit(1).minimumScaleFactor(0.7)
                 .frame(minHeight: fill ? 16 : nil)
-                .padding(.bottom, fill ? 5 : 0)
         }
         .frame(maxWidth: .infinity, minHeight: fill ? 34 : 50, maxHeight: fill ? .infinity : nil)
         .background(background(key: key, working: working))
-        .overlay(alignment: .bottom) { intentBar(key: key) }
         .clipShape(RoundedRectangle(cornerRadius: 7))
         .overlay { border(key: key) }
         .opacity(inMonth ? 1 : 0.18)
         .contentShape(Rectangle())
-        .onTapGesture { if hasEvent { openEvent = key } }
+        .onTapGesture { openEvent = key }   // any day → detail popover
         .popover(isPresented: Binding(get: { openEvent == key },
                                       set: { if !$0 { openEvent = nil } })) {
-            eventPopover(key: key)
-        }
-    }
-
-    /// Gold for a high-demand day, pink for a personal day, blue for today (today is
-    /// only the fallback when the day isn't otherwise marked). Returns nil = no circle.
-    private func markerColor(key: String, isToday: Bool) -> Color? {
-        switch topology(key) {
-        case .highDemand:        return BrickPalette.highImpact
-        case .personalMilestone: return BrickPalette.personalDay
-        case .standard:          return isToday ? blue : nil
+            dayDetailPopover(key: key, date: date, label: label, working: working)
         }
     }
 
@@ -1828,25 +1802,46 @@ struct MiniScheduleGrid: View {
         return working ? accent.opacity(0.16) : Color(.systemGray5)
     }
 
-    /// Intent rendered as a thick bar across the bottom of the cell — visible without
-    /// fighting the trade fills. Hidden when the caller's `intent` closure returns nil.
-    @ViewBuilder private func intentBar(key: String) -> some View {
-        if let tint = intent(key) {
-            tint.frame(maxWidth: .infinity).frame(height: 5)
-        }
-    }
+    private static let popoverDateF: DateFormatter = {
+        let f = DateFormatter(); f.dateFormat = "EEEE, MMM d"; return f
+    }()
 
-    @ViewBuilder private func eventPopover(key: String) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            let isPersonal = topology(key) == .personalMilestone
-            Label(isPersonal ? "Personal day" : "High-impact day",
-                  systemImage: isPersonal ? "star.circle.fill" : "exclamationmark.circle.fill")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(isPersonal ? BrickPalette.personalDay : BrickPalette.highImpact)
-            if let name = eventName(key) { Text(name).font(.body) }
+    /// Full detail for a tapped day — everything the cell used to cram inline (shift+desk, trade role,
+    /// your intent, holiday/personal), at readable size.
+    @ViewBuilder private func dayDetailPopover(key: String, date: Date, label: String, working: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(Self.popoverDateF.string(from: date)).font(.headline)
+            Label(working ? (label.isEmpty ? "Working" : label) : "Off",
+                  systemImage: working ? "clock.fill" : "moon.zzz.fill")
+                .font(.subheadline.weight(.semibold)).foregroundStyle(working ? accent : .secondary)
+            if takeDays.contains(key) {
+                roleRow("You pick up this shift", "arrow.down.circle.fill", accent)
+            } else if giveDays.contains(key) {
+                roleRow("You give this shift away", "arrow.up.circle.fill", accent)
+            } else if loopDays.contains(key) {
+                roleRow("Loop handoff", "arrow.triangle.2.circlepath", BrickPalette.loopTrade)
+            }
+            if gold.contains(key) { roleRow("Both of you want this trade", "flame.fill", goldBorder) }
+            if let tint = intent(key) {
+                HStack(spacing: 6) {
+                    Circle().fill(tint).frame(width: 10, height: 10)
+                    Text("You've marked this day").font(.caption)
+                }
+            }
+            switch topology(key) {
+            case .highDemand:
+                roleRow(eventName(key) ?? "High-impact day", "exclamationmark.circle.fill", BrickPalette.highImpact)
+            case .personalMilestone:
+                roleRow(eventName(key) ?? "Personal day", "star.circle.fill", BrickPalette.personalDay)
+            case .standard:
+                EmptyView()
+            }
         }
         .padding()
         .presentationCompactAdaptation(.popover)
+    }
+    private func roleRow(_ text: String, _ symbol: String, _ color: Color) -> some View {
+        Label(text, systemImage: symbol).font(.caption.weight(.semibold)).foregroundStyle(color)
     }
 
     @ViewBuilder private func border(key: String) -> some View {
@@ -1855,7 +1850,6 @@ struct MiniScheduleGrid: View {
         if focusDay == key { shape.stroke(.primary, lineWidth: 3.5) }
         else if loopDays.contains(key) { shape.stroke(BrickPalette.loopTrade, lineWidth: 3) }
         else if giveDays.contains(key) { shape.stroke(accent, lineWidth: 3) }
-        else if gold.contains(key) { shape.stroke(goldBorder, lineWidth: 2) }
     }
 }
 
