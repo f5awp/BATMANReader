@@ -107,7 +107,7 @@ struct TradeByIntentsFeed: View {
 
                 if loading {
                     VStack(spacing: 14) {
-                        ProgressView("Finding intent matches…")
+                        AnimatedLoader(name: "finding-matches", maxSize: 260)
                         Button(role: .cancel) { searchTask?.cancel(); loading = false } label: {
                             Label("Cancel", systemImage: "xmark.circle")
                         }

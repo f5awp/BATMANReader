@@ -299,8 +299,7 @@ struct FindCandidatesSection: View {
     private var content: some View {
         if isSearching {
             VStack(spacing: 14) {
-                AnimatedLoader(maxSize: 160)
-                Text("Searching roster…").font(.subheadline).foregroundStyle(.secondary)
+                AnimatedLoader(name: "finding-matches", maxSize: 260)
                 Button(role: .cancel) { searchTask?.cancel(); isSearching = false } label: {
                     Label("Cancel", systemImage: "xmark.circle")
                 }
@@ -662,10 +661,8 @@ struct ECBTradesView: View {
 
     @ViewBuilder private var content: some View {
         if isSearching {
-            VStack(spacing: 12) {
-                AnimatedLoader(maxSize: 150)
-                Text("Searching roster…").font(.subheadline).foregroundStyle(.secondary)
-            }.frame(maxWidth: .infinity, maxHeight: .infinity)
+            AnimatedLoader(name: "finding-matches", maxSize: 260)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if !hasSearched {
             ContentUnavailableView("One-Way ECB Trades", systemImage: "star.circle",
                 description: Text("Pick shifts you want taken, set the ECB you'll offer, then Find. No swap back — you're paying ECB points."))
@@ -1105,10 +1102,8 @@ struct TwoWaySheet: View {
         NavigationStack {
             Group {
                 if loading {
-                    VStack(spacing: 12) {
-                        AnimatedLoader(maxSize: 150)
-                        Text("Finding bookend swaps…").font(.subheadline).foregroundStyle(.secondary)
-                    }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                    AnimatedLoader(name: "finding-matches", maxSize: 260)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if let full, (!full.iTake.isEmpty || !full.iGive.isEmpty) {
                     content
                 } else {
@@ -1534,10 +1529,8 @@ struct QualSwapDaysSheet: View {
         NavigationStack {
             Group {
                 if loading {
-                    VStack(spacing: 12) {
-                        AnimatedLoader(maxSize: 150)
-                        Text("Finding qual swaps…").font(.subheadline).foregroundStyle(.secondary)
-                    }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                    AnimatedLoader(name: "finding-matches", maxSize: 260)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     VStack(spacing: 0) {
                         if !selectedShifts.isEmpty { summaryHeader }

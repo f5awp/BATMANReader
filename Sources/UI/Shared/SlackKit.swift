@@ -13,13 +13,16 @@ import Lottie
 /// overlay and the "Searching for trades" indicator. Falls back to a spinner if a file is missing.
 struct AnimatedLoader: View {
     @Environment(\.colorScheme) private var scheme
+    /// Base animation name; "-light"/"-dark" is appended by color scheme. "dx-loading" = app loading,
+    /// "finding-matches" = trade search.
+    var name: String = "dx-loading"
     /// Optional square cap. nil = fill the container; otherwise scales to fit within maxSize.
     var maxSize: CGFloat? = nil
     var body: some View {
-        let name = scheme == .dark ? "dx-loading-dark" : "dx-loading-light"
+        let full = "\(name)-\(scheme == .dark ? "dark" : "light")"
         Group {
-            if LottieAnimation.named(name) != nil {
-                LottieView(animation: .named(name)).looping()
+            if LottieAnimation.named(full) != nil {
+                LottieView(animation: .named(full)).looping()
             } else {
                 ProgressView().controlSize(.large)   // graceful fallback if the JSON isn't bundled
             }
@@ -231,13 +234,9 @@ struct LoadingOverlay: ViewModifier {
             if active {
                 ZStack {
                     Color(.systemBackground).opacity(0.35).ignoresSafeArea()
-                    VStack(spacing: 12) {
-                        AnimatedLoader(maxSize: 96)
-                        Text(label).font(.subheadline.weight(.medium)).foregroundStyle(.secondary)
-                    }
-                    .padding(24)
-                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18))
-                    .shadow(color: .black.opacity(0.15), radius: 12, y: 4)
+                    // No card, no text — the dx-loading animation already reads "loading". ~3× larger
+                    // than before, capped so it stays reasonable (and scales down) on iPad.
+                    AnimatedLoader(name: "dx-loading", maxSize: 288)
                 }
                 .transition(.opacity)
                 .accessibilityElement()
