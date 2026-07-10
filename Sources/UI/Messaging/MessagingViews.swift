@@ -568,6 +568,7 @@ struct ThreadView: View {
     @State private var editMsgDraft = ""
     @State private var pickerItem: PhotosPickerItem?   // #28: photo attach on 1:1 chat
     @State private var pendingImage: UIImage?
+    @State private var showCalendars = false           // 4100a: multi-person card → two-calendar view
     @Environment(\.dismiss) private var dismiss
 
     init(request: TradeRequest) { self.request = request }
@@ -575,6 +576,49 @@ struct ThreadView: View {
     private var myID: String { SettingsManager.shared.username }
     private var isIncoming: Bool { request.toID == myID }
     private var status: TradeRequestStatus { store.status(of: request) }
+
+    // The trade card, extracted so the List body stays inside the type-checker's budget.
+    @ViewBuilder private var tradeCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label(cardKind, systemImage: cardIcon).font(.subheadline.bold())
+                Spacer()
+                StatusBadge(status: status)
+            }
+            Divider()
+            if let chain = request.chain, !chain.isEmpty {
+                TradeParticipantLines(rows: TradeParticipantLines.rows(chain: chain, myID: myID),
+                                      orderedPeers: chain.map(\.fromID))
+                Label("Tap to view everyone's calendars", systemImage: "calendar")
+                    .font(.caption.weight(.semibold)).foregroundStyle(AppColor.primary)
+            } else {
+                TradeParticipantLines(rows: twoWayRows, orderedPeers: [request.fromID, request.toID])
+            }
+            if request.isECB, let ecb = request.ecbAmount {
+                Label("\(ecbText(ecb)) ECB offered", systemImage: "star.circle.fill")
+                    .font(.subheadline.weight(.semibold)).foregroundStyle(AppColor.pending)
+            }
+            if !request.note.isEmpty { Text(request.note).font(.subheadline) }
+        }
+    }
+    private var cardKind: String {
+        let people = request.chain.map(distinctParticipants(in:)) ?? 2
+        return tradeTypeLabel(distinctPeople: people, isOneWayECB: request.isECB)
+    }
+    private var cardIcon: String {
+        request.chain != nil ? "arrow.triangle.2.circlepath" : (request.isECB ? "star.circle.fill" : "arrow.left.arrow.right")
+    }
+    private var twoWayRows: [(id: String, name: String, isMe: Bool, days: [String])] {
+        var r: [(id: String, name: String, isMe: Bool, days: [String])] = [
+            (id: request.fromID, name: request.fromID == myID ? "You" : request.fromName,
+             isMe: request.fromID == myID, days: request.giveDayIDs)
+        ]
+        if !(request.takeDayIDs.isEmpty && request.giveDayIDs.isEmpty) {
+            r.append((id: request.toID, name: request.toID == myID ? "You" : request.toName,
+                      isMe: request.toID == myID, days: request.takeDayIDs))
+        }
+        return r
+    }
 
     var body: some View {
         List {
@@ -588,48 +632,20 @@ struct ThreadView: View {
             }
             // The trade as a card — same language as the feed's package card.
             Section {
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack {
-                        let people = request.chain.map(distinctParticipants(in:)) ?? 2
-                        let kind = tradeTypeLabel(distinctPeople: people, isOneWayECB: request.isECB)
-                        Label(kind, systemImage: request.chain != nil ? "arrow.triangle.2.circlepath"
-                            : (request.isECB ? "star.circle.fill" : "arrow.left.arrow.right"))
-                            .font(.subheadline.bold())
-                        Spacer()
-                        StatusBadge(status: status)
-                    }
-                    Divider()
-                    // B6-CARD: same compact "● Name — dates" lines as the feed card (each person's GIVE days).
-                    if let chain = request.chain, !chain.isEmpty {
-                        TradeParticipantLines(rows: TradeParticipantLines.rows(chain: chain, myID: myID),
-                                              orderedPeers: chain.map(\.fromID))
-                    } else {
-                        let rows: [(id: String, name: String, isMe: Bool, days: [String])] = {
-                            var r: [(id: String, name: String, isMe: Bool, days: [String])] = [
-                                (id: request.fromID, name: request.fromID == myID ? "You" : request.fromName,
-                                 isMe: request.fromID == myID, days: request.giveDayIDs)
-                            ]
-                            if !(request.takeDayIDs.isEmpty && request.giveDayIDs.isEmpty) {
-                                r.append((id: request.toID, name: request.toID == myID ? "You" : request.toName,
-                                          isMe: request.toID == myID, days: request.takeDayIDs))
-                            }
-                            return r
-                        }()
-                        TradeParticipantLines(rows: rows, orderedPeers: [request.fromID, request.toID])
-                    }
-                    if request.isECB, let ecb = request.ecbAmount {
-                        Label("\(ecbText(ecb)) ECB offered", systemImage: "star.circle.fill")
-                            .font(.subheadline.weight(.semibold)).foregroundStyle(AppColor.pending)
-                    }
-                    if !request.note.isEmpty {
-                        Text(request.note).font(.subheadline)
-                    }
+                tradeCard
+                    .padding(DS.cardPadding)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.bar, in: RoundedRectangle(cornerRadius: DS.cardRadius))
+                    .listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
+                    .listRowBackground(Color.clear)
+                    .contentShape(Rectangle())
+                    .onTapGesture { if request.chain?.isEmpty == false { showCalendars = true } }
+            }
+            .sheet(isPresented: $showCalendars) {
+                if let chain = request.chain, !chain.isEmpty {
+                    PackageDetailView(package: PackageDetailView.fromChain(chain), onPropose: {}, onExecute: {}, readOnly: true)
+                        .magnifiable()
                 }
-                .padding(DS.cardPadding)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(.bar, in: RoundedRectangle(cornerRadius: DS.cardRadius))
-                .listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
-                .listRowBackground(Color.clear)
             }
 
             qualSwapSection

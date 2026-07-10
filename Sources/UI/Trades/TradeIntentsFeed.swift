@@ -892,6 +892,19 @@ struct PackageDetailView: View {
     let package: TradePackage
     let onPropose: () -> Void
     let onExecute: () -> Void
+    var readOnly: Bool = false   // inbox view: show the calendars, hide the Propose/Execute action
+
+    /// Build a view-only package from an inbox request's chain so the two-calendar view opens
+    /// straight from the thread card. startHour is display-irrelevant here (only desk is drawn).
+    static func fromChain(_ chain: [TradeLeg]) -> TradePackage {
+        let legs = chain.map { NWayLeg(fromID: $0.fromID, toID: $0.toID, dayID: $0.dayID, desk: $0.desk ?? "", startHour: 0) }
+        var order: [String] = []
+        for l in chain where !order.contains(l.fromID) { order.append(l.fromID) }
+        let route = NWayRoute(participants: order, legs: legs, tier: .neutralOptimization,
+                              score: 0, usesBookends: false)
+        return TradePackage(id: "thread-" + order.joined(separator: ">"),
+                            methodology: .circular, assignments: [], route: route)
+    }
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.horizontalSizeClass) private var hSize
@@ -991,14 +1004,16 @@ struct PackageDetailView: View {
 
                     if !wide { MiniScheduleLegend().padding(.horizontal) }
 
-                    Button {
-                        isCircular ? onExecute() : onPropose()
-                        dismiss()
-                    } label: {
-                        Label("Propose", systemImage: isCircular ? "arrow.triangle.2.circlepath" : "paperplane.fill")   // D4: generic
-                            .frame(maxWidth: .infinity)
+                    if !readOnly {
+                        Button {
+                            isCircular ? onExecute() : onPropose()
+                            dismiss()
+                        } label: {
+                            Label("Propose", systemImage: isCircular ? "arrow.triangle.2.circlepath" : "paperplane.fill")   // D4: generic
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent).padding(.horizontal).padding(.bottom, 8)
                     }
-                    .buttonStyle(.borderedProminent).padding(.horizontal).padding(.bottom, 8)
                 }
             }
             .navigationTitle(dateTitle)
