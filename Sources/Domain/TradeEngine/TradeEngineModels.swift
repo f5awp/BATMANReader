@@ -880,8 +880,8 @@ enum AppGuide {
     static let build6Highlights: [Build6Highlight] = [
         Build6Highlight(
             symbol: "banknote.fill", title: "ECB Accounting — track your ECB",
-            what: "New page at ⋯ → ECB Accounting. Log OT/holiday deposits, withdrawals, and trades; see Available (capped at 144), Projected, and what you Owe / are Owed. Lines stay pending until you clear them on a pay day.",
-            why: "No more paper or mental math — ECB trades post to BOTH ledgers and stay in sync, and you can IOU a future deposit before it lands."),
+            what: "Now when you tap ⋯ you'll find ECB Accounting: a YNAB-style ledger for all your ECB. Log every deposit (OT, holidays), withdrawal, and trade, and it keeps a running balance — Available (what's cleared, capped at 144), Projected (once scheduled ECB and IOUs land), and what you Owe / are Owed. Lines stay pending until you clear them on a pay day.",
+            why: "Your ECB is finally budgeted like money instead of tracked on paper or in your head — you always know exactly what you have, what's coming, and what's promised. Trades post to BOTH ledgers and stay in sync, and you can even IOU a future deposit before it lands."),
         Build6Highlight(
             symbol: "beach.umbrella.fill", title: "Vacation & ECB VC days",
             what: "The master schedule can't tell whether you traded into a vacation day, so all vacation (and ECB-VC) days start OFF. Picked one up? Open the day and toggle \"Trade Picked Up.\"",
@@ -918,7 +918,7 @@ enum AppGuide {
             version: "Build 6 — ECB Accounting, accessibility & trade polish",
             headline: "A big update: track your ECB, a screen magnifier for everyone, and clearer, faster trading.",
             points: [
-                "ECB Accounting (⋯ → ECB Accounting): a full ledger — log overtime/holiday deposits, withdrawals, and trades; see Available (capped at 144), Projected, and what you Owe / are Owed. Amounts stay pending until you mark them cleared on a pay day.",
+                "ECB Accounting (tap ⋯ → ECB Accounting): a YNAB-style ledger for all your ECB. Log every deposit (OT, holidays), withdrawal, and trade and it keeps a running balance — Available (cleared, capped at 144), Projected (once scheduled ECB and IOUs land), and what you Owe / are Owed. Budget your ECB like money instead of tracking it on paper. Lines stay pending until you mark them cleared on a pay day.",
                 "ECB trades sync both ways: trade ECB with a dispatcher and it posts to BOTH ledgers once they confirm in their Inbox; accepting an in-app ECB offer posts it automatically. You can even IOU a future deposit before it lands.",
                 "Vacation & ECB-VC days: the master schedule doesn't show whether you traded into a vacation day, so ALL vacation days are set to OFF by default. You can open any of those days and toggle \"Trade Picked Up\" — that updates the app's calendar AND your Apple Calendar to reflect what you actually work.",
                 "Screen magnifier — turn it on in App Settings (⋯ → App Settings → Accessibility → Screen magnifier). A DRAGGABLE floating button then appears on every screen; drag it wherever, tap it, and pinch with two fingers to zoom and pan (one finger still taps/scrolls). Works on the whole app, including pop-up sheets.",

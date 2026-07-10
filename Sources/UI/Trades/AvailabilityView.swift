@@ -993,7 +993,18 @@ struct TwoWaySheet: View {
     // G2a: the peer's human name — published displayName → roster name → employee # (fixes "660615").
     private var peerName: String { TradeNames.resolved(displayName: peerDisplayName, rosterName: candidate.name, workerID: candidate.workerID) }
 
-    private var glanceBaseHeight: CGFloat { 720 }   // two full-width calendars, stacked
+    private var isPad: Bool { hSize == .regular }
+    /// iPad LANDSCAPE lays the calendars side by side; iPad PORTRAIT stacks them but scales
+    /// each to fill the screen; iPhone always stacks full-width. Chosen by real geometry so
+    /// portrait iPad (still `.regular` width) doesn't wrongly go side-by-side.
+    private func sideBySide(_ viewport: CGSize) -> Bool { isPad && viewport.width > viewport.height }
+    /// Height the twin-calendar glance should occupy — scale-to-fit the actual screen on iPad
+    /// (fills most of the viewport so both calendars are visible without scrolling), fixed on iPhone.
+    private func glanceBaseHeight(_ viewport: CGSize) -> CGFloat {
+        guard isPad, viewport.height > 0 else { return 720 }
+        // Landscape: one row of two calendars → ~72% of height. Portrait: two stacked → ~82%.
+        return viewport.height * (sideBySide(viewport) ? 0.72 : 0.82)
+    }
 
     private let bookendGreen = AppColor.success
     private let seekingGold  = AppColor.pending
@@ -1083,9 +1094,12 @@ struct TwoWaySheet: View {
     private let monthOffsets = Array(-1...13)
     private static let monthF: DateFormatter = { let f = DateFormatter(); f.dateFormat = "MMMM yyyy"; return f }()
 
-    /// Twin month grids that swipe together, month by month.
-    private var scheduleGlance: some View {
-        VStack(spacing: 4) {
+    /// Twin month grids that swipe together, month by month. `viewport` is the sheet's available
+    /// size, used to scale the calendars to fit the screen on iPad (portrait & landscape).
+    private func scheduleGlance(_ viewport: CGSize) -> some View {
+        let baseHeight = glanceBaseHeight(viewport)
+        let wide = sideBySide(viewport)
+        return VStack(spacing: 4) {
             HStack {
                 Button { setZoom(zoom - 0.5) } label: {
                     Image(systemName: "minus.magnifyingglass")
@@ -1109,32 +1123,44 @@ struct TwoWaySheet: View {
             .padding(.horizontal, 8)
             TabView(selection: $monthIndex) {
                 ForEach(monthOffsets, id: \.self) { off in
-                    // Side-by-side on iPad; stacked on iPhone so each calendar gets
-                    // full width and stays readable.
-                    VStack(spacing: 16) {
-                        MiniScheduleGrid(title: "You", days: myDays, month: monthAnchor(off),
-                                         accent: youColor,
-                                         giveDays: selectedGive, takeDays: selectedTake,
-                                         gold: myGoldDays, intent: myIntent,
-                                         topology: myTopology, eventName: myEvent)
-                        MiniScheduleGrid(title: peerName, days: theirDays, month: monthAnchor(off),
-                                         accent: themColor,
-                                         giveDays: selectedTake, takeDays: selectedGive,
-                                         gold: theirGoldDays, intent: theirIntent,
-                                         topology: Self.globalTopology, eventName: Self.globalEvent)
+                    // Side-by-side on iPad (both fit without scrolling); stacked on iPhone so
+                    // each calendar gets full width and stays readable. `fill` stretches the
+                    // grids to the glance height so they scale to fit either layout.
+                    Group {
+                        if wide {
+                            HStack(alignment: .top, spacing: 16) { youGrid(off); peerGrid(off) }
+                        } else {
+                            VStack(spacing: 16) { youGrid(off); peerGrid(off) }
+                        }
                     }
                     .padding(.horizontal, 2)
                     .tag(off)
                 }
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
-            .frame(height: glanceBaseHeight)
+            .frame(height: baseHeight)
             .scaleEffect(zoom, anchor: .top)
-            .frame(height: glanceBaseHeight * zoom, alignment: .top)
+            .frame(height: baseHeight * zoom, alignment: .top)
             .clipped()
             Text("Use +/− to zoom · swipe for months")
                 .font(.system(size: 9)).foregroundStyle(.tertiary)
         }
+    }
+
+    /// The "You" calendar — `fill: true` so it stretches to the glance height (scale-to-fit
+    /// in both the stacked-iPhone and side-by-side-iPad layouts).
+    private func youGrid(_ off: Int) -> some View {
+        MiniScheduleGrid(title: "You", days: myDays, month: monthAnchor(off),
+                         accent: youColor, giveDays: selectedGive, takeDays: selectedTake,
+                         gold: myGoldDays, intent: myIntent,
+                         topology: myTopology, eventName: myEvent, fill: true)
+    }
+    /// The peer's calendar — same fill behavior.
+    private func peerGrid(_ off: Int) -> some View {
+        MiniScheduleGrid(title: peerName, days: theirDays, month: monthAnchor(off),
+                         accent: themColor, giveDays: selectedTake, takeDays: selectedGive,
+                         gold: theirGoldDays, intent: theirIntent,
+                         topology: Self.globalTopology, eventName: Self.globalEvent, fill: true)
     }
 
     /// Steps the calendar zoom, clamped to 1×–3×.
@@ -1181,6 +1207,7 @@ struct TwoWaySheet: View {
     }
 
     private var content: some View {
+        GeometryReader { geo in
         ScrollView {
             VStack(spacing: 16) {
                 if let theirStatus {   // R-B: show the peer's published status in-context
@@ -1193,7 +1220,7 @@ struct TwoWaySheet: View {
                     .padding(10)
                     .background(themColor.opacity(0.10), in: RoundedRectangle(cornerRadius: 10))
                 }
-                scheduleGlance
+                scheduleGlance(geo.size)
                 MiniScheduleLegend()
                 Toggle(isOn: $ignoreMyBlacklist.animation()) {
                     Label("Show my blacklisted shifts (override)", systemImage: "eye.slash")
@@ -1215,6 +1242,7 @@ struct TwoWaySheet: View {
                 }
             }
             .padding()
+        }
         }
     }
 
