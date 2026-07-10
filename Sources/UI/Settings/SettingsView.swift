@@ -15,7 +15,6 @@ struct SettingsView: View {
     @State private var passwordDraft      = ""
     @State private var showPasswordSaved  = false
     @State private var showClearConfirm   = false
-    @State private var showCalendarPicker = false
     @State private var debugMessage: String?
     @State private var calendarResetMessage: String?
     @State private var showDebugPrompt = false
@@ -227,49 +226,6 @@ struct SettingsView: View {
                         Text("Your shifts are added to '\(ekManager.personalCalendarName)' automatically on every fetch. Traded shifts are removed automatically. Use Reset if you see duplicate events — it clears the app's events and re-adds your shifts once.")
                         Text("Using Google Calendar? Add your Google account in iOS Settings → Calendar. Your shifts sync into it automatically through Apple Calendar — no separate setup in this app.")
                     }
-                }
-
-                // ── Shared dispatcher calendar ───────────────────────
-                Section {
-                    Toggle("Enable shared dispatcher calendar", isOn: $settings.sharedCalendarEnabled)
-
-                    if settings.sharedCalendarEnabled {
-                        Button {
-                            ekManager.refreshAvailableCalendars()
-                            showCalendarPicker = true
-                        } label: {
-                            HStack {
-                                Label("Select 'AA Dispatch' calendar", systemImage: "calendar.badge.plus")
-                                Spacer()
-                                if !settings.sharedCalendarIdentifier.isEmpty {
-                                    Image(systemName: "checkmark")
-                                        .foregroundStyle(AppColor.success)
-                                }
-                            }
-                        }
-
-                        if let name = selectedSharedCalendarName {
-                            LabeledContent("Selected") {
-                                Text(name).foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-                } header: {
-                    Text("Shared Dispatcher Calendar")
-                } footer: {
-                    Text(sharedCalendarFooter)
-                }
-                .confirmationDialog(
-                    "Select the shared dispatcher calendar",
-                    isPresented: $showCalendarPicker,
-                    titleVisibility: .visible
-                ) {
-                    ForEach(ekManager.availableCalendars, id: \.calendarIdentifier) { cal in
-                        Button(cal.title) {
-                            settings.sharedCalendarIdentifier = cal.calendarIdentifier
-                        }
-                    }
-                    Button("Cancel", role: .cancel) {}
                 }
 
                 // ── iCloud trade sync ────────────────────────────────
@@ -655,23 +611,6 @@ struct SettingsView: View {
         case .notDetermined: return "Not requested yet"
         default:             return "Unknown"
         }
-    }
-
-    private var selectedSharedCalendarName: String? {
-        guard !settings.sharedCalendarIdentifier.isEmpty else { return nil }
-        return ekManager.availableCalendars
-            .first { $0.calendarIdentifier == settings.sharedCalendarIdentifier }?
-            .title
-    }
-
-    private var sharedCalendarFooter: String {
-        if !settings.sharedCalendarEnabled {
-            return "When enabled, your off days appear on the shared dispatcher calendar so others can see your availability for trades. Your shift details are never shared."
-        }
-        if settings.sharedCalendarIdentifier.isEmpty {
-            return "Tap 'Select calendar' to choose the shared 'AA Dispatch' calendar. The coordinator must create and share it first via iCloud."
-        }
-        return "Your off days will appear as '\(settings.displayName.isEmpty ? settings.username : settings.displayName) — Available' on the shared calendar."
     }
 
     private var formattedLastFetch: String {

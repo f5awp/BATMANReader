@@ -31,14 +31,7 @@ final class AvailabilityManager {
 
     private enum Keys {
         static let myAvailability = "batman.myAvailability"
-        static let eventIDs       = "batman.availabilityEventIDs"
         static let perDayRemoved  = "batman.perDayRemovedTypes"
-    }
-
-    // shift ISO date → EKEvent.eventIdentifiers on the shared calendar (one per offered type)
-    private var eventIDMap: [String: [String]] {
-        get { (UserDefaults.standard.dictionary(forKey: Keys.eventIDs) as? [String: [String]]) ?? [:] }
-        set { UserDefaults.standard.set(newValue, forKey: Keys.eventIDs) }
     }
 
     // day ISO → shift-type rawValues the user manually removed for that specific day.
@@ -69,7 +62,6 @@ final class AvailabilityManager {
         let removals = perDayRemovedTypes
         let calendar = Calendar.current
         let iso = DateFormatter(); iso.dateFormat = "yyyy-MM-dd"
-        let offDayIDs = Set(offDays.map { $0.id })
 
         // Recompute fresh every time (idempotent — switching openness can't lose data).
         // Effective availability = openness-filtered eligible days
@@ -92,13 +84,8 @@ final class AvailabilityManager {
             rebuilt.append(DayAvailability(id: offDay.id, date: offDay.date, availableTypes: types))
         }
 
-        // Remove shared-calendar events for days that are no longer off days.
-        let goneDays = myAvailability.filter { !offDayIDs.contains($0.id) }
-        if !goneDays.isEmpty { removeFromSharedCalendar(goneDays) }
-
         myAvailability = rebuilt.sorted { $0.date < $1.date }
         save()
-        syncAll()
     }
 
     // MARK: - Per-day manual override (the granular, date-specific blacklist)
@@ -138,116 +125,7 @@ final class AvailabilityManager {
         return worksPrev != worksNext
     }
 
-    // MARK: - Read other dispatchers
-
-    /// Queries the shared calendar for a specific date and returns every
-    /// dispatcher who posted availability there.
-    /// Excludes your own entries (matched by display name).
-    /// Optionally filters by shift type.
-    func otherDispatchersAvailable(
-        on date: Date,
-        filterBy type: ShiftAvailabilityType? = nil
-    ) -> [DispatcherAvailabilityEntry] {
-        guard let cal = sharedCalendar() else { return [] }
-
-        let calendar = Calendar.current
-        let start    = calendar.startOfDay(for: date)
-        let end      = calendar.date(byAdding: .day, value: 1, to: start)!
-        let pred     = ekStore.predicateForEvents(withStart: start, end: end, calendars: [cal])
-        let events   = ekStore.events(matching: pred)
-
-        let myName = displayName()
-
-        return events.compactMap { event -> DispatcherAvailabilityEntry? in
-            guard let title = event.title,
-                  let entry = DispatcherAvailabilityEntry.parse(title: title, date: date)
-            else { return nil }
-
-            // Exclude your own entries
-            if entry.name.lowercased() == myName.lowercased() { return nil }
-
-            // Apply shift type filter
-            if let filter = type, entry.availability != filter { return nil }
-
-            return entry
-        }
-        .sorted { $0.name < $1.name }
-    }
-
-    /// Convenience overload returning ALL available dispatchers without filter.
-    func allOtherDispatchersAvailable(on date: Date) -> [DispatcherAvailabilityEntry] {
-        otherDispatchersAvailable(on: date, filterBy: nil)
-    }
-
-    // MARK: - Shared calendar write/remove
-
-    private func syncAll() {
-        for entry in myAvailability {
-            if entry.isAvailable {
-                writeToSharedCalendar(entry)
-            } else {
-                removeFromSharedCalendar([entry])
-            }
-        }
-    }
-
-    private func writeToSharedCalendar(_ day: DayAvailability) {
-        guard let cal = sharedCalendar() else { return }
-
-        var map  = eventIDMap
-        let name = displayName()
-
-        // Remove any previously-written events for this day (handles changes).
-        for oldID in map[day.id] ?? [] {
-            if let old = ekStore.event(withIdentifier: oldID) {
-                try? ekStore.remove(old, span: .thisEvent, commit: false)
-            }
-        }
-
-        // Write one all-day event per offered shift type.
-        var newIDs: [String] = []
-        for type in day.sortedTypes {
-            let event        = EKEvent(eventStore: ekStore)
-            event.calendar   = cal
-            event.title      = day.calendarTitle(displayName: name, type: type)
-            event.isAllDay   = true
-            event.startDate  = day.date
-            event.endDate    = day.date
-            event.notes      = "Posted by BATMANReader"
-            do {
-                try ekStore.save(event, span: .thisEvent, commit: false)
-                if let id = event.eventIdentifier { newIDs.append(id) }
-            } catch {
-                print("⚠️ AvailabilityManager: write failed for \(day.id) \(type.rawValue): \(error)")
-            }
-        }
-        try? ekStore.commit()
-        map[day.id] = newIDs
-        eventIDMap = map
-    }
-
-    private func removeFromSharedCalendar(_ days: [DayAvailability]) {
-        var map = eventIDMap
-        for day in days {
-            for eid in map[day.id] ?? [] {
-                if let event = ekStore.event(withIdentifier: eid) {
-                    try? ekStore.remove(event, span: .thisEvent, commit: false)
-                }
-            }
-            map.removeValue(forKey: day.id)
-        }
-        try? ekStore.commit()
-        eventIDMap = map
-    }
-
     // MARK: - Helpers
-
-    private func sharedCalendar() -> EKCalendar? {
-        let settings = SettingsManager.shared
-        guard settings.sharedCalendarEnabled,
-              !settings.sharedCalendarIdentifier.isEmpty else { return nil }
-        return ekStore.calendar(withIdentifier: settings.sharedCalendarIdentifier)
-    }
 
     private func displayName() -> String {
         let s = SettingsManager.shared
@@ -304,9 +182,7 @@ final class AvailabilityManager {
 
     /// Called when the user clears their stored schedule.
     func clearAll() {
-        removeFromSharedCalendar(myAvailability)
         myAvailability = []
         UserDefaults.standard.removeObject(forKey: Keys.myAvailability)
-        eventIDMap = [:]
     }
 }

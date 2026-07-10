@@ -63,16 +63,6 @@ final class SettingsManager {
     //   4. Each person opens BATMANReader Settings → Shared Calendar
     //      and taps the calendar name to select it
     //
-    // BATMANReader writes OFF days only — never shift details — to the
-    // shared calendar so everyone can see who's available to trade.
-    var sharedCalendarEnabled: Bool {
-        didSet { defaults.set(sharedCalendarEnabled, forKey: Keys.sharedCalEnabled) }
-    }
-
-    var sharedCalendarIdentifier: String {
-        didSet { defaults.set(sharedCalendarIdentifier, forKey: Keys.sharedCalID) }
-    }
-
     /// Composed "Last, First" — derived from firstName/lastName below. Stored so
     /// existing call sites (profiles, messages) keep working unchanged.
     var displayName: String {
@@ -235,8 +225,6 @@ final class SettingsManager {
 
         showDebugWebView         = defaults.bool(forKey: Keys.debugWebView)
         magnifierEnabled         = defaults.bool(forKey: Keys.magnifier)
-        sharedCalendarEnabled    = defaults.bool(forKey: Keys.sharedCalEnabled)
-        sharedCalendarIdentifier = defaults.string(forKey: Keys.sharedCalID) ?? ""
         displayName              = defaults.string(forKey: Keys.displayName) ?? ""
         firstName                = defaults.string(forKey: Keys.firstName) ?? ""
         lastName                 = defaults.string(forKey: Keys.lastName) ?? ""
@@ -275,8 +263,6 @@ final class SettingsManager {
         static let leadHours      = "batman.notificationLeadHours"
         static let debugWebView   = "batman.showDebugWebView"
         static let magnifier      = "batman.magnifierEnabled"
-        static let sharedCalEnabled = "batman.sharedCalendarEnabled"
-        static let sharedCalID    = "batman.sharedCalendarID"
         static let displayName    = "batman.displayName"
         static let blacklistedWeekdays = "batman.blacklistedWeekdays"
         static let blDesks      = "batman.blacklistedDesks"
