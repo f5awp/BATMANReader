@@ -1778,10 +1778,13 @@ struct MiniScheduleGrid: View {
                 .foregroundStyle(filled ? .white : (isToday ? blue : .primary))
                 .frame(height: fill ? 26 : 32)
             Text(label.isEmpty ? " " : label)
-                .font(.subheadline.weight(.heavy))
+                // Sized to FIT a 7-column cell whole (footnote, heavy); the scale floor guarantees
+                // "PM 22" / "AM 04" never truncate. Full detail is one tap away in the popover.
+                .font(.footnote.weight(.heavy))
                 .foregroundStyle(filled ? .white : (working ? accent : .secondary))
-                .lineLimit(1).minimumScaleFactor(0.7)
-                .frame(minHeight: fill ? 16 : nil)
+                .lineLimit(1).minimumScaleFactor(0.5)
+                .frame(minHeight: fill ? 15 : nil)
+                .padding(.horizontal, 1)
         }
         .frame(maxWidth: .infinity, minHeight: fill ? 34 : 50, maxHeight: fill ? .infinity : nil)
         .background(background(key: key, working: working))
@@ -1806,42 +1809,58 @@ struct MiniScheduleGrid: View {
         let f = DateFormatter(); f.dateFormat = "EEEE, MMM d"; return f
     }()
 
-    /// Full detail for a tapped day — everything the cell used to cram inline (shift+desk, trade role,
-    /// your intent, holiday/personal), at readable size.
+    /// Full detail for a tapped day — concrete facts, no filler: the date, the shift broken into type +
+    /// desk, and what happens to it in THIS trade as a directional tag (with the calendar owner's name).
     @ViewBuilder private func dayDetailPopover(key: String, date: Date, label: String, working: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        let parts = label.split(separator: " ").map(String.init)
+        let shiftType = parts.first ?? ""
+        let deskNo    = parts.count > 1 ? parts[1...].joined(separator: " ") : ""
+        VStack(alignment: .leading, spacing: 10) {
             Text(Self.popoverDateF.string(from: date)).font(.headline)
-            Label(working ? (label.isEmpty ? "Working" : label) : "Off",
-                  systemImage: working ? "clock.fill" : "moon.zzz.fill")
-                .font(.subheadline.weight(.semibold)).foregroundStyle(working ? accent : .secondary)
-            if takeDays.contains(key) {
-                roleRow("You pick up this shift", "arrow.down.circle.fill", accent)
-            } else if giveDays.contains(key) {
-                roleRow("You give this shift away", "arrow.up.circle.fill", accent)
-            } else if loopDays.contains(key) {
-                roleRow("Loop handoff", "arrow.triangle.2.circlepath", BrickPalette.loopTrade)
-            }
-            if gold.contains(key) { roleRow("Both of you want this trade", "flame.fill", goldBorder) }
-            if let tint = intent(key) {
-                HStack(spacing: 6) {
-                    Circle().fill(tint).frame(width: 10, height: 10)
-                    Text("You've marked this day").font(.caption)
+
+            // The shift, spelled out. "AM shift · Desk 32" reads better than the compact "AM 32".
+            if working {
+                HStack(spacing: 8) {
+                    Image(systemName: "clock.fill").foregroundStyle(accent)
+                    Text(shiftType.isEmpty ? "Working" : "\(shiftType) shift").font(.subheadline.weight(.bold))
+                    if !deskNo.isEmpty {
+                        Text("· Desk \(deskNo)").font(.subheadline).foregroundStyle(.secondary)
+                    }
                 }
+            } else {
+                Label("Off", systemImage: "moon.zzz.fill").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
             }
+
+            // What happens to it in this trade — a bold directional chip naming the owner (grammar
+            // agrees whether the owner is "You" or a named peer).
+            let isYou = title == "You"
+            if takeDays.contains(key) {
+                tradeTag(isYou ? "You pick this up" : "\(title) picks this up", "arrow.down.circle.fill", accent)
+            } else if giveDays.contains(key) {
+                tradeTag(isYou ? "You give this away" : "\(title) gives this away", "arrow.up.circle.fill", accent)
+            } else if loopDays.contains(key) {
+                tradeTag("Loop handoff", "arrow.triangle.2.circlepath", BrickPalette.loopTrade)
+            }
+            if gold.contains(key) { tradeTag("Both sides want this", "flame.fill", goldBorder) }
+
+            // Only surface a holiday / personal day if it actually applies (concrete, not "marked").
             switch topology(key) {
             case .highDemand:
-                roleRow(eventName(key) ?? "High-impact day", "exclamationmark.circle.fill", BrickPalette.highImpact)
+                tradeTag(eventName(key) ?? "High-impact day", "exclamationmark.circle.fill", BrickPalette.highImpact)
             case .personalMilestone:
-                roleRow(eventName(key) ?? "Personal day", "star.circle.fill", BrickPalette.personalDay)
+                tradeTag(eventName(key) ?? "Personal day", "star.circle.fill", BrickPalette.personalDay)
             case .standard:
                 EmptyView()
             }
         }
-        .padding()
+        .padding(14)
         .presentationCompactAdaptation(.popover)
     }
-    private func roleRow(_ text: String, _ symbol: String, _ color: Color) -> some View {
-        Label(text, systemImage: symbol).font(.caption.weight(.semibold)).foregroundStyle(color)
+    private func tradeTag(_ text: String, _ symbol: String, _ color: Color) -> some View {
+        Label(text, systemImage: symbol)
+            .font(.caption.weight(.bold)).foregroundStyle(color)
+            .padding(.horizontal, 8).padding(.vertical, 4)
+            .background(color.opacity(0.14), in: Capsule())
     }
 
     @ViewBuilder private func border(key: String) -> some View {
