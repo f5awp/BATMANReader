@@ -142,7 +142,14 @@ struct WelcomeView: View {
             }
         }
         .task {
-            myQuals = await RosterStore.shared.schedule(forWorker: settings.username).first?.quals ?? []
+            // Roster ingest is async on launch, so a single read can land before the user's quals
+            // exist — that's why a held qual (e.g. Latin) showed as ungrayed here but correct in
+            // Trade Settings (opened later). Retry briefly until quals arrive.
+            for _ in 0..<20 {
+                let q = await RosterStore.shared.schedule(forWorker: settings.username).first?.quals ?? []
+                if !q.isEmpty { myQuals = q; return }
+                try? await Task.sleep(nanoseconds: 300_000_000)   // 0.3s between attempts (~6s max)
+            }
         }
     }
 
