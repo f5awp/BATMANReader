@@ -994,16 +994,17 @@ struct TwoWaySheet: View {
     private var peerName: String { TradeNames.resolved(displayName: peerDisplayName, rosterName: candidate.name, workerID: candidate.workerID) }
 
     private var isPad: Bool { hSize == .regular }
-    /// iPad LANDSCAPE lays the calendars side by side; iPad PORTRAIT stacks them but scales
-    /// each to fill the screen; iPhone always stacks full-width. Chosen by real geometry so
-    /// portrait iPad (still `.regular` width) doesn't wrongly go side-by-side.
-    private func sideBySide(_ viewport: CGSize) -> Bool { isPad && viewport.width > viewport.height }
-    /// Height the twin-calendar glance should occupy — scale-to-fit the actual screen on iPad
-    /// (fills most of the viewport so both calendars are visible without scrolling), fixed on iPhone.
+    /// LANDSCAPE (any device — iPhone rotated or iPad) lays the calendars side by side; PORTRAIT
+    /// stacks them. Chosen by real geometry (wider than tall) rather than size class, so an iPhone
+    /// in landscape goes side-by-side and a portrait iPad (still `.regular`) doesn't.
+    private func sideBySide(_ viewport: CGSize) -> Bool { viewport.width > viewport.height }
+    /// Height the twin-calendar glance should occupy. Landscape (either device) and portrait iPad
+    /// scale-to-fit the viewport so both calendars are visible without scrolling; portrait iPhone
+    /// keeps the fixed full-width stacked height.
     private func glanceBaseHeight(_ viewport: CGSize) -> CGFloat {
-        guard isPad, viewport.height > 0 else { return 720 }
-        // Landscape: one row of two calendars → ~72% of height. Portrait: two stacked → ~82%.
-        return viewport.height * (sideBySide(viewport) ? 0.72 : 0.82)
+        guard viewport.height > 0 else { return 720 }
+        if sideBySide(viewport) { return viewport.height * 0.78 }   // landscape: one row of two → fill height
+        return isPad ? viewport.height * 0.82 : 720                 // portrait: iPad fills; iPhone stacked fixed
     }
 
     private let bookendGreen = AppColor.success
