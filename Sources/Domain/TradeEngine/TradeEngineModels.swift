@@ -891,6 +891,10 @@ enum AppGuide {
             what: "Your working shifts build straight into Apple Calendar, and any day you change in the app (like a picked-up vacation day) updates there too. On Google Calendar? Add your Google account in iOS Settings → Calendar and your shifts flow there automatically.",
             why: "Your real schedule lives in the calendar you already check — no double entry."),
         Build6Highlight(
+            symbol: "apps.iphone", title: "Home Screen widgets",
+            what: "Long-press your Home Screen → tap ＋ → search \"BATMAN.\" \"Next Shift\" shows your next shift and a week-at-a-glance strip; \"Trade Requests\" shows how many requests are waiting to reply to.",
+            why: "Your next shift and pending trades sit on your Home Screen — a glance instead of opening the app."),
+        Build6Highlight(
             symbol: "plus.magnifyingglass", title: "Screen magnifier",
             what: "Turn on in ⋯ → App Settings → Accessibility. A draggable button appears on every screen — tap it, pinch to zoom, drag with two fingers to pan; one finger still taps and scrolls.",
             why: "Makes the whole app usable if you're hard of sight, without fighting the system zoom."),
@@ -920,6 +924,7 @@ enum AppGuide {
                 "Screen magnifier — turn it on in App Settings (⋯ → App Settings → Accessibility → Screen magnifier). A DRAGGABLE floating button then appears on every screen; drag it wherever, tap it, and pinch with two fingers to zoom and pan (one finger still taps/scrolls). Works on the whole app, including pop-up sheets.",
                 "Intents now has two sections — \"Mutual\" (both of you marked the day) and \"All\" (every possible partner); switching is instant, and the heavy 3+person/circular search is opt-in via \"More: 3+ & loops.\"",
                 "Cleaner, less-cluttered layout: redesigned trade/package cards (one compact \"Name — dates\" line per person) and a refreshed calendar view; Trade Settings are now tap pills (shift types, regions grayed when unqualified, blackout days); a tidier top bar (Inbox · Channel · Trade status with badges · ⋯) with the color key by the Home layers button; and tapping any day opens the full editor directly. \"Keep\" (green) vs \"Blackout\" (slate) are consistent everywhere.",
+                "Home Screen widgets: long-press the Home Screen → ＋ → search \"BATMAN\" to add \"Next Shift\" (your next shift + a week-at-a-glance strip) and \"Trade Requests\" (how many are waiting) — updated automatically.",
                 "Live daily digest refreshes its counts in the background, and @-mentioning a dispatcher in a channel sends them a push.",
             ]),
         ReleaseNote(
