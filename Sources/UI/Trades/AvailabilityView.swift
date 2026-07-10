@@ -1719,7 +1719,10 @@ struct MiniScheduleGrid: View {
     var eventName: (String) -> String? = { _ in nil }          // popover text when a marked day is tapped
     var fill: Bool = false               // stretch rows to fill the container's height (scale-to-fit on iPad)
 
-    @State private var openEvent: String?
+    /// The tapped day, driving ONE grid-level popover (per-cell popovers inside a paging TabView are
+    /// unstable and were dismissing the sheet). Identifiable so `.popover(item:)` stays put until closed.
+    struct PopDay: Identifiable { let id: String }
+    @State private var popDay: PopDay?
 
     private let cal = Calendar.current
     private let blue = AppColor.primary
@@ -1758,6 +1761,8 @@ struct MiniScheduleGrid: View {
         .frame(maxWidth: .infinity, maxHeight: fill ? .infinity : nil)
         // Scale with Dynamic Type, but cap it so the fixed-size day cells don't overflow.
         .dynamicTypeSize(...DynamicTypeSize.xLarge)
+        // ONE popover for the whole grid (stable), driven by the tapped day.
+        .popover(item: $popDay) { day in dayDetailPopover(key: day.id) }
     }
 
     private func cell(dayOffset: Int) -> some View {
@@ -1772,31 +1777,26 @@ struct MiniScheduleGrid: View {
         // Decluttered cell (UX): only the swap-critical signals inline — big date, big shift label, and
         // the trade role via fill/border. Intent, holiday/personal, and mutual-gold move to the tap
         // popover so nothing overlaps and the text stays large. Every day is tappable.
+        // No fixed row/label heights and no content clip — both texts scale to whatever height the
+        // row gets, so nothing is ever cut. The rounded FILL is applied via `background(in:)` (which
+        // clips only the fill, never the text). This is the permanent fix for the label clipping.
         return VStack(spacing: 1) {
             Text("\(cal.component(.day, from: date))")
                 .font(.headline).fontWeight(isToday ? .black : .semibold)
                 .foregroundStyle(filled ? .white : (isToday ? blue : .primary))
-                .frame(height: fill ? 26 : 32)
+                .lineLimit(1).minimumScaleFactor(0.6)
             Text(label.isEmpty ? " " : label)
-                // Sized to FIT a 7-column cell whole (footnote, heavy); the scale floor guarantees
-                // "PM 22" / "AM 04" never truncate. Full detail is one tap away in the popover.
                 .font(.footnote.weight(.heavy))
                 .foregroundStyle(filled ? .white : (working ? accent : .secondary))
                 .lineLimit(1).minimumScaleFactor(0.5)
-                .frame(minHeight: fill ? 15 : nil)
-                .padding(.horizontal, 1)
         }
-        .frame(maxWidth: .infinity, minHeight: fill ? 34 : 50, maxHeight: fill ? .infinity : nil)
-        .background(background(key: key, working: working))
-        .clipShape(RoundedRectangle(cornerRadius: 7))
+        .frame(maxWidth: .infinity, minHeight: fill ? 30 : 50, maxHeight: fill ? .infinity : nil)
+        .padding(.vertical, 2)
+        .background(background(key: key, working: working), in: RoundedRectangle(cornerRadius: 7))
         .overlay { border(key: key) }
         .opacity(inMonth ? 1 : 0.18)
         .contentShape(Rectangle())
-        .onTapGesture { openEvent = key }   // any day → detail popover
-        .popover(isPresented: Binding(get: { openEvent == key },
-                                      set: { if !$0 { openEvent = nil } })) {
-            dayDetailPopover(key: key, date: date, label: label, working: working)
-        }
+        .onTapGesture { popDay = PopDay(id: key) }   // any day → the single grid popover
     }
 
     private func background(key: String, working: Bool) -> Color {
@@ -1811,7 +1811,10 @@ struct MiniScheduleGrid: View {
 
     /// Full detail for a tapped day — concrete facts, no filler: the date, the shift broken into type +
     /// desk, and what happens to it in THIS trade as a directional tag (with the calendar owner's name).
-    @ViewBuilder private func dayDetailPopover(key: String, date: Date, label: String, working: Bool) -> some View {
+    @ViewBuilder private func dayDetailPopover(key: String) -> some View {
+        let date    = Self.isoF.date(from: key) ?? month
+        let label   = days[key] ?? ""
+        let working = !label.isEmpty
         let parts = label.split(separator: " ").map(String.init)
         let shiftType = parts.first ?? ""
         let deskNo    = parts.count > 1 ? parts[1...].joined(separator: " ") : ""

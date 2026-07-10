@@ -1037,10 +1037,19 @@ struct PackageDetailView: View {
                 // squished into an unusable sliver.
                 let wide = geo.size.width > geo.size.height
                 VStack(spacing: wide ? 6 : 12) {
-                    // The selectable date chips carry the dates (the verbose "Swap · give N, get N"
-                    // title is dropped in both orientations to reclaim space). In landscape the give/get
-                    // rows sit side by side and slide horizontally to save vertical room.
-                    chipIndex(wide: wide)
+                    // Compact top row: a small corner X, then the give/get chips right beside it (no
+                    // wasted space from a big "Close" button or a verbose title).
+                    HStack(alignment: .top, spacing: 10) {
+                        Button { dismiss() } label: {
+                            Image(systemName: "xmark").font(.footnote.weight(.bold)).foregroundStyle(.secondary)
+                                .frame(width: 28, height: 28)
+                                .background(Circle().fill(Color(.tertiarySystemFill)))
+                        }
+                        .buttonStyle(.plain).accessibilityLabel("Close")
+                        chipIndex(wide: wide)
+                    }
+                    .padding(.horizontal)
+                    .padding(.top, 6)
 
                     HStack {
                         Button { if monthIndex > 0 { monthIndex -= 1 } } label: { Image(systemName: "chevron.left").font(.headline) }
@@ -1079,9 +1088,7 @@ struct PackageDetailView: View {
                     }
                 }
             }
-            .navigationTitle("")   // the chips carry the dates; drop the verbose title to reclaim space
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } } }
+            .toolbar(.hidden, for: .navigationBar)   // custom compact top row (corner X + chips) instead
             .task { await load() }
         }
     }
@@ -1111,20 +1118,19 @@ struct PackageDetailView: View {
                     chipRow("You get",  get)
                 }
             } else {
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: 4) {
                     chipRow("You give", give)
                     chipRow("You get",  get)
                 }
             }
         }
-        .padding(.horizontal)
     }
 
     private func chipRow(_ label: String, _ items: [(offset: Int, element: Step)]) -> some View {
-        HStack(alignment: .center, spacing: 8) {
+        HStack(alignment: .center, spacing: 6) {
             Text("\(label) \(items.count)")
-                .font(.dsLabel).foregroundStyle(.secondary)
-                .frame(width: 62, alignment: .leading)
+                .font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                .frame(width: 46, alignment: .leading)
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
                     ForEach(items, id: \.element.id) { i, s in
@@ -1142,14 +1148,14 @@ struct PackageDetailView: View {
         let on = i == selectedStep
         let other = isCircular ? s.fromID : (s.fromID == myID ? s.toID : s.fromID)
         let c = colorFor(other)
-        return HStack(spacing: 5) {
-            Circle().fill(c).frame(width: 7, height: 7)
-            Text(SwapChips.chipDay(s.dayID)).font(.dsChip)
+        return HStack(spacing: 4) {
+            Circle().fill(c).frame(width: 6, height: 6)
+            Text(SwapChips.chipDay(s.dayID)).font(.caption2.weight(.semibold))
             if isCircular {   // loop needs "who→who" since a hop may not involve you
                 Text("\(shortFirst(s.fromID))→\(shortFirst(s.toID))").font(.caption2).foregroundStyle(.secondary)
             }
         }
-        .padding(.vertical, 6).padding(.horizontal, 10)
+        .padding(.vertical, 4).padding(.horizontal, 8)
         .background(on ? c.opacity(0.18) : Color(.tertiarySystemFill),
                     in: RoundedRectangle(cornerRadius: DS.controlRadius, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: DS.controlRadius).stroke(on ? c : .clear, lineWidth: 1.5))
