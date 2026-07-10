@@ -365,9 +365,11 @@ struct ECBOfferView: View {
         List {
             Section {
                 LabeledContent("ECB offered") { Text(ecbText(ecb)).bold() }
-                LabeledContent("Sent to") { Text("\(siblings.count)") }
             } footer: {
                 Text("Each shift has its own line. Numbered dots are the people who accepted, in order — #1 is next. Tap a dot to confirm that person (then submit their ECB form), or skip them to pass it to the next person in line.")
+            }
+            Section("Sent to \(siblings.count) · tap a name to see their card") {
+                ForEach(siblings) { recipientRow($0) }
             }
             Section("Shifts") {
                 ForEach(days, id: \.self) { day in shiftRow(day) }
@@ -375,6 +377,31 @@ struct ECBOfferView: View {
         }
         .navigationTitle("ECB Offer")
         .navigationBarTitleDisplayMode(.inline)
+    }
+
+    /// One recipient you sent this offer to: name, their response so far, and a tap into the exact
+    /// card they received (the 1:1 ECB thread).
+    private func recipientRow(_ req: TradeRequest) -> some View {
+        NavigationLink { ThreadView(request: req) } label: {
+            HStack(spacing: 10) {
+                Avatar(name: req.toName, id: req.toID, size: 32)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(req.toName).font(.subheadline.weight(.semibold)).lineLimit(1)
+                    Text(recipientStatusText(req)).font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                StatusBadge(status: store.status(of: req))
+            }
+        }
+    }
+    private func recipientStatusText(_ req: TradeRequest) -> String {
+        switch store.status(of: req) {
+        case .accepted:  return "Accepted"
+        case .declined:  return "Declined"
+        case .countered: return "Replied"
+        case .cancelled: return "Cancelled"
+        default:         return "No response yet"
+        }
     }
 
     private func shiftRow(_ day: String) -> some View {
