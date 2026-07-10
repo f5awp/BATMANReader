@@ -923,7 +923,7 @@ enum AppGuide {
             why: "Your next shift and pending trades sit on your Home Screen — a glance instead of opening the app."),
         Build6Highlight(
             symbol: "plus.magnifyingglass", title: "Screen magnifier",
-            what: "Turn on in ⋯ → App Settings → Accessibility. A draggable button appears on every screen — tap it, pinch to zoom, drag with two fingers to pan; one finger still taps and scrolls.",
+            what: "Left ON by default — turn it off in ⋯ → App Settings → Accessibility. A draggable button appears on every screen — tap it, pinch to zoom, drag with two fingers to pan; one finger still taps and scrolls.",
             why: "Makes the whole app usable if you're hard of sight, without fighting the system zoom."),
         Build6Highlight(
             symbol: "sparkles", title: "Smarter, faster Intents",
@@ -945,10 +945,13 @@ enum AppGuide {
             version: "Build 6 — ECB Accounting, accessibility & trade polish",
             headline: "A big update: track your ECB, a screen magnifier for everyone, and clearer, faster trading.",
             points: [
+                "In \"I'm Feeling Lucky,\" you can now search for trades by the date ranges, shift times, and qualifications you want back!",
+                "The Welcome / What's New screen is now optional — turn off \"Show on every launch\" and it only reappears after an app update.",
+                "The swap calendars are now readable both vertically and horizontally — they fit any device, labels no longer clip, and tapping a day shows its full detail.",
                 "ECB Accounting (tap ⋯ → ECB Accounting): a YNAB-style ledger for all your ECB. Log every deposit (OT, holidays), withdrawal, and trade and it keeps a running balance — Available (cleared, capped at 144), Projected (once scheduled ECB and IOUs land), and what you Owe / are Owed. Budget your ECB like money instead of tracking it on paper. Lines stay pending until you mark them cleared on a pay day.",
                 "ECB trades sync both ways: trade ECB with a dispatcher and it posts to BOTH ledgers once they confirm in their Inbox; accepting an in-app ECB offer posts it automatically. You can even IOU a future deposit before it lands.",
                 "Vacation & ECB-VC days: the master schedule doesn't show whether you traded into a vacation day, so ALL vacation days are set to OFF by default. You can open any of those days and toggle \"Trade Picked Up\" — that updates the app's calendar AND your Apple Calendar to reflect what you actually work.",
-                "Screen magnifier — turn it on in App Settings (⋯ → App Settings → Accessibility → Screen magnifier). A DRAGGABLE floating button then appears on every screen; drag it wherever, tap it, and pinch with two fingers to zoom and pan (one finger still taps/scrolls). Works on the whole app, including pop-up sheets.",
+                "Screen magnifier — now ON by default (turn it off in ⋯ → App Settings → Accessibility → Screen magnifier). A DRAGGABLE floating button appears on every screen; drag it wherever, tap it, and pinch with two fingers to zoom and pan (one finger still taps/scrolls). Works on the whole app, including pop-up sheets.",
                 "Intents now has two sections — \"Mutual\" (both of you marked the day) and \"All\" (every possible partner); switching is instant, and the heavy 3+person/circular search is opt-in via \"More: 3+ & loops.\"",
                 "Cleaner, less-cluttered layout: redesigned trade/package cards (one compact \"Name — dates\" line per person) and a refreshed calendar view; Trade Settings are now tap pills (shift types, regions grayed when unqualified, blackout days); a tidier top bar (Inbox · Channel · Trade status with badges · ⋯) with the color key by the Home layers button; and tapping any day opens the full editor directly. \"Keep\" (green) vs \"Blackout\" (slate) are consistent everywhere.",
                 "Home Screen widgets: long-press the Home Screen → ＋ → search \"BATMAN\" to add \"Next Shift\" (your next shift + a week-at-a-glance strip) and \"Trade Requests\" (how many are waiting) — updated automatically.",
