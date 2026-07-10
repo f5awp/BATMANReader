@@ -86,6 +86,15 @@ struct SettingsView: View {
                     Text("Shows a floating magnifier button (drag it anywhere). Tap it, then pinch with two fingers to zoom and drag with two fingers to pan — one finger still taps and scrolls normally.")
                 }
 
+                // ── Welcome / What's New ─────────────────────────────
+                Section {
+                    Toggle(isOn: $settings.showWelcomeOnLaunch) {
+                        Label("Show Welcome on every launch", systemImage: "hand.wave")
+                    }
+                } footer: {
+                    Text("When off, the Welcome / What's New screen only appears after an app update.")
+                }
+
                 // ── Daily summary ────────────────────────────────────
                 Section {
                     Toggle(isOn: $settings.dailyDigestEnabled) {

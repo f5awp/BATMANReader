@@ -149,9 +149,11 @@ struct ContentView: View {
                 enabled: settings.dailyDigestEnabled, hour: settings.dailyDigestHour,
                 pending: c.pending, unread: c.unread)
             NotificationManager.shared.scheduleDigestRefresh()   // live digest: refresh counts in the background
-            // Z2: show "What's New" on EVERY launch (per user request) — but not over onboarding.
-            // (Was once-per-build via ChangeLog.shouldShow; intentionally every restart now.)
-            if !settings.username.trimmingCharacters(in: .whitespaces).isEmpty {
+            // Show "What's New" on launch (not over onboarding). If the user turned OFF "show on every
+            // launch," it only appears after an app update — a build they haven't seen yet.
+            let isNewBuild = settings.lastSeenChangelogBuild != AppInfo.build
+            if !settings.username.trimmingCharacters(in: .whitespaces).isEmpty,
+               settings.showWelcomeOnLaunch || isNewBuild {
                 showChangelog = true
                 // Populate the Intents tab badge (mutual-match count) in the background — fire-and-forget
                 // so it never delays launch. Cheap fast pass; the engine yields cooperatively.

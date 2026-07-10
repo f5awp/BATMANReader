@@ -178,6 +178,11 @@ final class SettingsManager {
     var lastSeenChangelogBuild: String {
         didSet { defaults.set(lastSeenChangelogBuild, forKey: Keys.lastSeenChangelog) }
     }
+    /// Show the Welcome / What's New sheet on every launch (default ON). When OFF, it only appears
+    /// after an app update (a build the user hasn't seen yet).
+    var showWelcomeOnLaunch: Bool {
+        didSet { defaults.set(showWelcomeOnLaunch, forKey: Keys.showWelcomeOnLaunch) }
+    }
     /// Once-a-day on-device summary of what needs you (pending trades + unread). Default ON.
     var dailyDigestEnabled: Bool {
         didSet { defaults.set(dailyDigestEnabled, forKey: Keys.dailyDigestEnabled) }
@@ -252,6 +257,7 @@ final class SettingsManager {
         statusUpdatedAt          = defaults.object(forKey: Keys.statusUpdatedAt) as? Date
         tradeEmailDL             = defaults.string(forKey: Keys.tradeEmailDL) ?? "DL_dispatch_trades@aa.com"
         lastSeenChangelogBuild   = defaults.string(forKey: Keys.lastSeenChangelog) ?? ""
+        showWelcomeOnLaunch      = defaults.object(forKey: Keys.showWelcomeOnLaunch) == nil ? true : defaults.bool(forKey: Keys.showWelcomeOnLaunch)
         privateNotes             = defaults.string(forKey: Keys.privateNotes) ?? ""
         privateNotesUpdatedAt    = (defaults.object(forKey: Keys.privateNotesAt) as? Date) ?? .distantPast
     }
@@ -284,6 +290,7 @@ final class SettingsManager {
         static let statusUpdatedAt = "batman.statusUpdatedAt"
         static let tradeEmailDL    = "batman.tradeEmailDL"
         static let lastSeenChangelog = "batman.lastSeenChangelogBuild"
+        static let showWelcomeOnLaunch = "batman.showWelcomeOnLaunch"
         static let privateNotes  = "batman.privateNotes"
         static let privateNotesAt = "batman.privateNotesAt"
         static let appleUserID   = "batman.appleUserID"

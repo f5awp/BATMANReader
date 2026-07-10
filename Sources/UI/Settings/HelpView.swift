@@ -58,6 +58,16 @@ struct WelcomeView: View {
                 methodology
                 scoringTable
                 deepLinks
+                // Let people stop seeing this on every launch. When off it still appears after an update.
+                Toggle(isOn: $settings.showWelcomeOnLaunch) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Show this on every launch").font(.subheadline.weight(.semibold))
+                        Text("Turn off to only see it after an update. Re-enable in App Settings anytime.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                .padding(14)
+                .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14))
             }
             .padding(20)
         }
