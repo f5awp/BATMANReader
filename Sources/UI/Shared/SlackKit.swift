@@ -5,6 +5,29 @@
 // flow in MessagingStore is unchanged.
 
 import SwiftUI
+import Lottie
+
+// MARK: - Animated loader (Lottie)
+
+/// Reusable looping Lottie loader that swaps light/dark by color scheme. Used for the launch
+/// overlay and the "Searching for trades" indicator. Falls back to a spinner if a file is missing.
+struct AnimatedLoader: View {
+    @Environment(\.colorScheme) private var scheme
+    /// Optional square cap. nil = fill the container; otherwise scales to fit within maxSize.
+    var maxSize: CGFloat? = nil
+    var body: some View {
+        let name = scheme == .dark ? "dx-loading-dark" : "dx-loading-light"
+        Group {
+            if LottieAnimation.named(name) != nil {
+                LottieView(animation: .named(name)).looping()
+            } else {
+                ProgressView().controlSize(.large)   // graceful fallback if the JSON isn't bundled
+            }
+        }
+        .aspectRatio(contentMode: .fit)                 // scale to fit the area it's placed in
+        .frame(maxWidth: maxSize, maxHeight: maxSize)
+    }
+}
 
 // MARK: - Character counter (F3)
 
@@ -209,7 +232,7 @@ struct LoadingOverlay: ViewModifier {
                 ZStack {
                     Color(.systemBackground).opacity(0.35).ignoresSafeArea()
                     VStack(spacing: 12) {
-                        ProgressView().controlSize(.large)
+                        AnimatedLoader(maxSize: 96)
                         Text(label).font(.subheadline.weight(.medium)).foregroundStyle(.secondary)
                     }
                     .padding(24)

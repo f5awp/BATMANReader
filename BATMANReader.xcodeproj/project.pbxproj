@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		911DBA013001B70D003A03FD /* Lottie in Frameworks */ = {isa = PBXBuildFile; productRef = 911DBA003001B70D003A03FD /* Lottie */; };
 		91D1B8AF2FDA65050049CAF7 /* Documentation/README_ShortcutsSetup.md in Resources */ = {isa = PBXBuildFile; fileRef = 91D1B8922FDA65050049CAF7 /* Documentation/README_ShortcutsSetup.md */; };
 		91D1B8CB2FDC65470049CAF7 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 91D1B8CA2FDC65470049CAF7 /* WidgetKit.framework */; };
 		91D1B8CD2FDC65470049CAF7 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 91D1B8CC2FDC65470049CAF7 /* SwiftUI.framework */; };
@@ -61,6 +62,11 @@
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		911DB9F93001B40F003A03FD /* Animations */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Animations;
+			sourceTree = "<group>";
+		};
 		9138AF2A2FE4F021002E98F1 /* Sources */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = Sources;
@@ -88,6 +94,7 @@
 		91B564392FDA47E400D38BBE /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			files = (
+				911DBA013001B70D003A03FD /* Lottie in Frameworks */,
 			);
 		};
 		91D1B8C52FDC65470049CAF7 /* Frameworks */ = {
@@ -103,6 +110,7 @@
 		91B564332FDA47E400D38BBE = {
 			isa = PBXGroup;
 			children = (
+				911DB9F93001B40F003A03FD /* Animations */,
 				91B5643E2FDA47E400D38BBE /* BATMANReader */,
 				91D1B8CE2FDC65470049CAF7 /* BATMANWidgets */,
 				91D1B8C92FDC65470049CAF7 /* Frameworks */,
@@ -148,10 +156,14 @@
 				91D1B8DD2FDC65490049CAF7 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
+				911DB9F93001B40F003A03FD /* Animations */,
 				9138AF2A2FE4F021002E98F1 /* Sources */,
 				91B5643E2FDA47E400D38BBE /* BATMANReader */,
 			);
 			name = BATMANReader;
+			packageProductDependencies = (
+				911DBA003001B70D003A03FD /* Lottie */,
+			);
 			productName = BATMANReader;
 			productReference = 91B5643C2FDA47E400D38BBE /* BATMANReader.app */;
 			productType = "com.apple.product-type.application";
@@ -202,6 +214,9 @@
 			);
 			mainGroup = 91B564332FDA47E400D38BBE;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				911DB9FF3001B632003A03FD /* XCRemoteSwiftPackageReference "lottie-spm" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 91B5643D2FDA47E400D38BBE /* Products */;
 			projectDirPath = "";
@@ -382,7 +397,7 @@
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = BATMANReader/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = "BATMAN Watcher";
+				INFOPLIST_KEY_CFBundleDisplayName = "DX Trader";
 				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "BATMANReader adds your work shifts to Apple Calendar and marks your availability on the shared dispatcher calendar.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
@@ -434,7 +449,7 @@
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = BATMANReader/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = "BATMAN Watcher";
+				INFOPLIST_KEY_CFBundleDisplayName = "DX Trader";
 				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "BATMANReader adds your work shifts to Apple Calendar and marks your availability on the shared dispatcher calendar.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
@@ -479,7 +494,7 @@
 				DEVELOPMENT_TEAM = 22H8QL42ZY;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = BATMANWidgets/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = BATMANWidgets;
+				INFOPLIST_KEY_CFBundleDisplayName = "DX Trader";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				IPHONEOS_DEPLOYMENT_TARGET = "$(RECOMMENDED_IPHONEOS_DEPLOYMENT_TARGET)";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -513,7 +528,7 @@
 				DEVELOPMENT_TEAM = 22H8QL42ZY;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = BATMANWidgets/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = BATMANWidgets;
+				INFOPLIST_KEY_CFBundleDisplayName = "DX Trader";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				IPHONEOS_DEPLOYMENT_TARGET = "$(RECOMMENDED_IPHONEOS_DEPLOYMENT_TARGET)";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -565,6 +580,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		911DB9FF3001B632003A03FD /* XCRemoteSwiftPackageReference "lottie-spm" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/airbnb/lottie-spm";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 4.6.1;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		911DBA003001B70D003A03FD /* Lottie */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 911DB9FF3001B632003A03FD /* XCRemoteSwiftPackageReference "lottie-spm" */;
+			productName = Lottie;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 91B564342FDA47E400D38BBE /* Project object */;
 	validationLevel = 1;
