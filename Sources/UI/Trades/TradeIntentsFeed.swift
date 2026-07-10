@@ -420,13 +420,21 @@ struct MasterFilterSheet: View {
 
                 if !availableQuals.isEmpty {
                     Section {
-                        Picker("Qual", selection: Binding(get: { draft.deskQual ?? "" },
-                                                          set: { draft.deskQual = $0.isEmpty ? nil : $0 })) {
-                            Text("Any").tag("")
-                            ForEach(availableQuals, id: \.self) { Text($0).tag($0) }
+                        FlowLayout(spacing: 8) {
+                            ForEach(availableQuals, id: \.self) { q in
+                                let on = draft.deskQuals.contains(q)
+                                Button {
+                                    if on { draft.deskQuals.remove(q) } else { draft.deskQuals.insert(q) }
+                                } label: {
+                                    Text(q).font(.subheadline.weight(.semibold))
+                                        .padding(.horizontal, 14).padding(.vertical, 7)
+                                        .background(on ? AppColor.primary : Color(.tertiarySystemFill), in: Capsule())
+                                        .foregroundStyle(on ? .white : .primary)
+                                }.buttonStyle(.plain)
+                            }
                         }
                     } header: { Text("Desk qualification") }
-                    footer: { Text("Only show trades involving desks that require this qual.") }
+                    footer: { Text("Only show trades involving desks that require any of the selected quals.") }
                 }
                 Section {
                     // One-time HEAVY generation for the chosen criteria (3+ / N-Way included).

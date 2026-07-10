@@ -431,7 +431,7 @@ struct SearchFilter: Equatable, Sendable {
     var dateStart: Date?            // only solutions where EVERY moved day is on/after this date
     var dateEnd: Date?              // …and on/before this date
     var receiveTypes: Set<ShiftAvailabilityType> = []  // days you PICK UP must be one of these (empty = any)
-    var deskQual: String?           // only trades involving desks that require this qual (resolved in the view)
+    var deskQuals: Set<String> = [] // only trades involving desks requiring one of these quals (empty = any)
 
     /// The default "normal" criteria — every engine, up to 4 people, anyone.
     static let normal = SearchFilter()
@@ -452,7 +452,7 @@ struct SearchFilter: Equatable, Sendable {
         if let r = requiredWorkerID { parts.append("with \(nameFor(r))") }
         if dateStart != nil || dateEnd != nil { parts.append("dates") }
         if !receiveTypes.isEmpty { parts.append(receiveTypes.map(\.rawValue).sorted().joined(separator: "/")) }
-        if let q = deskQual { parts.append("\(q) desks") }
+        if !deskQuals.isEmpty { parts.append(deskQuals.sorted().joined(separator: "/") + " desks") }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 

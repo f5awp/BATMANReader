@@ -68,8 +68,8 @@ struct FindCandidatesSection: View {
     /// engine, max-people and required-person are handled by `searchFilter.filter`.
     private func criteriaMatch(_ p: TradePackage) -> Bool {
         let types = searchFilter.receiveTypes
-        let qual = searchFilter.deskQual
-        if types.isEmpty && qual == nil { return true }
+        let quals = searchFilter.deskQuals
+        if types.isEmpty && quals.isEmpty { return true }
         var recvTypes: Set<ShiftAvailabilityType> = []
         var deskQuals: Set<String> = []
         for a in p.assignments {
@@ -84,7 +84,7 @@ struct FindCandidatesSection: View {
             if let q = DeskRules.requiredQual(forDesk: leg.desk) { deskQuals.insert(q) }
         }
         if !types.isEmpty, recvTypes.isDisjoint(with: types) { return false }
-        if let qual, !deskQuals.contains(qual) { return false }
+        if !quals.isEmpty, deskQuals.isDisjoint(with: quals) { return false }
         return true
     }
     // B1: international-desk qual-swap entry — the button glows green only when a selected desk is gated.
