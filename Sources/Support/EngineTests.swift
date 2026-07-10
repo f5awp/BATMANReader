@@ -229,6 +229,18 @@ enum TradeEngineTests {
                   "B6-VAC-DEDUP: overlapping strips union leave codes → ALL of Jul 26-29 resolve to vacation OFF")
         }
 
+        // B6-ECB60: the ECB behavior filter (4101) — only offer a shift to someone who actually WORKED
+        // that TYPE in the last 60 days. A MID-only dispatcher is excluded from a PM offer; someone who
+        // worked PM recently passes; an empty recent set (robot/inactive) is always excluded.
+        do {
+            check(TradeMatcher.recentBehaviorAllows(recentTypes: [.pm, .am], coveredTypes: [.pm]),
+                  "B6-ECB60: recently worked PM → included for a PM offer")
+            check(!TradeMatcher.recentBehaviorAllows(recentTypes: [.mid], coveredTypes: [.pm]),
+                  "B6-ECB60: MID-only recent behavior → excluded from a PM offer")
+            check(!TradeMatcher.recentBehaviorAllows(recentTypes: [], coveredTypes: [.pm, .am, .mid]),
+                  "B6-ECB60: no recent work (robot/inactive) → excluded from any offer")
+        }
+
         // MARK: Vacation auto-intent (SPEC S-PARSE-2). A day flipping to vacation auto-
         // sets a SOFT, user-changeable Must-Be-Off + "vacation" note. Sentinel day, cleaned up.
         do {

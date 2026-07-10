@@ -361,6 +361,28 @@ enum TradeMatcher {
     /// How far ahead two-way matching looks (badge count + explorer span).
     static let twoWayHorizonMonths = 12
 
+    /// The shift TYPES (AM/PM/MID) a worker actually WORKED in the last `days` days — their recent
+    /// behavior. Used to filter ECB offers so a dispatcher who's only worked MIDs isn't offered a PM.
+    static func recentWorkedTypes(workerID: String, asOf: Date = Date(), days: Int = 60) async -> Set<ShiftAvailabilityType> {
+        let cal = Calendar.current
+        guard let lower = cal.date(byAdding: .day, value: -days, to: cal.startOfDay(for: asOf)) else { return [] }
+        let sched = await RosterStore.shared.schedule(forWorker: workerID)
+        var types: Set<ShiftAvailabilityType> = []
+        for e in sched where !e.isOff {
+            guard let d = dayDate(fromISO: e.day), d >= lower, d <= asOf else { continue }
+            types.insert(ShiftAvailabilityType.infer(fromStartHour: e.startHour))
+        }
+        return types
+    }
+
+    /// Pure decision for the ECB 60-day behavior filter: keep a candidate only if a type they
+    /// recently worked overlaps a type they'd cover here. Empty `recent` (no recent work / robot)
+    /// → excluded. Testable without the roster.
+    static func recentBehaviorAllows(recentTypes: Set<ShiftAvailabilityType>,
+                                     coveredTypes: Set<ShiftAvailabilityType>) -> Bool {
+        !recentTypes.isDisjoint(with: coveredTypes)
+    }
+
     /// Candidates for a MULTI-shift trade: for the given shifts (your days to give
     /// away), how many each dispatcher can cover (off + qualified + 8h rest) and how
     /// many are bookends for them. Ranked by bookends, then total matches.

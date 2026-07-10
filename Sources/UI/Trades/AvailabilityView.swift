@@ -706,9 +706,25 @@ struct ECBTradesView: View {
                     coverMap: map, coverQuals: c.quals, coverProfile: prof, options: .full).eligible
             }
         }
+        // 4101: behavior filter for INACTIVE/robot accounts only. An ACTIVE dispatcher (claimed account)
+        // already had their own prefs/blacklists applied by the `.full` gate above, so they pass through
+        // untouched. For someone NOT on the app (no claimed profile), we can't read prefs — so we infer
+        // willingness from their last-60-day behavior: only offer a TYPE (AM/PM/MID) they've actually
+        // worked recently (a MID-only dispatcher won't be offered a PM).
+        var behaviorFiltered: [PlanCandidate] = []
+        for c in eligible {
+            let isActive = TradeProfileStore.shared.profile(forWorker: c.workerID)?.accountClaimed == true
+            if isActive { behaviorFiltered.append(c); continue }
+            let coveredTypes = Set(shifts.filter { c.coveredShiftIDs.contains($0.id) }
+                .map { ShiftAvailabilityType.infer(fromStartHour: $0.startHour) })
+            let recent = await TradeMatcher.recentWorkedTypes(workerID: c.workerID)
+            if TradeMatcher.recentBehaviorAllows(recentTypes: recent, coveredTypes: coveredTypes) {
+                behaviorFiltered.append(c)
+            }
+        }
         // People who actively marked WANT-TO-WORK (published availability) on these
         // off days are looking for a shift — surface them first (🔥).
-        candidates = eligible.sorted {
+        candidates = behaviorFiltered.sorted {
             if $0.bookendCount != $1.bookendCount { return $0.bookendCount > $1.bookendCount }  // #6: bookends first
             let aw = wantsToWork($0), bw = wantsToWork($1)
             if aw != bw { return aw }
