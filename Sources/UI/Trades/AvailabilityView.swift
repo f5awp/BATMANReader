@@ -1789,9 +1789,11 @@ struct MiniScheduleGrid: View {
             }
             .frame(height: fill ? 23 : 32)
             Text(label.isEmpty ? " " : label)
-                .font(.caption.weight(.heavy))
+                // As large as the cell allows (subheadline, up from caption); minimumScaleFactor lets it
+                // shrink on narrow/side-by-side cells so it never wraps, clips, or overlaps.
+                .font(.subheadline.weight(.heavy))
                 .foregroundStyle(working ? accent : .secondary)
-                .lineLimit(1).minimumScaleFactor(0.55)
+                .lineLimit(1).minimumScaleFactor(0.5)
                 // Clear the 5-pt intent bar that overlays the bottom edge, so shift labels
                 // (e.g. "AM 82") aren't clipped by it in fill mode.
                 .padding(.bottom, fill ? 5 : 0)
