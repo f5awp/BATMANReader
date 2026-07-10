@@ -953,6 +953,13 @@ enum AppGuide {
                 "Cleaner, less-cluttered layout: redesigned trade/package cards (one compact \"Name — dates\" line per person) and a refreshed calendar view; Trade Settings are now tap pills (shift types, regions grayed when unqualified, blackout days); a tidier top bar (Inbox · Channel · Trade status with badges · ⋯) with the color key by the Home layers button; and tapping any day opens the full editor directly. \"Keep\" (green) vs \"Blackout\" (slate) are consistent everywhere.",
                 "Home Screen widgets: long-press the Home Screen → ＋ → search \"BATMAN\" to add \"Next Shift\" (your next shift + a week-at-a-glance strip) and \"Trade Requests\" (how many are waiting) — updated automatically.",
                 "Live daily digest refreshes its counts in the background, and @-mentioning a dispatcher in a channel sends them a push.",
+                "— Refinements —",
+                "Trade Inbox is now split into Intents · Search · ECB · Misc, so requests are filed by where they came from. ECB offers live in their own tab: tap an offer to see everyone you sent it to and their response, and tap a name to open the exact card they got.",
+                "ECB Accounting always shows You owe / Owed to you (even at zero) and counts awaiting-confirmation trades, so your outstanding position is always visible.",
+                "The two-calendar swap view now scales to fit any device — side-by-side in landscape (iPhone or iPad), stacked and full-height in portrait — and multi-person trade cards in the Inbox tap open the same calendars. Shift labels no longer clip and off-day intents show.",
+                "Trade Status cards now match the app's card style and colors. Each trade card shows your own row first, from your perspective.",
+                "Trade Solutions \"More\" search adds date-range, shift-time (what you'd pick up), and desk-qualification filters. One-way ECB offers to dispatchers not on the app are now matched to their last-60-day behavior (they won't be offered a shift type they haven't worked).",
+                "Fixes: your held quals (e.g. Latin) now read correctly on the onboarding preferences page, and the update-notes screen matches the welcome design.",
             ]),
         ReleaseNote(
             version: "Build 5 — A cleaner app, smarter trades",
