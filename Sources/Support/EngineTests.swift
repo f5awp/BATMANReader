@@ -202,6 +202,41 @@ enum TradeEngineTests {
             check(!norm.isOff && norm.desk == "22", "B6-VAC-2LINE: a normal working day resolves to its worked desk")
         }
 
+        // B6-AUTOCOMPLETE: a master import flipping my schedule proves a pending trade went through.
+        do {
+            func req(from: String, to: String, give: [String], take: [String]) -> TradeRequest {
+                TradeRequest(id: "r", fromID: from, fromName: from, toID: to, toName: to, note: "",
+                             takeDayIDs: take, giveDayIDs: give, createdAt: Date(),
+                             expiresAt: Date().addingTimeInterval(9999))
+            }
+            let r = req(from: "me", to: "x", give: ["D1"], take: ["D2"])
+            let legs = TradeProof.myLegs(r, myID: "me")
+            check(legs.give == ["D1"] && legs.take == ["D2"], "B6-AUTO: sender legs = give→giveDays, take→takeDays")
+            let legsR = TradeProof.myLegs(r, myID: "x")
+            check(legsR.give == ["D2"] && legsR.take == ["D1"], "B6-AUTO: recipient legs are mirrored")
+            check(TradeProof.proved(give: ["D1"], take: ["D2"], becameOff: ["D1"], becameWorking: ["D2"]),
+                  "B6-AUTO: proved when every give→off and take→working")
+            check(!TradeProof.proved(give: ["D1"], take: ["D2"], becameOff: ["D1"], becameWorking: []),
+                  "B6-AUTO: a PARTIAL match is NOT proved (false-positive guard)")
+            check(!TradeProof.proved(give: [], take: [], becameOff: ["D1"], becameWorking: ["D2"]),
+                  "B6-AUTO: a request not touching my schedule is never auto-completed")
+            let d0 = Date()
+            func sh(_ id: String, off: Bool) -> Shift {
+                Shift(id: id, date: d0, startHour: off ? 0 : 5, endHour: off ? 0 : 14,
+                      role: off ? .off : .dispatcher, desk: off ? "" : "22", leaveCode: nil, isOff: off)
+            }
+            let diff = ScheduleDiff.compute(old: [sh("D1", off: false), sh("D2", off: true)],
+                                            new: [sh("D1", off: true),  sh("D2", off: false)])
+            let t = TradeProof.transitions(diff)
+            check(t.becameOff.contains("D1") && t.becameWorking.contains("D2"),
+                  "B6-AUTO: transitions() reads working→off and off→working from a diff")
+            var chainReq = req(from: "me", to: "x", give: [], take: [])
+            chainReq.chain = [TradeLeg(fromID: "me", fromName: "me", toID: "x", toName: "x", dayID: "G"),
+                              TradeLeg(fromID: "y", fromName: "y", toID: "me", toName: "me", dayID: "T")]
+            let cl = TradeProof.myLegs(chainReq, myID: "me")
+            check(cl.give == ["G"] && cl.take == ["T"], "B6-AUTO: chain legs mapped by fromID/toID")
+        }
+
         // B6-ECB60: the ECB behavior filter (4101) — only offer a shift to someone who actually WORKED
         // that TYPE in the last 60 days. A MID-only dispatcher is excluded from a PM offer; someone who
         // worked PM recently passes; an empty recent set (robot/inactive) is always excluded.

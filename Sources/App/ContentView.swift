@@ -147,6 +147,10 @@ struct ContentView: View {
             }
             await ECBAccountingStore.shared.syncOnLaunch()     // B6-ECB: shared lines + personal blob
             await TradeHistoryStore.shared.syncOnLaunch()      // status board / history across your devices
+            // If the master import flipped my schedule to match a pending trade, auto-complete it (B6-AUTOCOMPLETE).
+            if let diff = ShiftStore.shared.lastDiff, diff.hasChanges {
+                await MessagingStore.shared.autoCompleteProvenTrades(diff: diff)
+            }
             await CloudPush.setup()                            // register push subscriptions
             WidgetData.update()
             // Refresh the once-a-day summary notification with the latest counts (default ON).
@@ -178,13 +182,17 @@ struct ContentView: View {
     private func foregroundRefresh() async {
         guard settings.useCloudKit,
               !settings.username.trimmingCharacters(in: .whitespaces).isEmpty else { return }
-        _ = await RosterStore.shared.syncMasterIfNewer()      // admin master-schedule updates (cheap version probe)
+        let rosterRows = await RosterStore.shared.syncMasterIfNewer()  // admin master-schedule updates (cheap version probe)
         await MessagingStore.shared.refresh()                 // inbox + channel posts/replies
         await TradeProfileStore.shared.refreshOthers()        // peers' latest profiles/status
         await PrivateStateStore.shared.syncIntentsOnLaunch()  // intents (LWW)
         await ECBAccountingStore.shared.syncOnLaunch()        // ECB balance + shared lines
         await TradeHistoryStore.shared.syncOnLaunch()         // status board / history
         await TradeProfileStore.shared.syncMyPreferences()    // adopt any newer prefs (incl. notifications)
+        // Only when THIS refresh imported a new master: auto-complete trades it proves (B6-AUTOCOMPLETE).
+        if rosterRows > 0, let diff = ShiftStore.shared.lastDiff, diff.hasChanges {
+            await MessagingStore.shared.autoCompleteProvenTrades(diff: diff)
+        }
         WidgetData.update()
     }
 }

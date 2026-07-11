@@ -942,7 +942,7 @@ enum AppGuide {
     /// Curated version history — milestones, technical, to show the scope of work.
     static let versionHistory: [ReleaseNote] = [
         ReleaseNote(
-            version: "Build 6 — ECB Accounting, accessibility & trade polish",
+            version: "v2.2 — ECB Accounting, accessibility & trade polish",
             headline: "A big update: track your ECB, a screen magnifier for everyone, and clearer, faster trading.",
             points: [
                 "In \"I'm Feeling Lucky,\" you can now search for trades by the date ranges, shift times, and qualifications you want back!",

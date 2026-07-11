@@ -253,6 +253,45 @@ enum TradeMerge {
     }
 }
 
+/// B6-AUTOCOMPLETE: prove that a proposed trade actually went through by reading the MASTER schedule.
+/// When a new master flips MY schedule to match a pending trade (my give-days now OFF, my take-days now
+/// worked), the trade completed on the board even if I never pressed Accept. PURE → harness-tested; the
+/// messaging lifecycle (mark accepted, archive, log the stat, record history) is layered on in the store.
+enum TradeProof {
+    /// The days THIS request moves on MY schedule: `give` = days I hand away (working → OFF), `take` = days
+    /// I pick up (OFF → working). Uses the chain for multi-person loops, else the 2-way from/to role.
+    static func myLegs(_ r: TradeRequest, myID: String) -> (give: Set<String>, take: Set<String>) {
+        if let chain = r.chain, !chain.isEmpty {
+            return (Set(chain.filter { $0.fromID == myID }.map { $0.dayID }),
+                    Set(chain.filter { $0.toID == myID }.map { $0.dayID }))
+        }
+        if myID == r.fromID { return (Set(r.giveDayIDs), Set(r.takeDayIDs)) }
+        if myID == r.toID   { return (Set(r.takeDayIDs), Set(r.giveDayIDs)) }
+        return ([], [])
+    }
+
+    /// Days that flipped working→OFF and OFF→working in a schedule diff (the master-import transitions).
+    static func transitions(_ diff: ScheduleDiff) -> (becameOff: Set<String>, becameWorking: Set<String>) {
+        var off = Set<String>(), work = Set<String>()
+        for c in diff.changed {
+            if !c.old.isOff && c.new.isOff { off.insert(c.new.id) }
+            if c.old.isOff && !c.new.isOff { work.insert(c.new.id) }
+        }
+        for s in diff.removed where !s.isOff { off.insert(s.id) }   // a working day that vanished = now off
+        for s in diff.added   where !s.isOff { work.insert(s.id) }  // a brand-new working day
+        return (off, work)
+    }
+
+    /// PROVED iff the request touches my schedule AND every one of my give-days flipped to OFF and every
+    /// take-day flipped to working in THIS import. Requiring ALL my legs (never a subset) is the
+    /// false-positive guard — a stray admin edit won't match a full multi-day, directional leg set.
+    static func proved(give: Set<String>, take: Set<String>,
+                       becameOff: Set<String>, becameWorking: Set<String>) -> Bool {
+        guard !(give.isEmpty && take.isEmpty) else { return false }
+        return give.isSubset(of: becameOff) && take.isSubset(of: becameWorking)
+    }
+}
+
 /// Formats an ECB amount with no trailing ".0" (9 → "9", 13.5 → "13.5").
 func ecbText(_ v: Double) -> String {
     v == v.rounded() ? String(Int(v)) : String(format: "%.1f", v)
@@ -921,6 +960,34 @@ final class MessagingStore {
     func cancelRequest(_ id: String) async {
         await service.deleteRequest(id: id)
         requests.removeAll { $0.id == id }
+    }
+
+    /// B6-AUTOCOMPLETE: after a master-schedule import, auto-complete any ACTIVE trade the new schedule
+    /// proves went through (my give-days now OFF + take-days now worked) — even if I never pressed Accept.
+    /// Marks it accepted (synced), archives it (fires the successful-trade metric), and records it in the
+    /// cross-device history. Only ever pending/countered → completed; declined trades are left alone.
+    func autoCompleteProvenTrades(diff: ScheduleDiff) async {
+        guard !myID.isEmpty else { return }
+        let (becameOff, becameWorking) = TradeProof.transitions(diff)
+        guard !becameOff.isEmpty || !becameWorking.isEmpty else { return }
+        for req in Self.active(requests, archived: archivedRequestIDs) {
+            let st = status(of: req)
+            guard st == .pending || st == .countered || st == .accepted else { continue }  // never resurrect declined/cancelled
+            let legs = TradeProof.myLegs(req, myID: myID)
+            guard TradeProof.proved(give: legs.give, take: legs.take,
+                                    becameOff: becameOff, becameWorking: becameWorking) else { continue }
+            if st != .accepted {
+                await respond(to: req, status: .accepted,
+                              note: "Auto-confirmed — the master schedule now shows this trade went through.")
+            }
+            archiveRequest(req.id)   // status is accepted now → logs the successful-trade metric (once)
+            let dayIDs = req.chain?.map { $0.dayID } ?? (req.giveDayIDs + req.takeDayIDs)
+            let names = req.chain.map { Array(Set($0.flatMap { [$0.fromName, $0.toName] })) } ?? [req.fromName, req.toName]
+            TradeHistoryStore.shared.record(TradeHistoryEntry(
+                id: "trade-\(req.id)",   // deterministic → record() de-dupes, never double-posts
+                summary: "\(req.fromName) ⇄ \(req.toName)", participants: names,
+                dayIDs: dayIDs, completedAt: Date()))
+        }
     }
 
     // MARK: Derived

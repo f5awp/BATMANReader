@@ -78,7 +78,7 @@ struct WelcomeView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 VStack(alignment: .leading, spacing: 6) {
-                    Label("What's New in Build 6", systemImage: "sparkles")
+                    Label("What's New in v2.2", systemImage: "sparkles")
                         .font(.title2.bold()).labelStyle(.titleAndIcon).foregroundStyle(AppColor.primary)
                     Text("The biggest changes in this update — exactly what changed and why it matters.")
                         .font(.subheadline).foregroundStyle(.secondary)
