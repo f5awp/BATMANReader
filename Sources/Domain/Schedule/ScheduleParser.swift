@@ -92,12 +92,25 @@ final class ScheduleParser {
         "sun": 1, "mon": 2, "tue": 3, "wed": 4, "thu": 5, "fri": 6, "sat": 7
     ]
 
+    /// One printed shift-line's value for a single day, before resolution. The expanded schedule prints
+    /// TWO stacked shift lines per worker (a base/vacation-placeholder line and an actually-worked line),
+    /// each with its own `L,V`/`L,w` annotation row. Overlapping strips repeat these. We collect EVERY
+    /// copy per day, then `resolveDay` picks the truth. (S-PARSE-1 / B6-VAC-2LINE.)
+    struct DayCandidate: Equatable {
+        let startHour: Int?       // nil ⇒ OFF / blank
+        let desk: String
+        let isVacationLeave: Bool // this line carries L,V or L,w for this day
+        let vacationCode: String? // "V" or "w" when isVacationLeave
+        let otherLeaveCode: String? // a non-vacation leave code (S/R/…) recorded but inert
+    }
+
     // Mutable per-worker accumulator used while scanning the grid.
     private final class WorkerAcc {
         let id: String
         let name: String
         let quals: [String]
-        var shifts: [Shift] = []
+        /// dayID → (date, all printed candidates from every line & every overlapping strip).
+        var dayCands: [String: (date: Date, cands: [DayCandidate])] = [:]
         var lastYear: Int
         init(id: String, name: String, quals: [String], year: Int) {
             self.id = id; self.name = name; self.quals = quals; self.lastYear = year
@@ -168,36 +181,74 @@ final class ScheduleParser {
                     if Self.workerIdentity(field(r, 1)) != nil { break }
                     annRows.append(r); j += 1
                 }
-                appendShifts(into: &acc.shifts,
-                             shiftRow: row, annRows: annRows,
-                             monthRow: monthRow, dayRow: dayRow, weekdayRow: weekdayRow,
-                             now: now, windowLower: windowLower, windowUpper: windowUpper,
-                             lastYear: &acc.lastYear, yearCache: &yearCache)
+                collectCandidates(into: &acc.dayCands,
+                                  shiftRow: row, subRows: annRows,
+                                  monthRow: monthRow, dayRow: dayRow, weekdayRow: weekdayRow,
+                                  now: now, windowLower: windowLower, windowUpper: windowUpper,
+                                  lastYear: &acc.lastYear, yearCache: &yearCache)
             }
             i += 1
         }
 
         return order.compactMap { id in
             guard let acc = accs[id] else { return nil }
-            return ParsedWorker(id: acc.id, name: acc.name, quals: acc.quals,
-                                shifts: Self.resolveVacations(Self.dedup(acc.shifts)))
+            let shifts = acc.dayCands
+                .map { (dayID, v) in Self.resolveDay(v.cands, date: v.date, dayID: dayID) }
+                .sorted { $0.date < $1.date }
+            return ParsedWorker(id: acc.id, name: acc.name, quals: acc.quals, shifts: shifts)
         }
     }
 
-    /// Resolve vacation-designated shifts. A day carrying a vacation-type leave code — **`V` (Vacation) or
-    /// `w` (ECB VC)** — ALWAYS defaults to **OFF**. Both are just leave designations: the CSV prints your
-    /// base-rotation shift on them but that is NOT proof you worked (e.g. Dec 15-18 `V` and May 11-13 `w`
-    /// both print a shift yet the worker was off). Whether you actually picked up a shift that day is
-    /// unknowable from the export, so it's a per-day manual override (`ShiftStore.setVacationOverride`,
-    /// which also syncs Apple Calendar). We do NOT infer working from the desk or the printed shift — that
-    /// mislabeled genuine leave as working. The printed start/desk are PRESERVED so the override can restore
-    /// the exact worked shift. PURE/testable.
-    static func resolveVacations(_ shifts: [Shift]) -> [Shift] {
-        shifts.map { s in
-            guard s.isVacationOrigin, !s.isOff else { return s }   // V or ECB-VC "w" days
-            return Shift(id: s.id, date: s.date, startHour: s.startHour, endHour: s.endHour,
-                         role: s.role, desk: s.desk, leaveCode: s.leaveCode, isOff: true)
+    /// THE single source of truth for a day's real shift, given every printed candidate (both stacked
+    /// lines, across all overlapping strips). Rule discovered from real data (Gar 523734 Jul 20-23, Ervin
+    /// 292216 Jul 26-29, both user-confirmed):
+    ///   • A `V`/`w` line is the VACATION PLACEHOLDER (base rotation) — never proof of work.
+    ///   • A **worked pickup** = a non-vacation desk that isn't ALSO a vacation/base desk that day → the
+    ///     shift actually worked (on a foreign desk), even on a vacation day.
+    ///   • Otherwise, if any vacation line exists → OFF (genuine vacation). A day where the only non-`V`
+    ///     desk equals a `V` desk (a dropped annotation on a duplicate strip) stays OFF — safe.
+    ///   • No vacation anywhere → the normal printed shift (or OFF).
+    /// This subsumes the old dedup / mergeDuplicate / resolveVacations pipeline. PURE / fixture-tested.
+    static func resolveDay(_ cands: [DayCandidate], date: Date, dayID: String) -> Shift {
+        let reals = cands.filter { $0.startHour != nil }
+        func off(_ leave: String?) -> Shift {
+            Shift(id: dayID, date: date, startHour: 0, endHour: 0, role: .off, desk: "",
+                  leaveCode: leave, isOff: true)
         }
+        guard !reals.isEmpty else {
+            let leave = cands.compactMap { $0.vacationCode }.first ?? cands.compactMap { $0.otherLeaveCode }.first
+            return off(leave)
+        }
+        let vDesks = Set(reals.filter { $0.isVacationLeave }.map { $0.desk })
+        let pickups = reals.filter { !$0.isVacationLeave && !vDesks.contains($0.desk) }
+        if let chosen = Self.dominant(pickups) {
+            let sh = chosen.startHour ?? 0
+            return Shift(id: dayID, date: date, startHour: sh, endHour: (sh + 9) % 24,
+                         role: Self.role(forDesk: chosen.desk), desk: chosen.desk,
+                         leaveCode: chosen.otherLeaveCode, isOff: false)   // a clean worked shift (leave placeholder dropped)
+        }
+        // No pickup → genuine vacation if any vacation line printed a shift; else plain OFF.
+        if reals.contains(where: { $0.isVacationLeave }) {
+            return off(reals.first(where: { $0.isVacationLeave })?.vacationCode ?? "V")
+        }
+        // No vacation involved at all — a normal working day.
+        if let chosen = Self.dominant(reals) {
+            let sh = chosen.startHour ?? 0
+            return Shift(id: dayID, date: date, startHour: sh, endHour: (sh + 9) % 24,
+                         role: Self.role(forDesk: chosen.desk), desk: chosen.desk,
+                         leaveCode: chosen.otherLeaveCode, isOff: false)
+        }
+        return off(nil)
+    }
+
+    /// The most-supported candidate (by desk frequency), deterministic tiebreak on desk string, so
+    /// overlapping duplicate strips resolve identically every run.
+    private static func dominant(_ cands: [DayCandidate]) -> DayCandidate? {
+        guard !cands.isEmpty else { return nil }
+        var count: [String: Int] = [:]
+        for c in cands { count[c.desk, default: 0] += 1 }
+        let bestDesk = count.sorted { $0.value != $1.value ? $0.value > $1.value : $0.key < $1.key }.first!.key
+        return cands.first { $0.desk == bestDesk }
     }
 
     /// Parses a single worker's schedule (convenience over `parseAllWorkers`).
@@ -210,89 +261,80 @@ final class ScheduleParser {
         return worker.shifts
     }
 
-    // MARK: - Row → shifts (day-number row is the alignment spine)
+    // MARK: - Row → per-day candidates (day-number row is the alignment spine)
 
-    private func appendShifts(into shifts: inout [Shift],
-                              shiftRow: [String],
-                              annRows: [[String]],
-                              monthRow: [String],
-                              dayRow: [String],
-                              weekdayRow: [String],
-                              now: Int,
-                              windowLower: Date,
-                              windowUpper: Date,
-                              lastYear: inout Int,
-                              yearCache: inout [String: Int]) {
+    /// Collects EVERY printed candidate for each day in this strip: the worker's primary shift line PLUS any
+    /// stacked second shift line (the export prints a base/vacation-placeholder line and a worked line),
+    /// each paired with its OWN annotation rows. `resolveDay` later picks the real shift across all copies.
+    private func collectCandidates(into dayCands: inout [String: (date: Date, cands: [DayCandidate])],
+                                   shiftRow: [String],
+                                   subRows: [[String]],
+                                   monthRow: [String],
+                                   dayRow: [String],
+                                   weekdayRow: [String],
+                                   now: Int,
+                                   windowLower: Date,
+                                   windowUpper: Date,
+                                   lastYear: inout Int,
+                                   yearCache: inout [String: Int]) {
 
         let calendar = Calendar.current
         let iso = DateFormatter()
         iso.dateFormat = "yyyy-MM-dd"
 
+        // Day columns of THIS strip — used to classify each sub-row as a SHIFT line (has OFF / a start hour)
+        // vs an ANNOTATION line (has "L"). A worker block is [shiftA][annA…][shiftB][annB…]; each annotation
+        // row belongs to the shift line directly above it.
+        let dayCols = (0..<dayRow.count).filter { (Int(dayRow[$0].trimmed).map { (1...31).contains($0) }) ?? false }
+        func isAnnRow(_ r: [String]) -> Bool { dayCols.contains { field(r, $0).trimmed == "L" } }
+        func isShiftRow(_ r: [String]) -> Bool {
+            dayCols.contains { let v = field(r, $0).trimmed; return v.uppercased() == "OFF" || Int(v) != nil }
+        }
+        var lines: [(row: [String], anns: [[String]])] = [(shiftRow, [])]
+        for r in subRows {
+            if isAnnRow(r) { lines[lines.count - 1].anns.append(r) }
+            else if isShiftRow(r) { lines.append((r, [])) }
+            // else: fully-empty spacer → ignore.
+        }
+
         for index in 0..<dayRow.count {
             guard let day = Int(dayRow[index].trimmed), (1...31).contains(day) else { continue }
             guard let month = Self.monthMap[field(monthRow, index).trimmed.lowercased()] else { continue }
 
-            // Resolve the year from this day's weekday — robust to out-of-order /
-            // overlapping strips. Fall back to the last resolved year if absent.
+            // Resolve the year from this day's weekday — robust to out-of-order / overlapping strips.
             let weekday = Self.weekdayMap[String(field(weekdayRow, index).trimmed.lowercased().prefix(3))]
             let year = Self.resolveYear(month: month, day: day, weekday: weekday,
                                         near: now, cache: &yearCache) ?? lastYear
             lastYear = year
 
-            var comps = DateComponents()
-            comps.year = year
-            comps.month = month
-            comps.day = day
+            var comps = DateComponents(); comps.year = year; comps.month = month; comps.day = day
             guard let date = calendar.date(from: comps) else { continue }
             guard date >= windowLower, date < windowUpper else { continue }   // rolling 15-month window
             let id = iso.string(from: date)
 
-            let startToken = field(shiftRow, index).trimmed
-
-            // Leave code from the annotation sub-rows: an "L" in the day's start column
-            // with a code in the desk column. Only "V" (Vacation) is ACTED on — it
-            // overrides the printed shift and the day becomes OFF. Other codes (x/S/R…)
-            // are RECORDED into leaveCode but change nothing. (S-PARSE-1)
-            var leaveCode: String? = nil
-            for ann in annRows where field(ann, index).trimmed == "L" {
-                let code = field(ann, index + 1).trimmed
-                if !code.isEmpty { leaveCode = code; break }
-            }
-
-            // Parse the printed shift (start hour + desk) first. Desk sits in the next column — but only
-            // if that column isn't itself a day-number column (guards the dropped-separator case).
-            let startHour = Int(startToken)
+            // Desk sits in the next column, unless that column is itself a day column (dropped separator).
             let deskColumnIsGap = (index + 1 >= dayRow.count) || dayRow[index + 1].trimmed.isEmpty
-            let desk = deskColumnIsGap ? field(shiftRow, index + 1).trimmed : ""
 
-            // Vacation ("L|V"): genuine vacation and "traded back into a vacation day" look IDENTICAL in
-            // the CSV (both print a shift + L|V) — the only tell is that genuine vacation prints your HOME
-            // rotation desk, while a traded-back shift prints a FOREIGN desk. So keep a V-day-with-a-shift
-            // as a WORKING shift TAGGED "V"; `resolveVacations` decides later (home desk → OFF, foreign →
-            // stays working). A V-day with no printed shift is a plain vacation OFF. (S-PARSE-1.)
-            if leaveCode == "V" {
-                if let startHour, !desk.isEmpty {
-                    shifts.append(Shift(id: id, date: date, startHour: startHour, endHour: (startHour + 9) % 24,
-                                        role: Self.role(forDesk: desk), desk: desk, leaveCode: "V", isOff: false))
-                } else {
-                    shifts.append(Shift(id: id, date: date, startHour: 0, endHour: 0,
-                                        role: .off, desk: "", leaveCode: "V", isOff: true))
+            var entry = dayCands[id] ?? (date, [])
+            entry.date = date
+            for line in lines {
+                let startToken = field(line.row, index).trimmed
+                let startHour = Int(startToken)
+                let desk = deskColumnIsGap ? field(line.row, index + 1).trimmed : ""
+                // This line's leave code for this day, from ITS OWN annotation rows.
+                var vacationCode: String? = nil
+                var otherLeave: String? = nil
+                for ann in line.anns where field(ann, index).trimmed == "L" {
+                    let code = field(ann, index + 1).trimmed
+                    guard !code.isEmpty else { continue }
+                    if Shift.vacationLeaveCodes.contains(code) { vacationCode = code } else { otherLeave = code }
+                    break
                 }
-                continue
+                entry.cands.append(DayCandidate(startHour: startHour, desk: desk,
+                                                isVacationLeave: vacationCode != nil,
+                                                vacationCode: vacationCode, otherLeaveCode: otherLeave))
             }
-
-            // OFF / blank / non-numeric → day off.
-            guard let startHour else {
-                shifts.append(Shift(id: id, date: date, startHour: 0, endHour: 0,
-                                    role: .off, desk: "", leaveCode: leaveCode, isOff: true))
-                continue
-            }
-
-            let endHour = (startHour + 9) % 24
-            shifts.append(Shift(id: id, date: date,
-                                startHour: startHour, endHour: endHour,
-                                role: Self.role(forDesk: desk),
-                                desk: desk, leaveCode: leaveCode, isOff: false))
+            dayCands[id] = entry
         }
     }
 
@@ -311,33 +353,6 @@ final class ScheduleParser {
             .map(String.init)
             .filter { !$0.isEmpty }
         return (idStr, name, quals)
-    }
-
-    /// De-duplicates overlapping strips by date, preferring a working shift over OFF.
-    /// De-duplicate the same date appearing in multiple OVERLAPPING strips. The expanded-schedule export
-    /// repeats a date window across strips, and a given day is often annotated in only ONE copy — e.g. one
-    /// strip tags Jul 28-29 `L,V` while another (same window) tags Jul 26-27 `L,V`, each leaving the other
-    /// pair un-annotated. The old rule ("a working copy replaces an OFF copy") kept whichever copy was seen
-    /// first and DISCARDED the other strip's leave annotation, silently erasing half a vacation block (the
-    /// Jul 26-29 bug). We now MERGE duplicates: keep the printed base-rotation shift AND union the leave
-    /// codes so a `V`/`w` annotation present in ANY copy survives (`resolveVacations` then flips it OFF).
-    static func dedup(_ shifts: [Shift]) -> [Shift] {
-        var byID: [String: Shift] = [:]
-        for shift in shifts {
-            guard let existing = byID[shift.id] else { byID[shift.id] = shift; continue }
-            byID[shift.id] = mergeDuplicate(existing, shift)
-        }
-        return byID.values.sorted { $0.date < $1.date }
-    }
-
-    /// Merge two copies of the SAME date. Base = the copy that printed a real shift (prefer working over a
-    /// blank OFF, so we keep the actual desk/hours). Leave code = a vacation code (`V`/`w`) from EITHER copy
-    /// wins (so an annotation living in the other strip is never lost), else any non-nil code. PURE/testable.
-    static func mergeDuplicate(_ a: Shift, _ b: Shift) -> Shift {
-        let base = !a.isOff ? a : b
-        let leave = [a, b].first(where: { $0.isVacationOrigin })?.leaveCode ?? a.leaveCode ?? b.leaveCode
-        return Shift(id: base.id, date: base.date, startHour: base.startHour, endHour: base.endHour,
-                     role: base.role, desk: base.desk, leaveCode: leave, isOff: base.isOff)
     }
 
     /// Finds the year (nearest to `now`) in which `month/day` falls on `weekday`.

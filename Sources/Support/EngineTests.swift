@@ -157,77 +157,49 @@ enum TradeEngineTests {
             check(false, "Vacation: parser failed to return worker 999999")
         }
 
-        // MARK: Vacation resolution — a V-day ALWAYS defaults to OFF (genuine vacation), regardless of the
-        // printed desk. (The home-desk heuristic was dropped: December vacations on a seasonal-rotation desk
-        // were mislabeled working. Traded-in days are the rare per-day manual override.)
+        // MARK: Vacation resolution (B6-VAC-2LINE) — resolved at INGEST from the stacked shift lines.
+        // The export prints a base/vacation-placeholder line (carries L,V or L,w) AND, when picked up, a
+        // second WORKED line on the traded-in desk. The worked shift = the NON-vacation line whose desk
+        // isn't also a vacation/base desk. A genuine vacation has only the V line (no worked line) → OFF.
+        // Oracle values are the user-confirmed real fixture (Documentation/fixtures/expanded_schedule_sample.csv):
+        //   Gar 523734 Jul 20-23 → 62/63/63/63 ; Ervin 292216 Jul 26-29 → 20/43/01/34.
         do {
-            func mk(_ id: String, month: Int, desk: String, v: Bool) -> Shift {
-                let day = Int(id.suffix(2)) ?? 1
-                let d = DateComponents(calendar: .current, year: 2026, month: month, day: day).date ?? Date()
-                return Shift(id: id, date: d, startHour: 5, endHour: 14, role: .dispatcher,
-                             desk: desk, leaveCode: v ? "V" : nil, isOff: false)
+            typealias C = ScheduleParser.DayCandidate
+            let dt = Date(timeIntervalSince1970: 1_700_000_000)
+            func resolve(_ cands: [C]) -> Shift { ScheduleParser.resolveDay(cands, date: dt, dayID: "d") }
+            func work(_ h: Int, _ desk: String, v: Bool) -> C {
+                C(startHour: h, desk: desk, isVacationLeave: v, vacationCode: v ? "V" : nil, otherLeaveCode: nil)
             }
-            // The user's real pattern: a summer rotation on desk "22", a DECEMBER genuine-vacation block that
-            // prints a DIFFERENT seasonal desk ("74"), traded-in days on foreign desks (43/45), and a
-            // blank-desk V-day. EVERY V-day must read OFF; the printed desk is preserved for the override.
-            let input = [mk("2026-07-01", month: 7, desk: "22", v: false), mk("2026-07-02", month: 7, desk: "22", v: false),
-                         mk("2026-07-03", month: 7, desk: "22", v: false), mk("2026-07-04", month: 7, desk: "22", v: false),
-                         mk("2026-12-07", month: 12, desk: "74", v: true), mk("2026-12-08", month: 12, desk: "74", v: true),
-                         mk("2026-12-09", month: 12, desk: "74", v: true), mk("2026-12-10", month: 12, desk: "74", v: true),
-                         mk("2026-07-26", month: 7, desk: "43", v: true), mk("2026-07-27", month: 7, desk: "45", v: true),
-                         mk("2026-12-15", month: 12, desk: "", v: true)]
-            let out = ScheduleParser.resolveVacations(input)
-            let allV = ["2026-12-07", "2026-12-08", "2026-12-09", "2026-12-10", "2026-07-26", "2026-07-27", "2026-12-15"]
-            check(allV.allSatisfy { id in out.first { $0.id == id }?.isVacation == true },
-                  "B6-VAC: every V-day defaults to OFF (ingested as vacation), incl. December seasonal desk + blank desk")
-            check(out.first { $0.id == "2026-12-07" }?.desk == "74",
-                  "B6-VAC: the printed desk is preserved on a vacation day (so the traded-in override can restore it)")
-            check(out.first { $0.id == "2026-07-01" }?.isOff == false,
-                  "B6-VAC: a plain (non-V) working day is untouched")
+            func offC() -> C { C(startHour: nil, desk: "", isVacationLeave: false, vacationCode: nil, otherLeaveCode: nil) }
 
-            // B6-VAC-ECB: BOTH leave codes default OFF. "V" (Vacation) and "w" (ECB VC) are just leave
-            // designations — the printed base-rotation shift is NOT proof of working (user's real data:
-            // May 11-13 = L,w = off despite a printed shift; Dec 15-18 = L,V = off; July 26-29 = L,V but
-            // picked up → the per-day override flips them to working). resolveVacations flips BOTH to OFF,
-            // preserving the printed start/desk + code so the override can restore the worked shift.
-            func day(_ iso: String, m: Int, d: Int, start: Int, desk: String, code: String?) -> Shift {
-                let date = DateComponents(calendar: .current, year: 2026, month: m, day: d).date ?? Date()
-                return Shift(id: iso, date: date, startHour: start, endHour: (start + 9) % 24,
-                             role: .dispatcher, desk: desk, leaveCode: code, isOff: false)
-            }
-            let leaveOut = ScheduleParser.resolveVacations([
-                day("2026-05-11", m: 5,  d: 11, start: 5,  desk: "22", code: "w"),   // ECB VC, printed shift
-                day("2026-12-15", m: 12, d: 15, start: 13, desk: "22", code: "V"),   // Vacation, printed shift
-                day("2026-07-26", m: 7,  d: 26, start: 5,  desk: "43", code: "V")])  // Vacation (user picked up → override)
-            check(leaveOut.first { $0.id == "2026-05-11" }?.isVacation == true,
-                  "B6-VAC-ECB: an ECB-VC day (code \"w\", printed shift) defaults OFF (leave, not proof of work)")
-            check(leaveOut.first { $0.id == "2026-07-26" }?.isVacation == true && leaveOut.first { $0.id == "2026-07-26" }?.desk == "43",
-                  "B6-VAC-ECB: a Vacation day defaults OFF too; printed desk preserved for the worked-it override")
-            check(leaveOut.allSatisfy { $0.isOff },
-                  "B6-VAC-ECB: every vacation-designated day (V or w) resolves OFF by default")
+            // Gar Jul 20: base 24 [V] + worked 62 → 62. Jul 21: worked 63 + base 24 [V] → 63 (order-independent).
+            let g20 = resolve([work(5, "24", v: true), work(5, "62", v: false)])
+            check(!g20.isOff && g20.desk == "62", "B6-VAC-2LINE: Gar Jul20 picks the worked non-V desk 62 (got \(g20.isOff ? "OFF" : g20.desk))")
+            let g21 = resolve([work(5, "63", v: false), work(5, "24", v: true)])
+            check(!g21.isOff && g21.desk == "63", "B6-VAC-2LINE: Gar Jul21 picks 63 regardless of line order")
 
-            // B6-VAC-DEDUP: the real July 26-29 bug — TWO overlapping strips of the SAME window annotate
-            // DIFFERENT days. Strip A tags Jul 28-29 (L,V) and leaves 26-27 as plain working; strip B tags
-            // Jul 26-27 (L,V) and leaves 28-29 as plain working. The old dedup kept the first-seen copy and
-            // dropped the other strip's annotation → 26-27 showed WORKING. dedup must UNION leave codes so
-            // ALL FOUR resolve to vacation.
-            func sd(_ d: Int, start: Int, desk: String, code: String?, off: Bool) -> Shift {
-                let date = DateComponents(calendar: .current, year: 2026, month: 7, day: d).date ?? Date()
-                return Shift(id: "2026-07-\(String(format: "%02d", d))", date: date,
-                             startHour: off ? 0 : start, endHour: off ? 0 : (start + 9) % 24,
-                             role: off ? .off : .dispatcher, desk: off ? "" : desk, leaveCode: code, isOff: off)
-            }
-            let stripA = [sd(26, start: 5, desk: "22", code: nil, off: false),   // NOT annotated in this strip
-                          sd(27, start: 5, desk: "41", code: nil, off: false),
-                          sd(28, start: 5, desk: "41", code: "V",  off: false),  // L,V here
-                          sd(29, start: 5, desk: "74", code: "V",  off: false)]
-            let stripB = [sd(26, start: 0, desk: "",   code: "V",  off: true),   // L,V here (printed OFF)
-                          sd(27, start: 5, desk: "41", code: "V",  off: false),
-                          sd(28, start: 5, desk: "41", code: nil, off: false),   // NOT annotated in this strip
-                          sd(29, start: 5, desk: "74", code: nil, off: false)]
-            let deduped = ScheduleParser.resolveVacations(ScheduleParser.dedup(stripA + stripB))
-            check(deduped.count == 4 && deduped.allSatisfy { $0.isVacation },
-                  "B6-VAC-DEDUP: overlapping strips union leave codes → ALL of Jul 26-29 resolve to vacation OFF")
+            // Ervin (lines page-split across strips): Jul 26 = 41 [V] + 20 → 20 ; Jul 27 = 43 + 41 [V] → 43.
+            let e26 = resolve([work(5, "41", v: true), work(5, "20", v: false)])
+            let e27 = resolve([work(5, "43", v: false), work(5, "41", v: true)])
+            check(!e26.isOff && e26.desk == "20" && !e27.isOff && e27.desk == "43",
+                  "B6-VAC-2LINE: Ervin Jul26→20 (worked) and Jul27→43 (worked), a mix of both stacked lines")
+
+            // Genuine vacation (Gar Jul 7): only the V line has a shift, other line OFF → OFF vacation.
+            let gen = resolve([work(5, "39", v: true), offC()])
+            check(gen.isOff && gen.isVacation, "B6-VAC-2LINE: a lone V line with no worked line → genuine vacation OFF")
+
+            // Dropped annotation on a duplicate strip: the non-V desk equals the V/base desk → NOT a pickup → OFF.
+            let drop = resolve([work(5, "22", v: true), work(5, "22", v: false)])
+            check(drop.isOff, "B6-VAC-2LINE: non-V desk == V/base desk is a dropped annotation, not a pickup → OFF")
+
+            // ECB VC ("w") behaves exactly like V.
+            let wc = resolve([C(startHour: 5, desk: "24", isVacationLeave: true, vacationCode: "w", otherLeaveCode: nil),
+                              work(5, "62", v: false)])
+            check(!wc.isOff && wc.desk == "62", "B6-VAC-2LINE: ECB-VC (w) placeholder + worked line → picks the worked desk 62")
+
+            // A normal working day (no vacation anywhere) is untouched.
+            let norm = resolve([work(13, "22", v: false), offC()])
+            check(!norm.isOff && norm.desk == "22", "B6-VAC-2LINE: a normal working day resolves to its worked desk")
         }
 
         // B6-ECB60: the ECB behavior filter (4101) — only offer a shift to someone who actually WORKED

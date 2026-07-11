@@ -444,11 +444,6 @@ struct DayIntentEditor: View {
         let f = DateFormatter(); f.dateFormat = "EEEE, MMM d, yyyy"; return f.string(from: d)
     }
 
-    /// The approved-vacation shift for this day, if any (drives the traded-in override toggle).
-    private var vacationShift: Shift? {
-        ShiftStore.shared.shifts.first { $0.id == target.dayID && $0.isVacationOrigin }
-    }
-
     var body: some View {
         NavigationStack {
             Form {
@@ -493,24 +488,6 @@ struct DayIntentEditor: View {
                     Toggle("Significant day", isOn: $significant)
                 } footer: {
                     Text("Protects this date from automatic trade suggestions.")
-                }
-
-                // Leave days (Vacation "V" or ECB VC "w") are OFF by default. Only the worker knows if they
-                // actually picked up a shift that day — this toggle marks it worked (syncs Apple Calendar).
-                if let vac = vacationShift {
-                    Section {
-                        Toggle(isOn: Binding(
-                            get: { !vac.isOff },
-                            set: { ShiftStore.shared.setVacationOverride(dayID: target.dayID, worked: $0) })) {
-                            Label("Trade Picked Up", systemImage: "arrow.left.arrow.right")
-                        }
-                    } header: {
-                        Text(vac.leaveCode == "w" ? "ECB VC day" : "Vacation day")
-                    } footer: {
-                        Text(vac.isOff
-                             ? "This is a leave day — off by default. Turn on if you picked up a shift; it'll show as working and be added to your Apple Calendar."
-                             : "Marked as worked (\(vac.shiftShortLabel)). Turn off if you were actually off; it'll show as leave and be removed from your Apple Calendar.")
-                    }
                 }
 
                 Section("Note (≤ 50 chars)") {
