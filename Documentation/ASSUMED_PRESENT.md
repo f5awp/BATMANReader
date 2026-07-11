@@ -312,8 +312,12 @@
   pre-upgrade roster stays visible with **no wipe and no forced re-pull**. If lightweight migration fails, the
   `RosterStore.init` nuke-and-rebuild fallback re-pulls from master (one-time resync, not data loss). ⚠️
   **device-verify:** install current TestFlight build → upgrade to this → roster shows immediately on first launch.
-  ⚠️ the no-cross-generation-duplicate assertion is by-construction + compile only (the `@ModelActor` init can't
-  be built in the RunCodeSnippet harness) — add a real in-memory test in the app test target to discharge.
+  ✅ the no-cross-generation-duplicate assertion is now a REAL test: `TradeEngineTests.rosterAtomicityFailures()`
+  (async, in-memory `RosterShift` store) inserts gen A, inserts gen B mid-import, asserts gen-A reads are
+  untouched (old desk 29), swaps+cleans, asserts gen B = 2 rows (no dupes) + gen A swept + new desk 99 + the
+  epoch-default sentinel is reader-visible. Wired into Settings → Developer → "Run engine tests" (runs alongside
+  the pure suite). NOTE: must be run IN-APP — the RunCodeSnippet harness can't build the `@ModelActor` init nor
+  a SwiftData container, so this is discharged by tapping it on a sim/device (do it once per roster-schema change).
 - **Master-sync robustness.** `fetchIfNewer` compares CloudKit's server-assigned `modificationDate` (not the
   publisher's wall clock — clock-skew can't hide a newer master) via a metadata-only `desiredKeys` probe (the
   CSV asset downloads only when newer). `syncMasterIfNewer` is re-entrancy-guarded (`isSyncingMaster`) and now

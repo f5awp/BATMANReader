@@ -302,10 +302,16 @@ struct SettingsView: View {
 
                     #if DEBUG   // Z1: engine-test harness is DEBUG-only (stripped from Release).
                     Button {
-                        let fails = TradeEngineTests.runAll()
-                        debugMessage = fails.isEmpty
-                            ? "✅ All engine tests passed."
-                            : "Engine test failures:\n" + fails.joined(separator: "\n")
+                        // Pure suite is synchronous; the roster atomic-import check is async + needs SwiftData,
+                        // so run it here (in-app, where a ModelContainer actually builds) and merge failures.
+                        Task { @MainActor in
+                            let pure = TradeEngineTests.runAll()
+                            let roster = await TradeEngineTests.rosterAtomicityFailures()
+                            let fails = pure + roster
+                            debugMessage = fails.isEmpty
+                                ? "✅ All engine tests passed (incl. roster atomic-import)."
+                                : "Engine test failures:\n" + fails.joined(separator: "\n")
+                        }
                     } label: {
                         Label("Run engine tests", systemImage: "checkmark.shield.fill")
                     }

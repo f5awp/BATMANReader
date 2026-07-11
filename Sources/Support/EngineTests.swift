@@ -6,6 +6,7 @@
 // balance, determinism, infeasibility), holiday math, and the pickup gate.
 
 import Foundation
+import SwiftData
 
 #if DEBUG   // Z1: the self-test harness ships in DEBUG only — excluded from Release/TestFlight builds.
 
@@ -1799,6 +1800,66 @@ enum TradeEngineTests {
             check(back.keepDayIDs == ["2026-07-22"], "R-B: keepDayIDs survive")
         }
 
+        return fails
+    }
+
+    /// B6-SYNC — verifies the ATOMIC roster import (generation tag + pointer swap). Kept SEPARATE from the
+    /// pure synchronous `runAll()` because it's async and touches SwiftData (an in-memory `RosterShift`
+    /// store + `RosterModelActor`). Discharges the ASSUMED_PRESENT B6-SYNC "no cross-generation duplicates"
+    /// item that the RunCodeSnippet harness couldn't (it can't build the `@ModelActor` init out-of-module).
+    ///
+    /// Run from Developer Tools, or:  `print(await TradeEngineTests.rosterAtomicityFailures())`
+    static func rosterAtomicityFailures() async -> [String] {
+        var fails: [String] = []
+        func check(_ cond: Bool, _ msg: String) { if !cond { fails.append("❌ " + msg) } }
+
+        let cfg = ModelConfiguration(isStoredInMemoryOnly: true)
+        guard let container = try? ModelContainer(for: RosterShift.self, configurations: cfg) else {
+            return ["❌ ROSTER-ATOMIC: could not build an in-memory RosterShift container"]
+        }
+        let act = RosterModelActor(modelContainer: container)
+
+        func worker(_ id: String, _ desk: String) -> ParsedWorker {
+            let d = Date(timeIntervalSince1970: 1_700_000_000)
+            let s = Shift(id: "\(id)-2026-07-10", date: d, startHour: 13, endHour: 22,
+                          role: .dispatcher, desk: desk, leaveCode: nil, isOff: false)
+            return ParsedWorker(id: id, name: "W\(id)", quals: ["D"], shifts: [s])
+        }
+        let genA = Date(timeIntervalSince1970: 1000)
+        let genB = Date(timeIntervalSince1970: 2000)
+
+        do {
+            // Generation A becomes the live roster.
+            try await act.insertGeneration([worker("1", "29"), worker("2", "30")], version: genA)
+            let aRows = try await act.totalRows(generation: genA)
+            check(aRows == 2, "ROSTER-ATOMIC: gen A has 2 rows (got \(aRows))")
+
+            // MID-IMPORT: generation B rows land while readers are still pinned to gen A. The reader must
+            // see the COMPLETE old generation, never a mix — this is the core atomicity guarantee.
+            try await act.insertGeneration([worker("1", "99"), worker("2", "98")], version: genB)
+            let aStill = try await act.totalRows(generation: genA)
+            check(aStill == 2, "ROSTER-ATOMIC: gen A untouched while gen B mid-insert (got \(aStill))")
+            let deskA = (try await act.schedule(forWorker: "1", generation: genA)).first?.desk
+            check(deskA == "29", "ROSTER-ATOMIC: pre-swap reader sees OLD desk 29 (got \(deskA ?? "nil"))")
+
+            // Swap complete → clean up the old generation.
+            try await act.deleteOtherGenerations(keeping: genB)
+            let bRows = try await act.totalRows(generation: genB)
+            check(bRows == 2, "ROSTER-ATOMIC: gen B has 2 rows — NO cross-gen dupes (got \(bRows))")
+            let aAfter = try await act.totalRows(generation: genA)
+            check(aAfter == 0, "ROSTER-ATOMIC: gen A swept after cleanup (got \(aAfter))")
+            let deskB = (try await act.schedule(forWorker: "1", generation: genB)).first?.desk
+            check(deskB == "99", "ROSTER-ATOMIC: post-swap reader sees NEW desk 99 (got \(deskB ?? "nil"))")
+
+            // Sentinel/migration invariant: rows written with the epoch default are visible to the epoch
+            // reader (the seamless-upgrade path — pre-field rows stay visible with no wipe).
+            let epoch = Date(timeIntervalSince1970: 0)
+            try await act.insertGeneration([worker("9", "12")], version: epoch)
+            let epochRows = try await act.totalRows(generation: epoch)
+            check(epochRows == 1, "ROSTER-ATOMIC: epoch-default rows visible to the epoch reader (got \(epochRows))")
+        } catch {
+            fails.append("❌ ROSTER-ATOMIC: threw \(error)")
+        }
         return fails
     }
 
