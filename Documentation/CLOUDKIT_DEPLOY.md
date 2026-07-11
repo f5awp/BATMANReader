@@ -24,7 +24,7 @@
 | `MetricEvent` | Public | `payload` String |
 | `RosterPackage` | Public | `csv` Asset · `version` Date/Time |
 | `AccountClaim` | Public | `employeeID` String · `appleUserID` String · `displayName` String |
-| `PrivateState` | **Private** | `privateNotes` String · `updatedAt` Date/Time · **`intents` String (B4-2)** · **`intentsUpdatedAt` Date/Time (B4-2)** |
+| `PrivateState` | **Private** | `privateNotes` String · `updatedAt` Date/Time · **`intents` String (B4-2)** · **`intentsUpdatedAt` Date/Time (B4-2)** · `ecbLedger` String · `ecbLedgerUpdatedAt` Date/Time · **`tradeHistory` String (B6-sync)** · **`tradeHistoryUpdatedAt` Date/Time (B6-sync)** |
 
 ## Indexes (all Queryable)
 
@@ -53,3 +53,9 @@ fetch was the root of the P0 data-wipe (now also guarded in code by `FetchMerge.
 - **PENDING (B4-2):** add `intents` (String) + `intentsUpdatedAt` (Date/Time) to the **private** `PrivateState`
   record, then deploy Dev→Prod. No index needed (fetched by fixed record name `private_state`). Full intent
   sync across a user's devices stays local-only until this ships.
+- **PENDING (B6-sync):** add `tradeHistory` (String) + `tradeHistoryUpdatedAt` (Date/Time) to the **private**
+  `PrivateState` record, then deploy Dev→Prod. No index needed. Until this ships, the trade **status board /
+  history** stays per-device (each device keeps its own; nothing is lost, just not shared).
+  Note: `ecbLedger`/`ecbLedgerUpdatedAt` (personal ECB blob) ride the same record — deploy them too if not already.
+  All new profile PREFERENCE fields (openness overrides, notification lead time, daily-digest on/off + hour)
+  ride the existing `TradeProfile.payload` JSON, so they need **no** schema change.

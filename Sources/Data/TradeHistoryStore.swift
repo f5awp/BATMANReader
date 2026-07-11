@@ -44,11 +44,16 @@ final class TradeHistoryStore {
 
     private static let key = "batman.v2.tradeHistory"
     private static let searchKey = "batman.v2.searchLog"
+    private static let clockKey = "batman.v2.tradeHistoryUpdatedAt"
 
     /// Timestamps of trade searches the user has run — drives the Home metrics header (H1).
     private(set) var searchLog: [Date] {
         didSet { if let d = try? JSONEncoder().encode(searchLog) { UserDefaults.standard.set(d, forKey: Self.searchKey) } }
     }
+
+    /// LWW clock for cross-device history sync (private DB). Bumped on every genuine LOCAL mutation.
+    private var historyUpdatedAt: Date
+    private let privateCloud = CloudKitPrivateStateService()
 
     private init() {
         if let data = UserDefaults.standard.data(forKey: Self.key),
@@ -59,6 +64,7 @@ final class TradeHistoryStore {
         }
         searchLog = (UserDefaults.standard.data(forKey: Self.searchKey))
             .flatMap { try? JSONDecoder().decode([Date].self, from: $0) } ?? []
+        historyUpdatedAt = (UserDefaults.standard.object(forKey: Self.clockKey) as? Date) ?? .distantPast
     }
 
     /// Record a trade search (H1). Caller passes the time so the store stays testable.
@@ -75,6 +81,7 @@ final class TradeHistoryStore {
         entries.insert(entry, at: 0)
         // NOTE (#9): success is NOT logged here — a recorded/completed trade isn't "successful" until
         // it's ACCEPTED *and* ARCHIVED. The `.trade` metric fires from MessagingStore.archiveRequest.
+        publishHistory()   // cross-device: your status board now matches on all your devices
     }
 
     /// Pending ECB transfers (form submitted, receipt not yet confirmed).
@@ -88,6 +95,38 @@ final class TradeHistoryStore {
         entries[i].completedAt = date
         entries.sort { $0.completedAt > $1.completedAt }
         persist()
+        publishHistory()
+    }
+
+    // MARK: - Cross-device sync (private DB, LWW) — same shape as ECBAccountingStore's personal blob.
+
+    /// Bump the clock and push the ledger to the user's private CloudKit record (fire-and-forget).
+    func publishHistory() {
+        historyUpdatedAt = Date()
+        UserDefaults.standard.set(historyUpdatedAt, forKey: Self.clockKey)
+        guard SettingsManager.shared.useCloudKit else { return }
+        let json = historyJSON(); let at = historyUpdatedAt
+        Task { await privateCloud.publishTradeHistory(json, updatedAt: at) }
+    }
+
+    /// On launch / dashboard open: adopt the remote ledger when it's newer (LWW). A transient empty/failed
+    /// fetch returns nil → we keep local (INV-4: an outage never wipes your status board). If local is
+    /// newer, push it up.
+    func syncOnLaunch() async {
+        guard SettingsManager.shared.useCloudKit else { return }
+        if let remote = await privateCloud.fetchTradeHistory(), remote.updatedAt > historyUpdatedAt,
+           let decoded = try? JSONDecoder().decode([TradeHistoryEntry].self, from: Data(remote.json.utf8)) {
+            entries = decoded.sorted { $0.completedAt > $1.completedAt }   // remote newer → adopt
+            historyUpdatedAt = remote.updatedAt
+            UserDefaults.standard.set(historyUpdatedAt, forKey: Self.clockKey)
+        } else if historyUpdatedAt > .distantPast {
+            let json = historyJSON(); let at = historyUpdatedAt
+            Task { await privateCloud.publishTradeHistory(json, updatedAt: at) }   // local newer → push
+        }
+    }
+
+    private func historyJSON() -> String {
+        (try? JSONEncoder().encode(entries)).flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
     }
 
     private func persist() {

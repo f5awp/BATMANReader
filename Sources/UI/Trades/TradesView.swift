@@ -155,6 +155,9 @@ struct TradeDashboardSheet: View {
             .navigationTitle("Trade Status")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+            // Pull the latest trade state + your cross-device history when the board opens (and on pull).
+            .task { await MessagingStore.shared.refresh(); await TradeHistoryStore.shared.syncOnLaunch() }
+            .refreshable { await MessagingStore.shared.refresh(); await TradeHistoryStore.shared.syncOnLaunch() }
         }
     }
 }

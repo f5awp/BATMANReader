@@ -110,6 +110,12 @@ struct TradeProfile: Sendable, Hashable, Codable, Identifiable {
     // Relief dispatcher: last date this person's schedule is REAL. nil = not a relief dispatcher.
     // Published so EVERY peer's matcher ignores their bogus post-relief shifts. Set post-init.
     var reliefThrough: Date? = nil
+    // Cross-device-only PREFERENCES (never used by peers' matchers) — carried on the profile purely so a
+    // user's own devices converge. Set post-init; all optional so old records decode.
+    var opennessOverrides: [OpennessOverride]? = nil   // date-range openness overrides
+    var notificationLeadHours: Int? = nil              // hours before a shift the reminder fires
+    var dailyDigestEnabled: Bool? = nil                // once-a-day summary on/off
+    var dailyDigestHour: Int? = nil                    // hour (0–23) the summary fires
 
     // EXPLICIT init — this REPLACES Swift's synthesized memberwise init and FREEZES the
     // construction signature. Adding a NEW optional published field above does NOT change
@@ -382,6 +388,11 @@ final class TradeProfileStore {
         p.qualValues = s.qualValues.isEmpty ? nil : s.qualValues
         p.qualSwapBlacklistDesks = s.qualSwapBlacklistDesks.isEmpty ? nil : s.qualSwapBlacklistDesks
         p.reliefThrough = s.effectiveReliefThrough   // nil unless relief toggled ON + dated
+        // Cross-device-only prefs (carried so the user's own devices converge; peers ignore these).
+        p.opennessOverrides    = s.opennessOverrides.isEmpty ? nil : s.opennessOverrides
+        p.notificationLeadHours = s.notificationLeadHours
+        p.dailyDigestEnabled   = s.dailyDigestEnabled
+        p.dailyDigestHour      = s.dailyDigestHour
         // Proof this profile belongs to a real, signed-in account (not a legacy/orphan cloud record).
         p.accountClaimed = s.appleUserID.isEmpty ? nil : true
         return p
@@ -447,8 +458,33 @@ final class TradeProfileStore {
         if let e = mine.personalEmail, !e.isEmpty { s.personalEmail = e }
         if let e = mine.aaEmail,       !e.isEmpty { s.aaEmail = e }
         if let ph = mine.phone,        !ph.isEmpty { s.phone = ph }
+        // Date-range openness overrides — a real trade decision, must follow the user across devices.
+        s.opennessOverrides      = mine.opennessOverrides ?? []
+        // Notification settings — adopt, then re-schedule locally so both devices alert identically
+        // (avoids two lead-times / a digest firing on one device only).
+        let notifChanged = (mine.notificationLeadHours != nil && mine.notificationLeadHours != s.notificationLeadHours)
+            || (mine.dailyDigestEnabled != nil && mine.dailyDigestEnabled != s.dailyDigestEnabled)
+            || (mine.dailyDigestHour != nil && mine.dailyDigestHour != s.dailyDigestHour)
+        if let lead = mine.notificationLeadHours { s.notificationLeadHours = lead }
+        if let dd = mine.dailyDigestEnabled { s.dailyDigestEnabled = dd }
+        if let dh = mine.dailyDigestHour { s.dailyDigestHour = dh }
         s.isMercenaryMode        = mine.isMercenaryMode ?? false // last: its didSet enforces the openness invariant
         s.prefsUpdatedAt         = mine.updatedAt                // adopt the remote stamp so we don't re-adopt
+        if notifChanged { await Self.rescheduleNotifications() }
+    }
+
+    /// Re-schedule shift reminders + the daily digest from the CURRENT settings — run after adopting
+    /// notification prefs from another device so alerts match everywhere.
+    @MainActor
+    static func rescheduleNotifications() async {
+        let s = SettingsManager.shared
+        await NotificationManager.shared.scheduleAll(for: ShiftStore.shared.shifts)
+        let m = MessagingStore.shared
+        let c = DashboardCounts.from(requests: m.requests, responses: m.responses,
+                                     unread: m.pendingIncoming.count,
+                                     pendingLedger: TradeHistoryStore.shared.pendingCount)
+        await NotificationManager.shared.scheduleDailyDigest(
+            enabled: s.dailyDigestEnabled, hour: s.dailyDigestHour, pending: c.pending, unread: c.unread)
     }
 
     func profile(forWorker workerID: String) -> TradeProfile? { others[workerID] }

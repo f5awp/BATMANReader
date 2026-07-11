@@ -110,8 +110,8 @@ struct SettingsView: View {
                 } footer: {
                     Text("Once a day, a notification summarises what needs you — pending trades and unread messages. On-device only.")
                 }
-                .onChange(of: settings.dailyDigestEnabled) { _, _ in rescheduleDigest() }
-                .onChange(of: settings.dailyDigestHour) { _, _ in rescheduleDigest() }
+                .onChange(of: settings.dailyDigestEnabled) { _, _ in rescheduleDigest(); publishPrefs() }
+                .onChange(of: settings.dailyDigestHour) { _, _ in rescheduleDigest(); publishPrefs() }
 
                 // ── Account ──────────────────────────────────────────
                 Section {
@@ -191,6 +191,10 @@ struct SettingsView: View {
                     Text("Notifications")
                 } footer: {
                     Text("A notification fires this many hours before each shift starts. Alarms are set separately via Shortcuts.")
+                }
+                .onChange(of: settings.notificationLeadHours) { _, _ in
+                    Task { await NotificationManager.shared.scheduleAll(for: ShiftStore.shared.shifts) }
+                    publishPrefs()
                 }
 
                 // ── Personal calendar ────────────────────────────────
@@ -514,6 +518,13 @@ struct SettingsView: View {
         guard let date = ShiftStore.shared.lastFetchDate else { return "Not synced yet" }
         let f = DateFormatter(); f.dateFormat = "MMM d, h:mm a"
         return f.string(from: date)
+    }
+
+    /// Stamp the cross-device prefs clock and republish so the user's OTHER devices adopt the changed
+    /// notification settings (A3 — lead time / daily digest now sync).
+    private func publishPrefs() {
+        settings.markPrefsChanged()
+        Task { await TradeProfileStore.shared.publishMine() }
     }
 
     /// Re-schedule the daily digest with the latest counts + current settings (on toggle/time change).

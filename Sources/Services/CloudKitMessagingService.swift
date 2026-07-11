@@ -284,6 +284,26 @@ actor CloudKitPrivateStateService {
               let updatedAt = record["ecbLedgerUpdatedAt"] as? Date else { return nil }
         return (json, updatedAt)
     }
+
+    /// The user's TRADE HISTORY / status-board ledger (settled + pending trades) — private, cross-device
+    /// only. Rides the same private_state record in its own fields (needs `tradeHistory`/
+    /// `tradeHistoryUpdatedAt` deployed in the CloudKit Console).
+    func publishTradeHistory(_ json: String, updatedAt: Date) async {
+        let record: CKRecord
+        if let existing = try? await db.record(for: id) { record = existing }
+        else { record = CKRecord(recordType: Self.recordType, recordID: id) }
+        record["tradeHistory"] = json as CKRecordValue
+        record["tradeHistoryUpdatedAt"] = updatedAt as CKRecordValue
+        do { _ = try await db.save(record) }
+        catch { print("⚠️ trade-history publish failed: \(error.localizedDescription)") }
+    }
+
+    func fetchTradeHistory() async -> (json: String, updatedAt: Date)? {
+        guard let record = try? await db.record(for: id),
+              let json = record["tradeHistory"] as? String,
+              let updatedAt = record["tradeHistoryUpdatedAt"] as? Date else { return nil }
+        return (json, updatedAt)
+    }
 }
 
 // MARK: - ECB shared-line sync (B6-ECB) — public DB, visible to both dispatchers.

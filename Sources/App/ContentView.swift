@@ -30,6 +30,7 @@ struct ContentView: View {
     @State private var showECB = false             // ECB Accounting ledger (⋯ menu)
     @State private var showChangelog = false   // Z2: startup "What's New"
     @State private var launchLoading = true     // spinner during the initial sync so it never looks frozen
+    @Environment(\.scenePhase) private var scenePhase
     @State private var pendingTab: Int? = nil   // C1 phase-2: tab the user wants to leave Home for
     @State private var showLeaveGuard = false   // C1 phase-2: Save-or-Discard guard
     private var dev = DevAccess.shared
@@ -129,6 +130,11 @@ struct ContentView: View {
         }
         .preferredColorScheme(AppAppearance(rawValue: settings.appearance)?.scheme)
         .loadingOverlay(launchLoading, label: "Loading…")   // spinner during the initial sync
+        // Returning to the app (e.g. after tapping a trade-request / mention push) pulls the latest so both
+        // devices show new inbox/channel items, trade status, ECB and prefs without a manual refresh.
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active, !launchLoading { Task { await foregroundRefresh() } }
+        }
         .task {
             defer { launchLoading = false }
             await MessagingStore.shared.refresh()
@@ -140,6 +146,7 @@ struct ContentView: View {
                 await TradeProfileStore.shared.publishMine()   // stamp our profile `accountClaimed` so peers see us as active
             }
             await ECBAccountingStore.shared.syncOnLaunch()     // B6-ECB: shared lines + personal blob
+            await TradeHistoryStore.shared.syncOnLaunch()      // status board / history across your devices
             await CloudPush.setup()                            // register push subscriptions
             WidgetData.update()
             // Refresh the once-a-day summary notification with the latest counts (default ON).
@@ -164,6 +171,20 @@ struct ContentView: View {
                 }
             }
         }
+    }
+
+    /// Re-pull everything that changes on the OTHER device while this one was backgrounded. Cheap, guarded,
+    /// and each call has its own empty-fetch/LWW protection so a transient outage never wipes local state.
+    private func foregroundRefresh() async {
+        guard settings.useCloudKit,
+              !settings.username.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+        await MessagingStore.shared.refresh()                 // inbox + channel posts/replies
+        await TradeProfileStore.shared.refreshOthers()        // peers' latest profiles/status
+        await PrivateStateStore.shared.syncIntentsOnLaunch()  // intents (LWW)
+        await ECBAccountingStore.shared.syncOnLaunch()        // ECB balance + shared lines
+        await TradeHistoryStore.shared.syncOnLaunch()         // status board / history
+        await TradeProfileStore.shared.syncMyPreferences()    // adopt any newer prefs (incl. notifications)
+        WidgetData.update()
     }
 }
 
