@@ -128,9 +128,14 @@ struct HomeView: View {
                 Button("Keep Editing", role: .cancel) {}
             } message: { Text("You have unsaved marks. Save them so your trades update, or discard to revert.") }
             .onAppear(perform: reconcileSnapshot)
-            // R-B: load peers when Home appears so matching/status reflect what everyone
-            // published (peer status/intents were blank cross-device).
-            .task { await TradeProfileStore.shared.refreshOthers() }
+            // R-B: load peers when Home appears so matching/status reflect what everyone published.
+            // Also re-pull MY intents + trade prefs from the private DB so a change made on another
+            // device shows here (LWW; won't clobber unsaved local edits). Was launch-only before.
+            .task {
+                await TradeProfileStore.shared.refreshOthers()
+                await PrivateStateStore.shared.syncIntentsOnLaunch()
+                await TradeProfileStore.shared.syncMyPreferences()
+            }
             .onChange(of: mode) { _, new in
                 overwriteConfirmed = false   // #10: new marking session re-asks once
                 // Finished marking → publish updated availability pills for matching.

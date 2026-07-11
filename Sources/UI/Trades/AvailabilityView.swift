@@ -2022,6 +2022,10 @@ struct ECBAccountingView: View {
             }
             .navigationTitle("ECB Accounting")
             .navigationBarTitleDisplayMode(.inline)
+            // Pull the latest ledger (personal blob + shared lines) each time the page opens, so a
+            // change made on another device shows without relaunching.
+            .task { await store.syncOnLaunch() }
+            .refreshable { await store.syncOnLaunch() }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {

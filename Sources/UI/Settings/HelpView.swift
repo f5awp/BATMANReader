@@ -152,12 +152,12 @@ struct WelcomeView: View {
             }
         }
         .task {
-            // Roster ingest is async on launch, so a single read can land before the user's quals
-            // exist — that's why a held qual (e.g. Latin) showed as ungrayed here but correct in
-            // Trade Settings (opened later). Retry briefly until quals arrive.
+            // Show cached quals INSTANTLY (fixes the stale-on-first-entry region pills), then refresh
+            // from the roster (async on launch) and update the cache for next time.
+            myQuals = settings.cachedQuals
             for _ in 0..<20 {
                 let q = await RosterStore.shared.schedule(forWorker: settings.username).first?.quals ?? []
-                if !q.isEmpty { myQuals = q; return }
+                if !q.isEmpty { myQuals = q; settings.cachedQuals = q; return }
                 try? await Task.sleep(nanoseconds: 300_000_000)   // 0.3s between attempts (~6s max)
             }
         }
@@ -175,7 +175,7 @@ struct WelcomeView: View {
         .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 2)
     }
 
-    private func publishPrefs() { Task { await TradeProfileStore.shared.publishMine() } }
+    private func publishPrefs() { settings.markPrefsChanged(); Task { await TradeProfileStore.shared.publishMine() } }
     private func toggleSet<T: Hashable>(_ set: inout Set<T>, _ value: T) {
         if set.contains(value) { set.remove(value) } else { set.insert(value) }
         publishPrefs()

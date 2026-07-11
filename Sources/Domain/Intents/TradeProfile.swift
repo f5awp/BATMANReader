@@ -417,6 +417,26 @@ final class TradeProfileStore {
         }
     }
 
+    /// Restore the user's TRADE PREFERENCES (openness, blacklists, mercenary, qual values) from their
+    /// own published profile — the fix for prefs not syncing across a user's devices. LWW by the local
+    /// prefs clock. MUST run at launch BEFORE `publishMine()`, so a device that just launched can't
+    /// overwrite the cloud with its stale prefs and clobber the other device's newer edit.
+    func syncMyPreferences() async {
+        let s = SettingsManager.shared
+        guard s.useCloudKit, !s.username.isEmpty,
+              let mine = await service.fetchAll().first(where: { $0.workerID == s.username }) else { return }
+        guard mine.updatedAt > (s.prefsUpdatedAt ?? .distantPast) else { return }   // adopt only when strictly newer
+        s.tradeOpenness          = mine.openness
+        s.blacklistedWeekdays    = mine.blacklistedWeekdays
+        s.blacklistedDesks       = mine.blacklistedDesks
+        s.blacklistedShiftTypes  = mine.blacklistedShiftTypes
+        s.blacklistedRegions     = mine.blacklistedRegions
+        s.qualValues             = mine.qualValues ?? [:]
+        s.qualSwapBlacklistDesks = mine.qualSwapBlacklistDesks ?? []
+        s.isMercenaryMode        = mine.isMercenaryMode ?? false // last: its didSet enforces the openness invariant
+        s.prefsUpdatedAt         = mine.updatedAt                // adopt the remote stamp so we don't re-adopt
+    }
+
     func profile(forWorker workerID: String) -> TradeProfile? { others[workerID] }
 
     /// Is this worker a REAL, on-the-app account — not just a legacy/orphan profile record? You are

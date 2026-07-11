@@ -170,6 +170,18 @@ final class SettingsManager {
     var statusUpdatedAt: Date? {
         didSet { defaults.set(statusUpdatedAt, forKey: Keys.statusUpdatedAt) }
     }
+    /// LWW clock for cross-device TRADE PREFERENCES (openness, blacklists, mercenary, qual values).
+    /// Bumped by `markPrefsChanged()` on a real user edit; set to the remote stamp when adopting.
+    var prefsUpdatedAt: Date? {
+        didSet { defaults.set(prefsUpdatedAt, forKey: Keys.prefsUpdatedAt) }
+    }
+    /// Call whenever the user edits a trade preference so cross-device sync can last-write-wins.
+    func markPrefsChanged() { prefsUpdatedAt = Date() }
+    /// The user's own qualifications, cached from the roster so the trade-preferences screens show the
+    /// correct region pills INSTANTLY instead of waiting on the async roster load. Refreshed on load.
+    var cachedQuals: [String] {
+        didSet { defaults.set(cachedQuals, forKey: Keys.cachedQuals) }
+    }
     /// Dispatch trades distribution list — the To: for the Outlook trade email (G1).
     var tradeEmailDL: String {
         didSet { defaults.set(tradeEmailDL, forKey: Keys.tradeEmailDL) }
@@ -255,6 +267,8 @@ final class SettingsManager {
         isMercenaryMode          = defaults.bool(forKey: Keys.isMercenaryMode)
         statusBroadcast          = defaults.string(forKey: Keys.statusBroadcast) ?? ""
         statusUpdatedAt          = defaults.object(forKey: Keys.statusUpdatedAt) as? Date
+        prefsUpdatedAt           = defaults.object(forKey: Keys.prefsUpdatedAt) as? Date
+        cachedQuals              = (defaults.array(forKey: Keys.cachedQuals) as? [String]) ?? []
         tradeEmailDL             = defaults.string(forKey: Keys.tradeEmailDL) ?? "DL_dispatch_trades@aa.com"
         lastSeenChangelogBuild   = defaults.string(forKey: Keys.lastSeenChangelog) ?? ""
         showWelcomeOnLaunch      = defaults.object(forKey: Keys.showWelcomeOnLaunch) == nil ? true : defaults.bool(forKey: Keys.showWelcomeOnLaunch)
@@ -288,6 +302,8 @@ final class SettingsManager {
         static let isMercenaryMode = "batman.isMercenaryMode"
         static let statusBroadcast = "batman.statusBroadcast"
         static let statusUpdatedAt = "batman.statusUpdatedAt"
+        static let prefsUpdatedAt = "batman.prefsUpdatedAt"
+        static let cachedQuals = "batman.cachedQuals"
         static let tradeEmailDL    = "batman.tradeEmailDL"
         static let lastSeenChangelog = "batman.lastSeenChangelogBuild"
         static let showWelcomeOnLaunch = "batman.showWelcomeOnLaunch"

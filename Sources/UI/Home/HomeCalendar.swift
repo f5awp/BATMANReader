@@ -634,6 +634,7 @@ struct TradeSettingsSheet: View {
     /// Re-run the base openness shortcut (which layers in the date-range overrides)
     /// and re-publish. Call after any override change.
     private func reapplyOpenness() {
+        settings.markPrefsChanged()
         let level = TradeOpenness(rawValue: settings.tradeOpenness) ?? .bookends
         DayIntentStore.shared.applyOpenness(level, shifts: ShiftStore.shared.shifts)
         Task { await TradeProfileStore.shared.publishMine() }
@@ -643,6 +644,7 @@ struct TradeSettingsSheet: View {
         Binding(get: { TradeOpenness(rawValue: settings.tradeOpenness) ?? .bookends },
                 set: { level in
                     settings.tradeOpenness = level.rawValue
+                    settings.markPrefsChanged()
                     // Openness is a shortcut: bulk-apply it to the availability pills,
                     // then publish so matching reflects it.
                     DayIntentStore.shared.applyOpenness(level, shifts: ShiftStore.shared.shifts)
@@ -653,6 +655,7 @@ struct TradeSettingsSheet: View {
         Binding(get: { settings.isMercenaryMode },
                 set: { on in
                     settings.isMercenaryMode = on
+                    settings.markPrefsChanged()
                     let level = TradeOpenness(rawValue: settings.tradeOpenness) ?? .bookends
                     DayIntentStore.shared.applyMercenary(on, openness: level, shifts: ShiftStore.shared.shifts)
                     Task { await TradeProfileStore.shared.publishMine() }
@@ -685,7 +688,7 @@ struct TradeSettingsSheet: View {
                     publishProfile()
                 })
     }
-    private func publishProfile() { Task { await TradeProfileStore.shared.publishMine() } }
+    private func publishProfile() { settings.markPrefsChanged(); Task { await TradeProfileStore.shared.publishMine() } }
 
     /// Weekday pills for "Blackout days" — Calendar weekday numbers (1 = Sun … 7 = Sat) → single letters.
     static let weekdayPills: [(day: Int, letter: String)] =
@@ -747,8 +750,9 @@ struct TradeSettingsSheet: View {
                     let lvl = TradeOpenness(rawValue: settings.tradeOpenness) ?? .bookends
                     DayIntentStore.shared.applyOpenness(lvl, shifts: ShiftStore.shared.shifts)
                 }
-                myQuals = await RosterStore.shared.schedule(forWorker: settings.username)
-                    .first?.quals ?? []
+                myQuals = settings.cachedQuals   // instant from cache so region pills aren't stale
+                let q = await RosterStore.shared.schedule(forWorker: settings.username).first?.quals ?? []
+                if !q.isEmpty { myQuals = q; settings.cachedQuals = q }
             }
         }
     }
