@@ -50,12 +50,10 @@ fetch was the root of the P0 data-wipe (now also guarded in code by `FetchMerge.
 
 ## Status
 - Deployed to Production on 2026-06-20 (initial 5).
-- **PENDING (B4-2):** add `intents` (String) + `intentsUpdatedAt` (Date/Time) to the **private** `PrivateState`
-  record, then deploy Dev→Prod. No index needed (fetched by fixed record name `private_state`). Full intent
-  sync across a user's devices stays local-only until this ships.
+- **DEPLOYED:** `intents`/`intentsUpdatedAt` (B4-2) and `ecbLedger`/`ecbLedgerUpdatedAt` (personal ECB blob)
+  are live in Production on the private `PrivateState` record (confirmed in the Console 2026-07-10).
 - **PENDING (B6-sync):** add `tradeHistory` (String) + `tradeHistoryUpdatedAt` (Date/Time) to the **private**
   `PrivateState` record, then deploy Dev→Prod. No index needed. Until this ships, the trade **status board /
   history** stays per-device (each device keeps its own; nothing is lost, just not shared).
-  Note: `ecbLedger`/`ecbLedgerUpdatedAt` (personal ECB blob) ride the same record — deploy them too if not already.
   All new profile PREFERENCE fields (openness overrides, notification lead time, daily-digest on/off + hour)
   ride the existing `TradeProfile.payload` JSON, so they need **no** schema change.

@@ -178,6 +178,7 @@ struct ContentView: View {
     private func foregroundRefresh() async {
         guard settings.useCloudKit,
               !settings.username.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+        _ = await RosterStore.shared.syncMasterIfNewer()      // admin master-schedule updates (cheap version probe)
         await MessagingStore.shared.refresh()                 // inbox + channel posts/replies
         await TradeProfileStore.shared.refreshOthers()        // peers' latest profiles/status
         await PrivateStateStore.shared.syncIntentsOnLaunch()  // intents (LWW)

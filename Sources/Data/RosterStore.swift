@@ -99,6 +99,13 @@ final class RosterStore {
         set { UserDefaults.standard.set(newValue, forKey: "batman.rosterMasterVersion") }
     }
 
+    /// Set while a full-roster rewrite is mid-flight; cleared only on success. If it's still set at the
+    /// next launch, the last import was interrupted (crash/kill) and the on-disk roster may be partial.
+    private var importInProgress: Bool {
+        get { UserDefaults.standard.bool(forKey: "batman.rosterImportInProgress") }
+        set { UserDefaults.standard.set(newValue, forKey: "batman.rosterImportInProgress") }
+    }
+
     /// B4-8: synchronous worker-id → roster-name cache so views (calendars, package detail, handoff
     /// chain) can resolve a real name instead of showing the employee number. Warmed by every roster
     /// fetch below. `name(for:)` is the read; callers still route through `TradeNames.resolved` for the
@@ -139,6 +146,13 @@ final class RosterStore {
             }
         }
         actor = RosterModelActor(modelContainer: container)
+
+        // Self-heal an interrupted import: if the flag is still set, the on-disk roster may be truncated.
+        // Forget our version so the next `syncMasterIfNewer` re-pulls and rebuilds the whole roster cleanly.
+        if importInProgress {
+            print("⚠️ RosterStore: previous roster import was interrupted — forcing a clean re-pull.")
+            localMasterVersion = nil
+        }
     }
 
     /// Publish a parsed CSV as the shared master roster — every user picks it up.
@@ -151,16 +165,34 @@ final class RosterStore {
         return true
     }
 
-    /// On launch: if a newer master roster exists in CloudKit, download + import
-    /// it. Returns the row count imported (0 if nothing new). Safe to call always.
+    /// Re-entrancy guard: launch + foreground + onboarding can all fire this; a second call while one
+    /// import is running would double-work (and, if ever called off the main actor, race). Serialize.
+    private var isSyncingMaster = false
+
+    /// If a newer master roster exists in CloudKit, download + import it. Returns the row count imported
+    /// (0 if nothing new / unchanged / failed). Safe to call on launch AND foreground — the version probe
+    /// is cheap and a failed/empty fetch keeps the current roster.
     @discardableResult
     func syncMasterIfNewer() async -> Int {
         guard SettingsManager.shared.useCloudKit else { return 0 }
+        guard !isSyncingMaster else { return 0 }
+        isSyncingMaster = true
+        defer { isSyncingMaster = false }
+
         guard let pkg = await cloud.fetchIfNewer(localVersion: localMasterVersion) else { return 0 }
         let csv = pkg.csv
         guard let workers = try? await Task.detached(priority: .utility, operation: {
             try ScheduleParser().parseAllWorkers(csv: csv)
-        }).value, workers.count > 1 else { return 0 }
+        }).value else {
+            print("⚠️ RosterStore: master parse threw — keeping existing roster, will retry next launch.")
+            return 0
+        }
+        // A well-formed master has the whole department. ≤1 worker means a malformed/partial CSV — refuse
+        // it (don't advance the version, so we retry) and surface it instead of silently shipping garbage.
+        guard workers.count > 1 else {
+            print("⚠️ RosterStore: master parsed to \(workers.count) worker(s) — treating as malformed, NOT importing.")
+            return 0
+        }
         let rows = await importRoster(workers)
         localMasterVersion = pkg.version
 
@@ -172,6 +204,10 @@ final class RosterStore {
             _ = await ShiftStore.shared.save(mine.shifts)
             await AvailabilityManager.shared.buildFromSchedule()
             await NotificationManager.shared.scheduleAll(for: mine.shifts)
+        } else if !myID.isEmpty {
+            // Our own row is absent from the new master (new hire not yet added, ID typo, or removed). Keep
+            // the existing personal schedule rather than wiping it, but flag it so it's diagnosable.
+            print("⚠️ RosterStore: employee \(myID) not found in the new master — kept existing personal schedule.")
         }
         return rows
     }
@@ -179,12 +215,16 @@ final class RosterStore {
     /// Imports a full roster in the background. Returns the row count loaded.
     @discardableResult
     func importRoster(_ workers: [ParsedWorker]) async -> Int {
+        importInProgress = true            // mark the rewrite in-flight (heals on next launch if interrupted)
         do {
             try await actor.replaceRoster(with: workers)
             nameCache.removeAll(); scheduleCache.removeAll()   // roster changed → drop stale caches
-            return (try? await actor.totalRows()) ?? 0
+            let rows = (try? await actor.totalRows()) ?? 0
+            importInProgress = false        // clean commit
+            return rows
         } catch {
             print("⚠️ RosterStore: import failed: \(error)")
+            // Leave the flag set → next launch forces a clean re-pull rather than trusting a partial store.
             return 0
         }
     }
