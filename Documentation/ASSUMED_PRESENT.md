@@ -284,6 +284,42 @@
 - **B6-LUCKY — renamed to "More: 3+ & loops".** Same on-demand heavy 3+/circular search; label + sheet title
   + empty-state copy updated. Functionality unchanged. ✅ label-only
 
+## Build 6 — cross-device + roster-sync hardening (B6-SYNC, 2026-07-10; flag if wrong)
+- **Prefs now sync via the profile payload (no deploy).** `TradeProfileStore.syncMyPreferences()` restores
+  openness · all blacklists · mercenary · qualValues · qualSwapBlacklistDesks · **opennessOverrides ·
+  notificationLeadHours · dailyDigestEnabled · dailyDigestHour · reliefThrough · personal/AA email · phone**
+  from the user's own published `TradeProfile`. LWW by `SettingsManager.prefsUpdatedAt`; runs at launch AND
+  foreground, **before** `publishMine()` (adopt-before-publish so a stale device can't clobber a newer edit).
+  Failsafes: (a) empty/failed fetch → no-op (never wipes); (b) adopt only from `accountClaimed==true` (a
+  legacy/orphan record can't overwrite real prefs); (c) strictly-newer clock. Notification settings reschedule
+  after adopting. Build-verified + the round-trip rides the same JSON codec as R-B (tested). ⚠️ 2-device verify.
+- **Trade history / status board syncs (needs deploy).** `TradeHistoryStore.publishHistory()` (on
+  `record`/`markComplete`) + `syncOnLaunch()` (launch + Trade-Status open + foreground) via a private-DB blob
+  `tradeHistory`/`tradeHistoryUpdatedAt` (LWW, `keepCacheOnEmpty` so an outage never wipes the board).
+  ⚠️ **DEPLOY REQUIRED** — add both fields to the private `PrivateState` record (Dev→Prod); until then it
+  stays per-device (nothing lost). ⚠️ 2-device verify after deploy.
+- **Foreground refresh.** `ContentView.foregroundRefresh()` (scenePhase `.active`, guarded on
+  useCloudKit+username) re-pulls roster · messaging · profiles · ECB · history · intents · prefs — so a push
+  (tap notification → app opens) surfaces new inbox/channel/status items without a manual open/pull. ⚠️
+  device-verify it's not janky on resume; assumes each sub-pull's own empty-fetch/LWW guard prevents wipes.
+- **Atomic roster import (Option B) — replaces the delete-first rewrite AND the self-heal.** Each import
+  inserts a NEW generation (`RosterShift.importedVersion`) without touching the old rows, then the single
+  write to `RosterStore.readerGeneration` is the atomic commit, then old generations are deleted. Every one of
+  the 6 `RosterModelActor` queries filters `importedVersion == generation` (blast radius = one file). A kill
+  before the swap → old roster fully intact (partial new rows invisible, version not advanced → re-pulls next
+  launch); after → new roster live. **Migration assumption (VERIFY ON UPGRADE):** SwiftData lightweight
+  migration assigns existing rows the model default (Unix epoch) = `readerGeneration`'s default, so the
+  pre-upgrade roster stays visible with **no wipe and no forced re-pull**. If lightweight migration fails, the
+  `RosterStore.init` nuke-and-rebuild fallback re-pulls from master (one-time resync, not data loss). ⚠️
+  **device-verify:** install current TestFlight build → upgrade to this → roster shows immediately on first launch.
+  ⚠️ the no-cross-generation-duplicate assertion is by-construction + compile only (the `@ModelActor` init can't
+  be built in the RunCodeSnippet harness) — add a real in-memory test in the app test target to discharge.
+- **Master-sync robustness.** `fetchIfNewer` compares CloudKit's server-assigned `modificationDate` (not the
+  publisher's wall clock — clock-skew can't hide a newer master) via a metadata-only `desiredKeys` probe (the
+  CSV asset downloads only when newer). `syncMasterIfNewer` is re-entrancy-guarded (`isSyncingMaster`) and now
+  runs on foreground too. Malformed parse (≤1 worker) / missing-own-row are logged, never silently shipped;
+  version is advanced ONLY after a successful import. ⚠️ device-verify an admin re-upload propagates on foreground.
+
 ## How I'll stop doing this (process change)
 
 **New rule: I never say "already there." I prove it.** Concretely:

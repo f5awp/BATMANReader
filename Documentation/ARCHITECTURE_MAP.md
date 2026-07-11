@@ -36,10 +36,11 @@
 
 | Feature | File | Key symbols | Spec |
 |---|---|---|---|
-| Roster store (SwiftData, LOCAL) | `RosterStore.swift` | `RosterStore.shared`, `container` (self-healing `init`), `RosterModelActor`, `importRoster`, `dispatchersOff/Working(on:)`, `entries(from:to:)`, `schedule(forWorker:)` | — |
-| Master publish + pull | `RosterStore.swift` | `publishMaster(csv:)`, `syncMasterIfNewer()` (derives user schedule → `ShiftStore.save` + reconcile + alerts) | S-PARSE-2, S-SYNC |
+| Roster store (SwiftData, LOCAL) | `RosterStore.swift` | `RosterStore.shared`, `container` (self-healing `init`), `RosterModelActor`, `importRoster(_:version:)`, `dispatchersOff/Working(on:)`, `entries(from:to:)`, `schedule(forWorker:)`; all reads pass `readerGeneration` | — |
+| **Atomic import (SOT)** | `RosterStore.swift`, `RosterShift.swift` | `importRoster` = insert-new-generation → swap `readerGeneration` (single atomic commit) → `deleteOtherGenerations(keeping:)`. Actor: `insertGeneration(_:version:)` (no delete-first), `deleteOtherGenerations(keeping:)`; every query filters `importedVersion == gen`. Kill before the swap → OLD roster fully intact; after → NEW one — no partial roster is ever read. Migration seamless: `readerGeneration` + `RosterShift.importedVersion` both default to the Unix epoch (the value migration assigns pre-upgrade rows) | S-SYNC |
+| Master publish + pull | `RosterStore.swift`, `CloudKitRosterService.swift` | `publishMaster(csv:)`, `syncMasterIfNewer()` (re-entrancy-guarded `isSyncingMaster`; derives user schedule → `ShiftStore.save` + availability + alerts; logs malformed-parse / missing-own-row, never silently discards). `CloudKitRosterService.publish` returns the **server `modificationDate`** (clock-skew-proof); `fetchIfNewer` metadata-only `version` probe (`desiredKeys`) downloads the CSV asset ONLY when newer. Pulled at launch AND foreground (`ContentView.foregroundRefresh`) | S-PARSE-2, S-SYNC |
 | Worker name resolve (B4-8) | `RosterStore.swift` + `TradeIntentsFeed.swift` | `RosterStore.name(for:)` (synchronous cached roster-name map, warmed by every fetch) → `participantName(id)` routes display-name → roster-name → # via `TradeNames.resolved`; fixes calendars/PackageDetail/HandoffChain showing employee # | B4-8 |
-| Roster row model | `RosterShift.swift` | `@Model RosterShift {workerID,workerName,quals,day,date,startHour,desk,isOff}`, `RosterEntry` snapshot; add `leaveCode` here | S-DATA-1 |
+| Roster row model | `RosterShift.swift` | `@Model RosterShift {workerID,workerName,quals,day,date,startHour,desk,isOff,importedVersion}`, `RosterEntry` snapshot. `importedVersion` = the atomic-import generation tag (default Unix epoch); add `leaveCode` here | S-DATA-1 |
 
 ## 3. Intents (per-day marks: trade away / keep / must-be-off / availability)
 
@@ -76,7 +77,8 @@
 |---|---|---|---|
 | Profile value type | `TradeProfile.swift` | `TradeProfile`, `wouldPickUp(...)` (gates `mustBeOffDayIDs` first), `passesBlacklist(...)`, `availabilityMap`; `defaultForUnpublished(...,inferredShiftTypes:,inferredRegions:)` (A8 + B4-5 inferred blacklist); **has** `mustBeOffDayIDs`/`keepDayIDs` | S-DATA-2, S-ENG-9 ✅, B4-5 |
 | **Profileless prefs inference (B4-5)** | `TradeEngineModels.swift` + `TradeProfile.swift` + `TradeRouter.MatchContext` | `InferredPrefs.from(...) -> Result{shiftTypes,regions,worksWeekend}` (≥6 shifts/60d) → `defaultForUnpublished(inferredShiftTypes:inferredRegions:blacklistWeekends:)` HARD-restricts profileless peers to recent region+type+weekend behavior; wired in `MatchContext.profile(for:)`. Published profile overrides. Tradeoff: fewer large covers | B4-5 ✅ |
-| Profile store + service | `TradeProfile.swift` (store), `CloudKitTradeProfileService.swift`, `LocalTradeProfileService` | `TradeProfileStore.shared`, `myProfile()`, `publishMine()`, `refreshOthers()`, `availableDispatchers(on:type:)` | S-SYNC-2 |
+| Profile store + service | `TradeProfile.swift` (store), `CloudKitTradeProfileService.swift`, `LocalTradeProfileService` | `TradeProfileStore.shared`, `myProfile()`, `publishMine()`, `refreshOthers()`, `syncMyStatus()`, **`syncMyPreferences()`**, `availableDispatchers(on:type:)` | S-SYNC-2 |
+| **Preferences cross-device sync** | `TradeProfile.swift`, `SettingsManager.swift` | `syncMyPreferences()` (launch + foreground, LWW by `SettingsManager.prefsUpdatedAt`; adopt-before-publish) restores openness/blacklists/mercenary/qualValues/qualSwapBlacklistDesks + **opennessOverrides · notificationLeadHours · dailyDigestEnabled · dailyDigestHour · reliefThrough · contact** from the user's own profile. Failsafes: adopt only from `accountClaimed==true`, empty fetch = no-op, strictly-newer clock. Reschedules notifications after adopting. All ride the TradeProfile JSON payload (no deploy). Edit sites stamp `markPrefsChanged()` + `publishMine()` | S-SYNC-2 |
 | CloudKit config | `TradeProfile.swift` | `CloudKitConfig.containerID = "iCloud.com.ervinlee.batmanreader"` | — |
 
 ## 6. Messaging (inbox, channels, ECB, qual-swap)
@@ -97,7 +99,7 @@
 
 | Screen | File | Key symbols | Spec |
 |---|---|---|---|
-| Root tabs + dock + onboarding + launch task | `ContentView.swift` | `ContentView`, `OnboardingView`, `MessagingDock` overlay, `AppAppearance`, **`TradeStatsBar`** (B6-STATS: slim You+PAFCA successful-trade strip via `.safeAreaInset(.bottom)` on the TabView; tap = period menu; source `MetricsStore.globalEvents`+`Metrics.count`) | — |
+| Root tabs + dock + onboarding + launch task | `ContentView.swift` | `ContentView`, `OnboardingView`, `MessagingDock` overlay, `AppAppearance`, **`TradeStatsBar`** (B6-STATS: slim You+PAFCA successful-trade strip via `.safeAreaInset(.bottom)` on the TabView; tap = period menu; source `MetricsStore.globalEvents`+`Metrics.count`); **`foregroundRefresh()`** (scenePhase `.active` → re-pull roster/messaging/profiles/ECB/history/intents/prefs so a push surfaces new items without manual refresh) | — |
 | App entry | `BATMANReaderApp.swift` | `@main`, perms, `.modelContainer`; wraps root in `MagnifierHost` | — |
 | **Screen magnifier (B6-MAG)** | `ContentView.swift` | `MagnifierHost` (scaleEffect+offset; draggable semi-transparent button), `ZoomGestureCatcher` (window-level 2-finger pinch+pan, `cancelsTouchesInView=false`, `Coordinator.current` single-owner; 1-finger passes through), `.magnifiable()` modifier applied to each sheet/cover root (B6-MAG-2 — sheets magnify too). Toggle `SettingsManager.magnifierEnabled` | B6-MAG |
 | Home (calendar/intents/import) | `HomeView.swift`, `HomeCalendar.swift` | `HomeView`, intent calendar, `MarkIntentsToolbar`, `handleImport`, `reconcileSnapshot`; **`DayDetailSheet`** (B6-HOME: normal-view day tap → shift summary + Vacation-Traded-In toggle); `LayerVisibility`/`VisibilityToolbar` layers = notes · intent colors · availability · **shiftType (AM/PM/MID, B6-LAYER)** · deskAssignments; metrics moved to `TradeStatsBar` (B6-STATS) | U-HOME |
@@ -120,7 +122,7 @@
 | Availability calendar | `AvailabilityManager.swift` | `buildFromSchedule()`, `eligibleTypes(forOffDay:workedShifts:)` (8h rest), shared-calendar I/O | — |
 | Widgets + app-group data | `WidgetData.swift`, `BATMANWidgets/*` | `WidgetSnapshot`, `update()`; group `group.com.ervinlee.batmanreader` | — |
 | App Intents / Siri | `ScheduleIntents.swift`, `AvailabilityIntents.swift`, `AIScheduleSummaryIntent.swift`, `ShiftEntity.swift` | the intent structs | — |
-| Trade history / metrics | `TradeHistoryStore.swift` | `entries`, `record`, `markComplete`; **add** `successRate`, `searchCount(period:)` | S-DATA-4, U-HOME-1 |
+| Trade history / metrics | `TradeHistoryStore.swift` | `entries`, `record`, `markComplete`, `searchLog`; **cross-device:** `publishHistory()` + `syncOnLaunch()` (private-DB blob `tradeHistory`/`tradeHistoryUpdatedAt`, LWW, empty-fetch keeps local) — pulled at launch + Trade-Status open + foreground. **add** `successRate`, `searchCount(period:)` | S-DATA-4, U-HOME-1 |
 
 ## 9. CloudKit record types (public DB, container `iCloud.com.ervinlee.batmanreader`)
 
@@ -130,7 +132,7 @@
 | `TradeProfile` | `profile_<id>` | `workerID`,`updatedAt`,`payload` | `CloudKitTradeProfileService` |
 | `BroadcastPost`/`Reply`/`TradeRequest`/`TradeResponse`/`ModerationHide` | UUID / derived | flat keys + `payload` | `CloudKitMessagingService` |
 | `AccountClaim` | `claim_<id>` | `employeeID`,`appleUserID`,`displayName` | `AccountService` |
-| `PrivateState` (**PRIVATE DB**) | `private_state` | `privateNotes`,`updatedAt` | `CloudKitPrivateStateService` (A3) — needs Prod schema deploy |
+| `PrivateState` (**PRIVATE DB**) | `private_state` | `privateNotes`,`updatedAt`,`intents`,`intentsUpdatedAt`,`ecbLedger`,`ecbLedgerUpdatedAt`,`tradeHistory`,`tradeHistoryUpdatedAt` | `CloudKitPrivateStateService` (A3/B4-2/B6-ECB/B6-sync) — `tradeHistory*` deploy PENDING (see CLOUDKIT_DEPLOY.md) |
 
 ## 10. Build/identity facts
 Bundle `DX.BATMANReader` · app v1.9 build 3 (widget 1.1) · iOS 26 (app) / 27 (widget) · device family iPhone+iPad (never "My Mac") · App Group `group.com.ervinlee.batmanreader`.
@@ -142,6 +144,7 @@ Bundle `DX.BATMANReader` · app v1.9 build 3 (widget 1.1) · iOS 26 (app) / 27 (
 - ✅ **S-PARSE-1** vacation parse — `ScheduleParser.appendShifts` `L|V`→off+`leaveCode`; tested.
 - ✅ **S-PARSE-2** vacation auto-intent — `DayIntentStore.reconcile(diff:)` sets soft Must-Be-Off + "vacation" note on flip; tested. *Pending:* vacation display (U-VAC), `RosterShift.leaveCode` field (others' vacation display).
 - ✅ **Tooling** — `scripts/check_arch_map.sh` guards this map (run in DoD).
+- ✅ **B6-SYNC (2026-07-10) cross-device + roster hardening** — (1) **Prefs sync:** `TradeProfileStore.syncMyPreferences()` restores openness overrides + notification settings + relief + contact from the profile (LWW `prefsUpdatedAt`, `accountClaimed`-gated, empty-fetch no-op). (2) **Trade history sync:** `TradeHistoryStore.publishHistory()`/`syncOnLaunch()` (private-DB blob, LWW, `keepCacheOnEmpty`). (3) **Foreground pull:** `ContentView.foregroundRefresh()`. (4) **Atomic roster import:** generation tag + `readerGeneration` pointer swap (replaced delete-first + the interrupted-import self-heal). (5) **Master sync:** server-`modificationDate` versioning, metadata-only `fetchIfNewer` probe, `isSyncingMaster` re-entrancy guard, foreground pull. ⚠️ needs `tradeHistory*` Prod deploy; device-verify roster migration on upgrade.
 - ✅ **B2/S-ENG-5** single `tradeTypeLabel` SOT; `peopleCount`=distinct incl. self; 6 sites unified; source-scan guard. Tested.
 - ✅ **S-ENG-9** — negative intents published + Must-Be-Off gate (June-23); Keep-day give-side guard; **feed/search recompute** via `MatchInputsSignature.current` (`.onChange` in `TradeIntentsFeed` + `AvailabilityView`). Tested. ⬜ (optional) single `canTake`/`canGive` evaluator cleanup.
 - ✅ **S-ENG-6** mercenary forces openness `.all` (`SettingsManager.isMercenaryMode` didSet). Tested.
