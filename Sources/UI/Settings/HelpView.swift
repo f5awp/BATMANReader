@@ -200,13 +200,11 @@ struct WelcomeView: View {
 
     private var hero: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Image(systemName: "moon.stars.fill")
-                .font(.system(size: 40, weight: .semibold))
-                .foregroundStyle(.white)
+            Image("AppLogo")
+                .resizable()
+                .scaledToFill()
                 .frame(width: 76, height: 76)
-                .background(
-                    LinearGradient(colors: [AppColor.special, AppColor.primary], startPoint: .topLeading, endPoint: .bottomTrailing),
-                    in: RoundedRectangle(cornerRadius: 18))
+                .clipShape(RoundedRectangle(cornerRadius: 18))
             Text("Welcome to \(AppGuide.appName)").font(.title.bold())
             Text(AppGuide.tagline).font(.headline).foregroundStyle(.secondary)
             if !AppInfo.version.isEmpty {

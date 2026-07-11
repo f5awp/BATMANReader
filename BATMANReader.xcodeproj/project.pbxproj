@@ -153,6 +153,7 @@
 			buildRules = (
 			);
 			dependencies = (
+				911DBA0D3001C476003A03FD /* PBXTargetDependency */,
 				91D1B8DD2FDC65490049CAF7 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
@@ -256,6 +257,10 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		911DBA0D3001C476003A03FD /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			productRef = 911DBA0C3001C476003A03FD /* Lottie */;
+		};
 		91D1B8DD2FDC65490049CAF7 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = 91D1B8C72FDC65470049CAF7 /* BATMANWidgetsExtension */;
@@ -385,6 +390,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = BATMANReader/BATMANReader.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
@@ -398,6 +404,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = BATMANReader/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "DX Trader";
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "BATMANReader adds your work shifts to Apple Calendar and marks your availability on the shared dispatcher calendar.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
@@ -405,6 +412,7 @@
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UILaunchScreen_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UILaunchScreen_Generation[sdk=iphonesimulator*]" = YES;
+				INFOPLIST_KEY_UILaunchStoryboardName = "";
 				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphoneos*]" = UIStatusBarStyleDefault;
 				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphonesimulator*]" = UIStatusBarStyleDefault;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
@@ -437,6 +445,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = BATMANReader/BATMANReader.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
@@ -450,6 +459,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = BATMANReader/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "DX Trader";
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "BATMANReader adds your work shifts to Apple Calendar and marks your availability on the shared dispatcher calendar.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
@@ -457,6 +467,7 @@
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UILaunchScreen_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UILaunchScreen_Generation[sdk=iphonesimulator*]" = YES;
+				INFOPLIST_KEY_UILaunchStoryboardName = "";
 				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphoneos*]" = UIStatusBarStyleDefault;
 				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphonesimulator*]" = UIStatusBarStyleDefault;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
@@ -594,6 +605,11 @@
 
 /* Begin XCSwiftPackageProductDependency section */
 		911DBA003001B70D003A03FD /* Lottie */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 911DB9FF3001B632003A03FD /* XCRemoteSwiftPackageReference "lottie-spm" */;
+			productName = Lottie;
+		};
+		911DBA0C3001C476003A03FD /* Lottie */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 911DB9FF3001B632003A03FD /* XCRemoteSwiftPackageReference "lottie-spm" */;
 			productName = Lottie;
