@@ -423,8 +423,14 @@ final class TradeProfileStore {
     /// overwrite the cloud with its stale prefs and clobber the other device's newer edit.
     func syncMyPreferences() async {
         let s = SettingsManager.shared
-        guard s.useCloudKit, !s.username.isEmpty,
-              let mine = await service.fetchAll().first(where: { $0.workerID == s.username }) else { return }
+        guard s.useCloudKit, !s.username.isEmpty else { return }
+        // FAILSAFE 1 (empty/failed fetch): a transient network blip returns [], so `.first` is nil and we
+        // no-op — a failed pull can never wipe local prefs.
+        guard let mine = await service.fetchAll().first(where: { $0.workerID == s.username }) else { return }
+        // FAILSAFE 2 (legacy/orphan record): only adopt from a real, signed-in account. A stray cloud
+        // record with default/empty prefs must never overwrite the user's real local settings, even if
+        // its clock looks newer.
+        guard mine.accountClaimed == true else { return }
         guard mine.updatedAt > (s.prefsUpdatedAt ?? .distantPast) else { return }   // adopt only when strictly newer
         s.tradeOpenness          = mine.openness
         s.blacklistedWeekdays    = mine.blacklistedWeekdays
@@ -433,6 +439,14 @@ final class TradeProfileStore {
         s.blacklistedRegions     = mine.blacklistedRegions
         s.qualValues             = mine.qualValues ?? [:]
         s.qualSwapBlacklistDesks = mine.qualSwapBlacklistDesks ?? []
+        // Relief-dispatcher window: published in the profile but previously not restored. It hides shifts
+        // past the relief date from calendar + trading, so it must match across the user's devices.
+        s.isReliefDispatcher     = (mine.reliefThrough != nil)
+        s.reliefScheduleThrough  = mine.reliefThrough
+        // Contact info the user typed once — carry it to their other devices.
+        if let e = mine.personalEmail, !e.isEmpty { s.personalEmail = e }
+        if let e = mine.aaEmail,       !e.isEmpty { s.aaEmail = e }
+        if let ph = mine.phone,        !ph.isEmpty { s.phone = ph }
         s.isMercenaryMode        = mine.isMercenaryMode ?? false // last: its didSet enforces the openness invariant
         s.prefsUpdatedAt         = mine.updatedAt                // adopt the remote stamp so we don't re-adopt
     }
