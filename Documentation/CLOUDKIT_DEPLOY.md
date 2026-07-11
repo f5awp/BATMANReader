@@ -17,7 +17,7 @@
 |---|---|---|
 | `TradeRequest` | Public | `fromID` String · `toID` String · `candidateIDs` String (List) · `perfectMatch` Int64 · `hasQualSwap` Int64 · `payload` String |
 | `TradeResponse` | Public | `requestID` String · `responderID` String · `payload` String |
-| `BroadcastPost` | Public | `authorID` String · `createdAt` Date/Time · `payload` String |
+| `BroadcastPost` | Public | `authorID` String · `createdAt` Date/Time · **`mentionedIDs` String (List)** · `payload` String |
 | `BroadcastReply` | Public | `postID` String · `authorID` String · `payload` String |
 | `ModerationHide` | Public | `targetID` String · `payload` String |
 | `TradeProfile` | Public | `workerID` String · `updatedAt` Date/Time · `payload` String |
@@ -37,6 +37,7 @@
 | `TradeRequest` | `hasQualSwap` | `hasQualSwap == 1` (update push) |
 | `TradeResponse` | `recordName` | fetch-all |
 | `BroadcastPost` | `recordName` | fetch-all + post subscription |
+| `BroadcastPost` | `mentionedIDs` | `mentionedIDs CONTAINS me` (@mention push) |
 | `BroadcastReply` | `recordName` | fetch-all |
 | `ModerationHide` | `recordName` | fetch-all |
 | `TradeProfile` | `recordName` | fetch-all |
@@ -57,3 +58,11 @@ fetch was the root of the P0 data-wipe (now also guarded in code by `FetchMerge.
   history** stays per-device (each device keeps its own; nothing is lost, just not shared).
   All new profile PREFERENCE fields (openness overrides, notification lead time, daily-digest on/off + hour)
   ride the existing `TradeProfile.payload` JSON, so they need **no** schema change.
+- **PENDING (@mention push):** add `mentionedIDs` (String, **List**, **Queryable**) to the public `BroadcastPost`
+  record + index, then deploy Dev→Prod. The `mentioned-<id>` push subscription is already in the app
+  (`CloudPush`) but won't fire until this field exists in Production.
+
+### v2.2 ship deploy list (do these before/at TestFlight upload)
+1. `PrivateState` (Private): add `tradeHistory` String + `tradeHistoryUpdatedAt` Date/Time — trade-history sync.
+2. `BroadcastPost` (Public): add `mentionedIDs` String List + Queryable index — @mention push.
+3. Deploy Schema Changes → Development → Production. (Nothing else new needs a schema change.)
