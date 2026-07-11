@@ -12,11 +12,10 @@ import SwiftData
 @ModelActor
 actor RosterModelActor {
 
-    /// Replaces the entire roster with the given workers. Batched saves keep
-    /// memory bounded during the (large) bulk insert.
-    func replaceRoster(with workers: [ParsedWorker]) throws {
-        try modelContext.delete(model: RosterShift.self)
-
+    /// Inserts the given workers as a NEW generation, tagged `version`. Does NOT delete the existing
+    /// roster — the old generation stays fully intact and live until the facade swaps the reader pointer.
+    /// Batched saves keep memory bounded during the (large) insert.
+    func insertGeneration(_ workers: [ParsedWorker], version: Date) throws {
         // The parser already bounds shifts to the rolling 15-month window.
         var inserted = 0
         for worker in workers {
@@ -29,7 +28,8 @@ actor RosterModelActor {
                     date:       shift.date,
                     startHour:  shift.startHour,
                     desk:       shift.desk,
-                    isOff:      shift.isOff
+                    isOff:      shift.isOff,
+                    importedVersion: version
                 ))
                 inserted += 1
                 if inserted % 5_000 == 0 { try modelContext.save() }
@@ -38,40 +38,50 @@ actor RosterModelActor {
         try modelContext.save()
     }
 
-    func totalRows() throws -> Int {
-        try modelContext.fetchCount(FetchDescriptor<RosterShift>())
+    /// Removes every row that isn't the live generation. Runs AFTER the pointer swap, so it only ever
+    /// deletes now-invisible rows — if interrupted, the leftovers stay invisible and are swept next import.
+    func deleteOtherGenerations(keeping version: Date) throws {
+        try modelContext.delete(model: RosterShift.self, where: #Predicate { $0.importedVersion != version })
+        try modelContext.save()
     }
 
-    func workerCount() throws -> Int {
+    func totalRows(generation gen: Date) throws -> Int {
+        try modelContext.fetchCount(FetchDescriptor<RosterShift>(
+            predicate: #Predicate { $0.importedVersion == gen }))
+    }
+
+    func workerCount(generation gen: Date) throws -> Int {
         // Distinct worker IDs. The roster is modest (~582); fetching the id
         // column and de-duplicating is cheap and avoids a GROUP BY.
-        var desc = FetchDescriptor<RosterShift>()
+        var desc = FetchDescriptor<RosterShift>(predicate: #Predicate { $0.importedVersion == gen })
         desc.propertiesToFetch = [\.workerID]
         return Set(try modelContext.fetch(desc).map(\.workerID)).count
     }
 
     /// Everyone OFF on the given ISO day.
-    func dispatchersOff(onDay day: String) throws -> [RosterEntry] {
-        let predicate = #Predicate<RosterShift> { $0.day == day && $0.isOff }
+    func dispatchersOff(onDay day: String, generation gen: Date) throws -> [RosterEntry] {
+        let predicate = #Predicate<RosterShift> { $0.day == day && $0.isOff && $0.importedVersion == gen }
         return try modelContext.fetch(FetchDescriptor(predicate: predicate)).map(Self.snapshot)
     }
 
     /// Everyone WORKING on the given ISO day.
-    func dispatchersWorking(onDay day: String) throws -> [RosterEntry] {
-        let predicate = #Predicate<RosterShift> { $0.day == day && !$0.isOff }
+    func dispatchersWorking(onDay day: String, generation gen: Date) throws -> [RosterEntry] {
+        let predicate = #Predicate<RosterShift> { $0.day == day && !$0.isOff && $0.importedVersion == gen }
         return try modelContext.fetch(FetchDescriptor(predicate: predicate)).map(Self.snapshot)
     }
 
     /// Every worker's entries within [lower, upper] — one query used to build the
     /// per-candidate mini-schedule snapshots.
-    func entries(from lower: Date, to upper: Date) throws -> [RosterEntry] {
-        let predicate = #Predicate<RosterShift> { $0.date >= lower && $0.date <= upper }
+    func entries(from lower: Date, to upper: Date, generation gen: Date) throws -> [RosterEntry] {
+        let predicate = #Predicate<RosterShift> {
+            $0.date >= lower && $0.date <= upper && $0.importedVersion == gen
+        }
         return try modelContext.fetch(FetchDescriptor(predicate: predicate)).map(Self.snapshot)
     }
 
     /// A single worker's full schedule (for cross-checking mutual swaps).
-    func schedule(forWorker workerID: String) throws -> [RosterEntry] {
-        let predicate = #Predicate<RosterShift> { $0.workerID == workerID }
+    func schedule(forWorker workerID: String, generation gen: Date) throws -> [RosterEntry] {
+        let predicate = #Predicate<RosterShift> { $0.workerID == workerID && $0.importedVersion == gen }
         var desc = FetchDescriptor(predicate: predicate)
         desc.sortBy = [SortDescriptor(\.day)]
         return try modelContext.fetch(desc).map(Self.snapshot)
@@ -99,11 +109,14 @@ final class RosterStore {
         set { UserDefaults.standard.set(newValue, forKey: "batman.rosterMasterVersion") }
     }
 
-    /// Set while a full-roster rewrite is mid-flight; cleared only on success. If it's still set at the
-    /// next launch, the last import was interrupted (crash/kill) and the on-disk roster may be partial.
-    private var importInProgress: Bool {
-        get { UserDefaults.standard.bool(forKey: "batman.rosterImportInProgress") }
-        set { UserDefaults.standard.set(newValue, forKey: "batman.rosterImportInProgress") }
+    /// The one generation readers see. The atomic commit of an import is a single write to this pointer:
+    /// before it, queries return the complete OLD generation; after it, the complete NEW one — no reader
+    /// ever sees a half-written roster. Defaults to `.distantPast`, matching the value migration assigns to
+    /// pre-upgrade rows, so the existing roster stays visible across the update with no wipe. The default
+    /// MUST equal `RosterShift.importedVersion`'s default (the Unix epoch).
+    private var readerGeneration: Date {
+        get { (UserDefaults.standard.object(forKey: "batman.rosterReaderGen") as? Date) ?? Date(timeIntervalSince1970: 0) }
+        set { UserDefaults.standard.set(newValue, forKey: "batman.rosterReaderGen") }
     }
 
     /// B4-8: synchronous worker-id → roster-name cache so views (calendars, package detail, handoff
@@ -146,13 +159,6 @@ final class RosterStore {
             }
         }
         actor = RosterModelActor(modelContainer: container)
-
-        // Self-heal an interrupted import: if the flag is still set, the on-disk roster may be truncated.
-        // Forget our version so the next `syncMasterIfNewer` re-pulls and rebuilds the whole roster cleanly.
-        if importInProgress {
-            print("⚠️ RosterStore: previous roster import was interrupted — forcing a clean re-pull.")
-            localMasterVersion = nil
-        }
     }
 
     /// Publish a parsed CSV as the shared master roster — every user picks it up.
@@ -193,7 +199,8 @@ final class RosterStore {
             print("⚠️ RosterStore: master parsed to \(workers.count) worker(s) — treating as malformed, NOT importing.")
             return 0
         }
-        let rows = await importRoster(workers)
+        let rows = await importRoster(workers, version: pkg.version)
+        guard rows > 0 else { return 0 }   // insert failed → don't advance version, keep old generation live
         localMasterVersion = pkg.version
 
         // Derive THIS user's personal schedule from the master (their row), so a
@@ -212,47 +219,54 @@ final class RosterStore {
         return rows
     }
 
-    /// Imports a full roster in the background. Returns the row count loaded.
+    /// Imports a full roster ATOMICALLY. Returns the row count loaded (0 on failure).
+    ///
+    /// 1. Insert the new rows as their own generation — the old generation stays fully live.
+    /// 2. Swap `readerGeneration` — the single atomic commit; readers instantly see the new roster.
+    /// 3. Delete the old generation(s) (best-effort cleanup; safe to be interrupted).
+    ///
+    /// A kill before step 2 leaves the old roster 100% intact (partial new rows are invisible); a kill
+    /// after step 2 leaves the new roster fully live. No reader ever sees a half-written roster.
     @discardableResult
-    func importRoster(_ workers: [ParsedWorker]) async -> Int {
-        importInProgress = true            // mark the rewrite in-flight (heals on next launch if interrupted)
+    func importRoster(_ workers: [ParsedWorker], version: Date = Date()) async -> Int {
         do {
-            try await actor.replaceRoster(with: workers)
-            nameCache.removeAll(); scheduleCache.removeAll()   // roster changed → drop stale caches
-            let rows = (try? await actor.totalRows()) ?? 0
-            importInProgress = false        // clean commit
+            try await actor.insertGeneration(workers, version: version)   // 1 — build alongside the old
+            let rows = (try? await actor.totalRows(generation: version)) ?? 0
+            guard rows > 0 else { return 0 }                              // nothing written → don't swap
+            readerGeneration = version                                    // 2 — ATOMIC commit
+            nameCache.removeAll(); scheduleCache.removeAll()              // caches belonged to the old gen
+            try? await actor.deleteOtherGenerations(keeping: version)     // 3 — cleanup (safe if interrupted)
             return rows
         } catch {
-            print("⚠️ RosterStore: import failed: \(error)")
-            // Leave the flag set → next launch forces a clean re-pull rather than trusting a partial store.
+            print("⚠️ RosterStore: import failed: \(error) — kept the previous roster.")
             return 0
         }
     }
 
     func loadedWorkerCount() async -> Int {
-        (try? await actor.workerCount()) ?? 0
+        (try? await actor.workerCount(generation: readerGeneration)) ?? 0
     }
 
     func dispatchersOff(on date: Date) async -> [RosterEntry] {
-        let r = (try? await actor.dispatchersOff(onDay: Self.iso(date))) ?? []
+        let r = (try? await actor.dispatchersOff(onDay: Self.iso(date), generation: readerGeneration)) ?? []
         cacheNames(r); return r
     }
 
     func dispatchersWorking(on date: Date) async -> [RosterEntry] {
-        let r = (try? await actor.dispatchersWorking(onDay: Self.iso(date))) ?? []
+        let r = (try? await actor.dispatchersWorking(onDay: Self.iso(date), generation: readerGeneration)) ?? []
         cacheNames(r); return r
     }
 
     func schedule(forWorker workerID: String) async -> [RosterEntry] {
         if let cached = scheduleCache[workerID] { return cached }
-        let r = (try? await actor.schedule(forWorker: workerID)) ?? []
+        let r = (try? await actor.schedule(forWorker: workerID, generation: readerGeneration)) ?? []
         cacheNames(r)
         if !r.isEmpty { scheduleCache[workerID] = r }
         return r
     }
 
     func entries(from lower: Date, to upper: Date) async -> [RosterEntry] {
-        let r = (try? await actor.entries(from: lower, to: upper)) ?? []
+        let r = (try? await actor.entries(from: lower, to: upper, generation: readerGeneration)) ?? []
         cacheNames(r); return r
     }
 

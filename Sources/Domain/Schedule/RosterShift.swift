@@ -20,9 +20,18 @@ final class RosterShift {
     var startHour: Int          // 0 when off
     var desk: String            // "29", "OJT", "RC1", "" when off
     var isOff: Bool
+    /// Which import "generation" this row belongs to (the master version it was written under). Readers
+    /// filter to the single live generation (`RosterStore.readerGeneration`), so a mid-import insert of a
+    /// NEW generation is invisible until the pointer swaps — the atomic-swap import (no delete-first).
+    /// Defaults to the Unix epoch, which is exactly the value lightweight migration assigns to rows that
+    /// existed before this field, so the pre-upgrade roster stays visible with no wipe. (The `@Model` macro
+    /// can't take `.distantPast` as a default — it needs a fully-qualified expression.) Must stay in sync
+    /// with `RosterStore.readerGeneration`'s default.
+    var importedVersion: Date = Date(timeIntervalSince1970: 0)
 
     init(workerID: String, workerName: String, quals: [String],
-         day: String, date: Date, startHour: Int, desk: String, isOff: Bool) {
+         day: String, date: Date, startHour: Int, desk: String, isOff: Bool,
+         importedVersion: Date = Date(timeIntervalSince1970: 0)) {
         self.workerID   = workerID
         self.workerName = workerName
         self.quals      = quals
@@ -31,6 +40,7 @@ final class RosterShift {
         self.startHour  = startHour
         self.desk       = desk
         self.isOff      = isOff
+        self.importedVersion = importedVersion
     }
 }
 
