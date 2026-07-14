@@ -602,6 +602,24 @@ final class MessagingStore {
         requests.filter { !archived.contains($0.id) }
     }
 
+    /// PURE, testable: collapse a circular loop's N per-participant requests (same `loopID`) to ONE
+    /// representative card. A plain request (no `loopID`) groups on its own id, so it's untouched — as
+    /// are ECB and qual-swap requests (no `loopID`). Representative = lowest `id` per group (deterministic,
+    /// stable across refreshes). Input order is otherwise preserved (first appearance of each group wins).
+    static func dedupeLoops(_ requests: [TradeRequest]) -> [TradeRequest] {
+        var repByGroup: [String: TradeRequest] = [:]
+        for r in requests {
+            if let cur = repByGroup[r.groupKey] { if r.id < cur.id { repByGroup[r.groupKey] = r } }
+            else { repByGroup[r.groupKey] = r }
+        }
+        var seen = Set<String>(); var out: [TradeRequest] = []
+        for r in requests where !seen.contains(r.groupKey) {
+            seen.insert(r.groupKey)
+            out.append(repByGroup[r.groupKey] ?? r)
+        }
+        return out
+    }
+
     private init() {
         service = SettingsManager.shared.useCloudKit
             ? CloudKitMessagingService()

@@ -571,6 +571,25 @@ enum TradeEngineTests {
             check(TradeInboxTab.index(for: req("b", from: "x", to: "y", origin: .search), myID: me) == 3, "INBOX-ORIGIN: bridge blast (not core party) → Qual Swap(3)")
         }
 
+        // MARK: INBOX-DEDUPE — a circular loop's N legs collapse to one card; singles untouched (TRADE-INBOX Stage 3).
+        do {
+            func legReq(_ id: String, loop: String?) -> TradeRequest {
+                var r = TradeRequest(id: id, fromID: "me", fromName: "F", toID: "t\(id)", toName: "T", note: "",
+                                     takeDayIDs: [], giveDayIDs: ["2026-07-15"], createdAt: Date(timeIntervalSince1970: 1),
+                                     expiresAt: Date(timeIntervalSince1970: 100))
+                r.loopID = loop
+                return r
+            }
+            let loopLegs = [legReq("r2", loop: "L1"), legReq("r1", loop: "L1")]        // same loop, 2 legs
+            let deduped = MessagingStore.dedupeLoops(loopLegs)
+            check(deduped.count == 1, "INBOX-DEDUPE: two legs of one loop collapse to a single card")
+            check(deduped.first?.id == "r1", "INBOX-DEDUPE: representative is the lowest id (deterministic)")
+            let singles = MessagingStore.dedupeLoops([legReq("a", loop: nil), legReq("b", loop: nil)])
+            check(singles.count == 2, "INBOX-DEDUPE: plain (nil-loopID) requests are NOT merged")
+            let mixed = MessagingStore.dedupeLoops([legReq("x", loop: "L2"), legReq("y", loop: "L2"), legReq("z", loop: nil)])
+            check(mixed.count == 2, "INBOX-DEDUPE: one loop + one single → 2 cards")
+        }
+
         // MARK: B6-BLACKOUT — a blacked-out weekday blocks a pickup (arbitrary days, not just weekends).
         do {
             let prof = TradeProfile(workerID: "z", displayName: "Z", openness: "all",

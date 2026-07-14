@@ -248,11 +248,12 @@ struct InboxView: View {
     /// Intents / Search / Misc tabs: the usual sectioned request list, filtered to the active tab.
     @ViewBuilder private var requestList: some View {
         let arch = store.archivedRequestIDs
-        let pending = MessagingStore.active(store.pendingIncoming, archived: arch).filter(inTab)
-        let handledIncoming = MessagingStore.active(store.incoming, archived: arch)
-            .filter { store.status(of: $0) != .pending && inTab($0) }
-        let sent = MessagingStore.active(store.outgoing, archived: arch).filter(inTab)
-        let archived = store.requests.filter { arch.contains($0.id) && inTab($0) }
+        // Dedupe circular-loop legs to ONE representative card per loop (TRADE-INBOX Stage 3).
+        let pending = MessagingStore.dedupeLoops(MessagingStore.active(store.pendingIncoming, archived: arch).filter(inTab))
+        let handledIncoming = MessagingStore.dedupeLoops(MessagingStore.active(store.incoming, archived: arch)
+            .filter { store.status(of: $0) != .pending && inTab($0) })
+        let sent = MessagingStore.dedupeLoops(MessagingStore.active(store.outgoing, archived: arch).filter(inTab))
+        let archived = MessagingStore.dedupeLoops(store.requests.filter { arch.contains($0.id) && inTab($0) })
         if pending.isEmpty && handledIncoming.isEmpty && sent.isEmpty && archived.isEmpty {
             ContentUnavailableView(emptyTitle, systemImage: "tray", description: Text(emptyMessage))
         } else {
