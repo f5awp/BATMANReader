@@ -24,7 +24,7 @@
 | `MetricEvent` | Public | `payload` String |
 | `RosterPackage` | Public | `csv` Asset · `version` Date/Time |
 | `AccountClaim` | Public | `employeeID` String · `appleUserID` String · `displayName` String |
-| `PrivateState` | **Private** | `privateNotes` String · `updatedAt` Date/Time · **`intents` String (B4-2)** · **`intentsUpdatedAt` Date/Time (B4-2)** · `ecbLedger` String · `ecbLedgerUpdatedAt` Date/Time · **`tradeHistory` String (B6-sync)** · **`tradeHistoryUpdatedAt` Date/Time (B6-sync)** |
+| `PrivateState` | **Private** | `privateNotes` String · `updatedAt` Date/Time · **`intents` String (B4-2)** · **`intentsUpdatedAt` Date/Time (B4-2)** · `ecbLedger` String · `ecbLedgerUpdatedAt` Date/Time · **`tradeHistory` String (B6-sync)** · **`tradeHistoryUpdatedAt` Date/Time (B6-sync)** · **`appPrefs` String (v2.3)** · **`appPrefsUpdatedAt` Date/Time (v2.3)** |
 
 ## Indexes (all Queryable)
 
@@ -53,6 +53,9 @@ fetch was the root of the P0 data-wipe (now also guarded in code by `FetchMerge.
 - Deployed to Production on 2026-06-20 (initial 5).
 - **DEPLOYED:** `intents`/`intentsUpdatedAt` (B4-2) and `ecbLedger`/`ecbLedgerUpdatedAt` (personal ECB blob)
   are live in Production on the private `PrivateState` record (confirmed in the Console 2026-07-10).
+- **DEPLOYED (v2.3):** `appPrefs` (String) + `appPrefsUpdatedAt` (Date/Time) on the private `PrivateState`
+  record — cross-device sync of the welcome/update-notes/consent flags (confirmed in the Console 2026-07-14).
+  No index (fixed record name).
 - **PENDING (B6-sync):** add `tradeHistory` (String) + `tradeHistoryUpdatedAt` (Date/Time) to the **private**
   `PrivateState` record, then deploy Dev→Prod. No index needed. Until this ships, the trade **status board /
   history** stays per-device (each device keeps its own; nothing is lost, just not shared).
