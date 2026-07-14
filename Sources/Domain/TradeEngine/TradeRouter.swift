@@ -544,7 +544,9 @@ enum TradeRouter {
                            windowStart: start, maps: maps,      // U-PERF: reuse the loaded window
                            myProfile: myProfile, profilesByID: profilesByID,
                            myKeepDays: myKeepDays, mySeeking: mySeeking,
+                           myWantToWork: myWantToWork,          // U-OBJ
                            myReliefThrough: myReliefThrough,
+                           priors: priors,                      // U-OBJ
                            notesByDay: notesByDay, topologyByDay: topologyByDay)
             }.value
             if Task.isCancelled { return [] }
@@ -881,7 +883,9 @@ enum TradeRouter {
                            windowStart: start, maps: maps,   // U-PERF: reuse ctx's window
                            myProfile: myProfile, profilesByID: profilesByID,
                            myKeepDays: myKeepDays, mySeeking: mySeeking,
+                           myWantToWork: myWantToWork,          // U-OBJ
                            myReliefThrough: myReliefThrough,
+                           priors: priors,                      // U-OBJ
                            notesByDay: notesSnapshot, topologyByDay: topologySnapshot)
             }.value
             if Task.isCancelled { return [] }
@@ -1151,9 +1155,11 @@ enum TradeRouter {
     /// A1: a give-day's seed promise = urgency (dominant) + the TradeScore acceptance estimate of a
     /// representative leg (so soonness + qual-bridge friction refine within an urgency tier). The
     /// receiver is unknown at seed time, so only the giver-side/day-level features are used.
-    nonisolated static func seedScore(urgency: Int, daysUntil: Int, qualGatedDesk: Bool) -> Double {
+    nonisolated static func seedScore(urgency: Int, daysUntil: Int, qualGatedDesk: Bool,
+                                      wantsGive: Bool = true) -> Double {
         let timeValue = exp(-0.05 * Double(max(0, daysUntil)))   // sooner → higher, in (0,1]
-        let f = LegFeatures(wantToTake: false, wantToTrade: true, bookend: false,
+        // U-OBJ: `wantsGive` defaults to true (= the old hard-coded behavior; A1 seed tests unchanged).
+        let f = LegFeatures(wantToTake: false, wantToTrade: wantsGive, bookend: false,
                             timeValue: timeValue, needsQualBridge: qualGatedDesk)
         return Double(urgency) + TradeScore.legProb(f)   // urgency dominates; legProb refines ties
     }
@@ -1182,7 +1188,9 @@ enum TradeRouter {
                            profilesByID: [String: TradeProfile],
                            myKeepDays: Set<String>,
                            mySeeking: Set<String>,
+                           myWantToWork: Set<String>,          // U-OBJ: receiver-side intent for legs to me
                            myReliefThrough: Date?,
+                           priors: [String: Double],           // U-OBJ: same priors final scoring uses
                            notesByDay: [String: DayNote],
                            topologyByDay: [String: DayTopology]) -> [NWayRoute] {
         let giveDays = seedShifts.filter { !$0.isOff }
@@ -1238,9 +1246,12 @@ enum TradeRouter {
         /// Promise of `current` giving `entry` next — soonness + qual friction (+ urgency for self's
         /// own days). Used to order the DFS expansion so the cap keeps the best COMPLETE paths.
         func givePromise(_ entry: RosterEntry, by giverID: String) -> Double {
-            seedScore(urgency: giverID == selfID ? seedUrgency(entry.day) : 0,
-                      daysUntil: daysUntil(entry.day),
-                      qualGatedDesk: DeskRules.hasQualGatedSelection(desks: [entry.desk]))
+            let wants: Bool = giverID == selfID ? mySeeking.contains(entry.day)
+                : (profilesByID[giverID]?.seekingDayIDs.contains(entry.day) ?? false)
+            return seedScore(urgency: giverID == selfID ? seedUrgency(entry.day) : 0,
+                             daysUntil: daysUntil(entry.day),
+                             qualGatedDesk: DeskRules.hasQualGatedSelection(desks: [entry.desk]),
+                             wantsGive: wants)
         }
         // U-PERF (B4-10): the giver's working days, best-first. `givePromise` is computed ONCE per entry
         // here instead of ~O(n log n) times inside a sort comparator at every DFS node. Result-neutral —
@@ -1252,10 +1263,33 @@ enum TradeRouter {
                 .map(\.entry)
         }
 
+        // U-OBJ: the DFS optimizes and prunes on the SAME leg model final scoring uses, so the running
+        // sums are exact prefixes of the final score and the bound is truly admissible.
+        let maxLegs = maxDepth
+        let pruneLog = log(TradeRouter.floorLuckyProb)   // conservative for BOTH floors
+        func wantsToTake(_ id: String, _ day: String) -> Bool {
+            id == selfID ? myWantToWork.contains(day)
+                         : (profilesByID[id]?.wantToWorkDayIDs?.contains(day) ?? false)
+        }
+        func legLog(giver: String, receiver: String, receiverMap: DayMap, entry: RosterEntry) -> Double {
+            let give = giver == selfID ? mySeeking.contains(entry.day)
+                : (profilesByID[giver]?.seekingDayIDs.contains(entry.day) ?? false)
+            let bookend = TradeMatcher.dayDate(fromISO: entry.day).map {
+                TradeMatcher.isAnchored(day: $0, map: receiverMap, plan: [entry.day])
+            } ?? false
+            let quals = receiverMap.values.first?.quals ?? []
+            let f = LegFeatures(wantToTake: wantsToTake(receiver, entry.day), wantToTrade: give,
+                                bookend: bookend,
+                                timeValue: exp(-0.05 * Double(daysUntil(entry.day))),
+                                needsQualBridge: !DeskRules.qualified(quals: quals, forDesk: entry.desk),
+                                personPrior: priors[receiver] ?? 0)
+            return log(TradeScore.legProb(f))
+        }
+
         // DFS: path of leg tuples. Each step, the current node gives one of THEIR
         // working days to a next node who can cover it. Close when the last node's
         // gift is covered by SELF. A1: at EVERY node, the give-day candidates are tried best-first.
-        func extend(path: [NWayLeg], visited: Set<String>, current: String, currentMap: DayMap) {
+        func extend(path: [NWayLeg], visited: Set<String>, current: String, currentMap: DayMap, pathLogSum: Double) {
             if Task.isCancelled { return }                   // A1: cooperatively cancellable (Lucky re-filter)
             if routes.count > maxRoutes { return }           // hard mid-search cap (60 baseline / 100 Lucky)
             let depth = visited.count
@@ -1280,10 +1314,15 @@ enum TradeRouter {
                             guard let d = TradeMatcher.dayDate(fromISO: leg.dayID), let m = maps[leg.toID] else { return false }
                             return TradeMatcher.isAnchored(day: d, map: m, plan: [leg.dayID])
                         }.count
+                        // U-OBJ: route.score = path log-desirability (Σ ln legProb) + topology bonus. Closing
+                        // legs are NEVER pruned — a completed route is the floor's call (protects the fallback).
+                        let closingLL = legLog(giver: current, receiver: selfID,
+                                               receiverMap: selfMap, entry: entry)
                         let route = NWayRoute(
                             participants: participants, legs: legs,
                             tier: .matchingIntents,
-                            score: Double(participants.count) + topologyWeight(of: legs, selfID: selfID, topologyByDay: topologyByDay),
+                            score: pathLogSum + closingLL
+                                 + topologyWeight(of: legs, selfID: selfID, topologyByDay: topologyByDay),
                             usesBookends: constraints.enforceChaining,
                             bookendCount: bookendCount)
                         if seen.insert(route.id).inserted { routes.append(route) }
@@ -1305,12 +1344,26 @@ enum TradeRouter {
                     : (profilesByID[current]?.seekingDayIDs.contains(entry.day) ?? false)
                 if constraints.enforceChaining && !allowPrefMiddles && !wantsGive { continue }
 
-                for (nextID, nextMap) in maps.sorted(by: { $0.key < $1.key }) where !visited.contains(nextID) && nextID != selfID {
-                    guard canCover(covererID: nextID, covererMap: nextMap, giver: entry) else { continue }
+                // U-OBJ: explore MUTUAL receivers (they marked want-to-work this day) first, then id —
+                // so all-mutual loops are discovered before the maxRoutes cap bites.
+                let nextIDs = maps.keys
+                    .filter { !visited.contains($0) && $0 != selfID }
+                    .sorted { a, b in
+                        let am = wantsToTake(a, entry.day), bm = wantsToTake(b, entry.day)
+                        if am != bm { return am }        // mutual receivers explored first
+                        return a < b
+                    }
+                for nextID in nextIDs {
+                    guard let nextMap = maps[nextID],
+                          canCover(covererID: nextID, covererMap: nextMap, giver: entry) else { continue }
+                    let newSum = pathLogSum + legLog(giver: current, receiver: nextID,
+                                                     receiverMap: nextMap, entry: entry)
+                    // Admissible prune: even a perfect completion can't clear the Lucky floor.
+                    if TradeScore.upperBoundMeanLog(partialLegLogSum: newSum, maxLegs: maxLegs) < pruneLog { continue }
                     let leg = NWayLeg(fromID: current, toID: nextID, dayID: entry.day,
                                       desk: entry.desk, startHour: entry.startHour)
                     extend(path: path + [leg], visited: visited.union([nextID]),
-                           current: nextID, currentMap: nextMap)
+                           current: nextID, currentMap: nextMap, pathLogSum: newSum)
                 }
             }
         }
@@ -1329,14 +1382,26 @@ enum TradeRouter {
             if constraints.enforceTopology, (topologyByDay[s.id] ?? .standard) != .standard { continue }
             guard let myEntry = selfMap[s.id] else { continue }
             if giveBlocked(selfID, myEntry) { continue }   // relief: my own post-horizon shift isn't real
-            for (nextID, nextMap) in maps.sorted(by: { $0.key < $1.key }) where nextID != selfID {
-                guard canCover(covererID: nextID, covererMap: nextMap, giver: myEntry) else { continue }
+            // U-OBJ: mutual-first first-coverer ordering (same rule as expansion).
+            let seedNextIDs = maps.keys
+                .filter { $0 != selfID }
+                .sorted { a, b in
+                    let am = wantsToTake(a, myEntry.day), bm = wantsToTake(b, myEntry.day)
+                    if am != bm { return am }
+                    return a < b
+                }
+            for nextID in seedNextIDs {
+                guard let nextMap = maps[nextID],
+                      canCover(covererID: nextID, covererMap: nextMap, giver: myEntry) else { continue }
                 let leg = NWayLeg(fromID: selfID, toID: nextID, dayID: myEntry.day,
                                   desk: myEntry.desk, startHour: myEntry.startHour)
-                extend(path: [leg], visited: [selfID, nextID], current: nextID, currentMap: nextMap)
+                extend(path: [leg], visited: [selfID, nextID], current: nextID, currentMap: nextMap,
+                       pathLogSum: legLog(giver: selfID, receiver: nextID, receiverMap: nextMap, entry: myEntry))
             }
         }
-        return routes
+        // U-OBJ: return desirability-sorted so the callers' prefix(…) keeps the best loops (was
+        // dictionary-discovery order). Deterministic id tiebreak.
+        return routes.sorted { $0.score != $1.score ? $0.score > $1.score : $0.id < $1.id }
     }
 
     // MARK: Helpers
