@@ -175,6 +175,24 @@ enum TradeRequestStatus: String, Codable, Sendable, CaseIterable {
 /// so no CloudKit schema change is needed.
 enum TradeOrigin: String, Codable, Sendable { case intents, search, ecb, manual }
 
+/// Which inbox tab a request files under. PURE (harness-testable) — the single source of truth the
+/// inbox view calls. Tabs: 0 Intents · 1 Search · 2 ECB · 3 Qual Swap (the renamed "Misc" catch-all,
+/// which also absorbs bridge blasts and legacy `.manual`/nil-origin records).
+nonisolated enum TradeInboxTab {
+    static let intents = 0, search = 1, ecb = 2, qualSwap = 3
+    static func index(for r: TradeRequest, myID: String) -> Int {
+        if r.isECB { return ecb }
+        if r.qualSwap != nil { return qualSwap }                       // qual-swap taker/giver
+        if !(r.fromID == myID || r.toID == myID) { return qualSwap }   // qual-swap bridge blast (I'm a candidate)
+        switch r.inboxOrigin {
+        case .intents: return intents
+        case .search:  return search
+        case .ecb:     return ecb
+        case .manual:  return qualSwap   // legacy/unknown → the Qual Swap catch-all
+        }
+    }
+}
+
 struct TradeRequest: Sendable, Codable, Identifiable, Hashable {
     let id: String            // UUID string (recordName)
     let fromID: String

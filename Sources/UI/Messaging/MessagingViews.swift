@@ -194,19 +194,9 @@ struct InboxView: View {
         store.requests.filter { $0.isECB }.sorted { ($0.ecbAmount ?? 0) > ($1.ecbAmount ?? 0) }
     }
 
-    /// Which tab a request files under (0 Intents · 1 Search · 2 ECB · 3 Misc). A request where I'm
-    /// neither sender nor recipient (a qual-swap bridge blast) always lands in Misc.
-    private func tabIndex(for r: TradeRequest) -> Int {
-        if r.isECB { return 2 }
-        if r.qualSwap != nil { return 3 }   // qual swaps (taker, giver, AND bridge) all file under Misc/Other
-        guard r.fromID == myID || r.toID == myID else { return 3 }   // bridge / not a core party
-        switch r.inboxOrigin {
-        case .intents: return 0
-        case .search:  return 1
-        case .ecb:     return 2
-        case .manual:  return 3
-        }
-    }
+    /// Which tab a request files under (0 Intents · 1 Search · 2 ECB · 3 Qual Swap). Delegates to the
+    /// pure `TradeInboxTab.index` (single source of truth, harness-tested).
+    private func tabIndex(for r: TradeRequest) -> Int { TradeInboxTab.index(for: r, myID: myID) }
     private func inTab(_ r: TradeRequest) -> Bool { tabIndex(for: r) == filter }
 
     var body: some View {
@@ -214,7 +204,7 @@ struct InboxView: View {
             VStack(spacing: 0) {
                 DXSegmented(selection: $filter, options: [
                     .init(0, "Intents"), .init(1, "Search"),
-                    .init(2, "ECB (\(ecbRequests.count))"), .init(3, "Misc"),
+                    .init(2, "ECB (\(ecbRequests.count))"), .init(3, "Qual Swap"),
                 ], color: { v in [0: AppColor.heat, 1: AppColor.primary, 2: AppColor.success, 3: AppColor.special][v] })
                 .padding()
 
@@ -276,13 +266,13 @@ struct InboxView: View {
     }
 
     private var emptyTitle: String {
-        switch filter { case 0: return "No Intent Trades"; case 1: return "No Search Trades"; default: return "Nothing Here" }
+        switch filter { case 0: return "No Intent Trades"; case 1: return "No Search Trades"; default: return "No Qual Swaps" }
     }
     private var emptyMessage: String {
         switch filter {
         case 0:  return "Swaps you send or receive from the Intents feed show here."
         case 1:  return "Swaps from Trade Solutions searches show here."
-        default: return "Qual-swap bridge requests and other messages show here."
+        default: return "Qual-swap trades and bridge requests show here."
         }
     }
 

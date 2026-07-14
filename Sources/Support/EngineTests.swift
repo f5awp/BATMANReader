@@ -552,6 +552,25 @@ enum TradeEngineTests {
             check(mkReq("solo").groupKey == "solo", "INBOX-CODEC: groupKey falls back to id when loopID is nil")
         }
 
+        // MARK: INBOX-ORIGIN — inbox tab routing (TRADE-INBOX Stage 2). Intents→0, Search→1, ECB→2,
+        // qual-swap/bridge/legacy→3 (Qual Swap). Confirms a circular loop (origin .search) files under Search.
+        do {
+            let me = "me"
+            func req(_ id: String, from: String = "me", to: String = "b", origin: TradeOrigin? = nil,
+                     ecbValue: Double? = nil, take: [String] = [], qual: QualSwapLegData? = nil) -> TradeRequest {
+                var r = TradeRequest(id: id, fromID: from, fromName: "F", toID: to, toName: "T", note: "",
+                                     takeDayIDs: take, giveDayIDs: ["2026-07-15"], createdAt: Date(timeIntervalSince1970: 1),
+                                     expiresAt: Date(timeIntervalSince1970: 100), ecbValue: ecbValue, qualSwap: qual)
+                r.origin = origin
+                return r
+            }
+            check(TradeInboxTab.index(for: req("i", origin: .intents), myID: me) == 0, "INBOX-ORIGIN: Intents swap → Intents(0)")
+            check(TradeInboxTab.index(for: req("s", origin: .search), myID: me) == 1, "INBOX-ORIGIN: Solutions/loop → Search(1)")
+            check(TradeInboxTab.index(for: req("e", origin: .ecb, ecbValue: 9), myID: me) == 2, "INBOX-ORIGIN: ECB → ECB(2)")
+            check(TradeInboxTab.index(for: req("m", origin: nil), myID: me) == 3, "INBOX-ORIGIN: legacy nil-origin → Qual Swap(3)")
+            check(TradeInboxTab.index(for: req("b", from: "x", to: "y", origin: .search), myID: me) == 3, "INBOX-ORIGIN: bridge blast (not core party) → Qual Swap(3)")
+        }
+
         // MARK: B6-BLACKOUT — a blacked-out weekday blocks a pickup (arbitrary days, not just weekends).
         do {
             let prof = TradeProfile(workerID: "z", displayName: "Z", openness: "all",
