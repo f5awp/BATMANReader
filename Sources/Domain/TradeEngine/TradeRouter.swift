@@ -44,7 +44,11 @@ struct PackageAssignment: Sendable, Hashable, Identifiable {
     let workerID: String
     let name: String
     let giveDayIDs: [String]   // YOUR shifts this person covers (you → them)
-    let takeDayIDs: [String]   // THEIR shifts you cover (them → you)
+    let takeDayIDs: [String]   // THEIR shifts you cover (them → you) — the DEFAULT (top-ranked) give-back
+    /// All eligible give-back days from this peer, ranked (bookend-first, then soonest) — a superset of
+    /// `takeDayIDs`. Lets the UI offer the alternatives (e.g. Jul 15 under Sep) instead of only the top pick.
+    /// Empty = no alternatives surfaced (multi-day/circular/qual-swap packages).
+    var takeOptions: [String] = []
     var id: String { workerID }
     var dayIDs: [String] { giveDayIDs }   // back-compat for simple displays
 }
@@ -77,6 +81,14 @@ struct TradePackage: Sendable, Hashable, Identifiable {
     // mark want-to-work). When you're open-to-all these aren't excluded, but a package with any of them
     // ranks BELOW every all-clean package (bookends ranked higher). Set at generation.
     var dirtyReceives: Int = 0
+    // U-OBJ: the unified ranking number = acceptanceScore (per-leg quality) × intent-aware
+    // people penalty × coverage^wCover. THE primary sort key (rankLess). Set at scoring.
+    var rankScore: Double = 0
+    // Urgency-weighted fraction of my SELECTED give-days covered (1 for the Intents feed).
+    var coverageFrac: Double = 1
+    // Mutual (intentLevel == 2) legs / total legs — drive the people penalty; kept for tests/UI.
+    var mutualLegCount: Int = 0
+    var legCount: Int = 0
 
     // EXPLICIT init — freezes the construction signature so adding the fields above doesn't
     // churn the memberwise-init symbol (stale-incremental-link fix). New fields are defaulted.
@@ -136,8 +148,9 @@ enum TradeRouter {
     /// re-deriving the candidate universe, and re-scanning all responses for acceptance priors.
     /// Behavior-identical to building these inline (same rows, same formulas); just not repeated.
     /// (U-PERF — collapses the previously 4×-duplicated load/build block.)
-    @MainActor
-    private struct MatchContext {
+    // NOT main-actor isolated + Sendable: everything here is a value snapshot, so the heavy candidate
+    // loops that consume it can run off the main thread.
+    private struct MatchContext: Sendable {
         let start: Date
         let end: Date
         let selfID: String
@@ -156,7 +169,7 @@ enum TradeRouter {
         /// A roster peer with no published profile is included (never invisible). B4-5: if they've worked
         /// enough recently, hard-restrict their default to that behavior — region + shift type + weekends
         /// (weekend blacklist only if they worked none). A real published profile always wins.
-        func profile(for id: String, name: String) -> TradeProfile {
+        nonisolated func profile(for id: String, name: String) -> TradeProfile {
             if let p = profilesByID[id] { return p }
             guard let inf = inferred[id] else {
                 return TradeProfile.defaultForUnpublished(workerID: id, name: name)
@@ -169,39 +182,55 @@ enum TradeRouter {
 
         static func build(selfID: String) async -> MatchContext {
             let (start, end) = horizon
+            // The store reads stay on the main actor (RosterModelActor hop + @Observable reads); the heavy
+            // CPU — building the per-worker day-maps, the candidate universe, and the 60-day inferred-prefs
+            // — is pure over these Sendable snapshots, so it runs OFF the main thread (no UI freeze).
             let allEntries = await RosterStore.shared.entries(from: start, to: end)
-            var maps: [String: DayMap] = [:]
-            var rosterMeta: [String: (name: String, quals: [String])] = [:]
-            for e in allEntries {
-                maps[e.workerID, default: [:]][e.day] = e
-                if rosterMeta[e.workerID] == nil { rosterMeta[e.workerID] = (e.workerName, e.quals) }
-            }
-            let profilesByID = TradeProfileStore.shared.others
-            // People permanently on TRN / irregular shifts are "not a dispatch shift" → not tradeable.
-            // Keep only workers whose in-window schedule holds at least one genuine dispatch shift; a
-            // real dispatcher with a stray training day is retained (canCover still blocks that one leg).
-            let dispatchWorkers = Set(maps.compactMap { (wid, map) in
-                map.values.contains { TradeTiming.isDispatchShift(desk: $0.desk, startHour: $0.startHour, isOff: $0.isOff) } ? wid : nil
-            })
-            let universe = MatchUniverse.candidates(
-                roster: rosterMeta.map { (id: $0.key, name: $0.value.name, quals: $0.value.quals) },
-                profiles: profilesByID, selfID: selfID)
-                .filter { dispatchWorkers.contains($0.workerID) }
-            let priors = MessagingStore.shared.acceptancePriorMap()
-            // B4-5: infer each PROFILELESS peer's recent (60d) behavior to hard-restrict their default.
-            // One extra windowed fetch (past 60d); shapes the default only, never the match window.
             let lookbackStart = start.addingTimeInterval(-60 * 86_400)
-            var recentByWorker: [String: [RosterEntry]] = [:]
-            for e in await RosterStore.shared.entries(from: lookbackStart, to: start) {
-                recentByWorker[e.workerID, default: []].append(e)
-            }
-            var inferred: [String: InferredPrefs.Result] = [:]
-            for (wid, entries) in recentByWorker where profilesByID[wid] == nil {
-                if let inf = InferredPrefs.from(entries: entries, asOf: start) { inferred[wid] = inf }
-            }
-            return MatchContext(start: start, end: end, selfID: selfID, maps: maps,
-                                rosterMeta: rosterMeta, profilesByID: profilesByID,
-                                universe: universe, priors: priors, inferred: inferred)
+            let recentEntries = await RosterStore.shared.entries(from: lookbackStart, to: start)
+            let profilesByID = TradeProfileStore.shared.others
+            let priors = MessagingStore.shared.acceptancePriorMap()
+            let d = await derive(allEntries: allEntries, recentEntries: recentEntries,
+                                 profilesByID: profilesByID, selfID: selfID, asOf: start)
+            return MatchContext(start: start, end: end, selfID: selfID, maps: d.maps,
+                                rosterMeta: d.rosterMeta, profilesByID: profilesByID,
+                                universe: d.universe, priors: priors, inferred: d.inferred)
+        }
+
+        /// The pure, CPU-heavy derivation, run on a background thread (`Task.detached`). Everything in and
+        /// out is `Sendable`; it reads NO shared/main-actor state — so it's identical to the old inline code,
+        /// just off the main run loop.
+        nonisolated private static func derive(
+            allEntries: [RosterEntry], recentEntries: [RosterEntry],
+            profilesByID: [String: TradeProfile], selfID: String, asOf: Date
+        ) async -> (maps: [String: DayMap], rosterMeta: [String: (name: String, quals: [String])],
+                    universe: [MatchCandidate], inferred: [String: InferredPrefs.Result]) {
+            await Task.detached(priority: .userInitiated) {
+                var maps: [String: DayMap] = [:]
+                var rosterMeta: [String: (name: String, quals: [String])] = [:]
+                for e in allEntries {
+                    maps[e.workerID, default: [:]][e.day] = e
+                    if rosterMeta[e.workerID] == nil { rosterMeta[e.workerID] = (e.workerName, e.quals) }
+                }
+                // People permanently on TRN / irregular shifts are "not a dispatch shift" → not tradeable.
+                // Keep only workers whose in-window schedule holds at least one genuine dispatch shift; a
+                // real dispatcher with a stray training day is retained (canCover still blocks that one leg).
+                let dispatchWorkers = Set(maps.compactMap { (wid, map) in
+                    map.values.contains { TradeTiming.isDispatchShift(desk: $0.desk, startHour: $0.startHour, isOff: $0.isOff) } ? wid : nil
+                })
+                let universe = MatchUniverse.candidates(
+                    roster: rosterMeta.map { (id: $0.key, name: $0.value.name, quals: $0.value.quals) },
+                    profiles: profilesByID, selfID: selfID)
+                    .filter { dispatchWorkers.contains($0.workerID) }
+                // B4-5: infer each PROFILELESS peer's recent (60d) behavior to hard-restrict their default.
+                var recentByWorker: [String: [RosterEntry]] = [:]
+                for e in recentEntries { recentByWorker[e.workerID, default: []].append(e) }
+                var inferred: [String: InferredPrefs.Result] = [:]
+                for (wid, entries) in recentByWorker where profilesByID[wid] == nil {
+                    if let inf = InferredPrefs.from(entries: entries, asOf: asOf) { inferred[wid] = inf }
+                }
+                return (maps, rosterMeta, universe, inferred)
+            }.value
         }
     }
 
@@ -253,8 +282,20 @@ enum TradeRouter {
         let (start, end) = (ctx.start, ctx.end)
         let mySeeking = DayIntentStore.shared.seekingDayIDs
         let myWantToWork = DayIntentStore.shared.wantToWorkDayIDs   // non-bookend days I'll still accept receiving
-        let myProfile = TradeProfileStore.shared.myProfile()
-        let myBookendsOnly = myProfile.opennessLevel == .bookends   // Bookends Only → hard-exclude islands
+        // Lucky one-time openness override: search with my openness set to the chosen level (else my saved
+        // one). The effective profile carries the level through wouldPickUp / bookend gating naturally.
+        let myProfile = generation.myOpennessOverride.map { TradeProfileStore.shared.myProfile().withOpenness($0) }
+            ?? TradeProfileStore.shared.myProfile()
+        let myBookendsOnly = myProfile.opennessLevel == .bookends
+
+        // The date range is the RECEIVE window (days you want to trade INTO). When set, the give-back the
+        // package offers you must fall inside it — otherwise the bookend-first ranking would keep handing
+        // you the "best" (bookend) day instead of the specific day you're targeting (e.g. Jul 15).
+        let winLo = generation.dateStart.map(SearchFilter.iso)
+        let winHi = generation.dateEnd.map(SearchFilter.iso)
+        func inReceiveWindow(_ dayID: String) -> Bool {
+            (winLo.map { dayID >= $0 } ?? true) && (winHi.map { dayID <= $0 } ?? true)
+        }
 
         // Whether `prof` would actually pick up a leg — honors their availability
         // pills, openness, bookend (no-split) rule, blacklist, and mercenary mode.
@@ -272,8 +313,10 @@ enum TradeRouter {
         // the universe (unknown-profile peers included); twoWayExplore reuses those (no per-peer re-fetch).
         let maps = ctx.maps
         let universe = ctx.universe
-        func profileFor(_ id: String, _ name: String) -> TradeProfile { ctx.profile(for: id, name: name) }
+        let profileFor: @Sendable (String, String) -> TradeProfile = { id, name in ctx.profile(for: id, name: name) }
         let mineEntries = ctx.mineEntries
+        let qualsDict = ctx.qualsDict          // U-OBJ/P6(a): hoisted so the peer loop + scoring share one copy
+        let priors = ctx.priors                // U-PERF: built once in ctx (one responses scan, not per-leg)
 
         // Per-peer reciprocal capacity via two-way exploration, gated by BOTH parties' real rules.
         struct PeerSwap { let id: String; let name: String; let canTake: [String]; let givesBack: [String] }
@@ -283,12 +326,13 @@ enum TradeRouter {
             if Task.isCancelled { return [] }   // U-PERF: cancellable mid-scan (Cancel button / supersede)
             await Task.yield()                  // hand the main run loop a turn so the UI never freezes
             let profile = profileFor(cand.workerID, cand.name)
-            let plan = await TradeMatcher.twoWayExplore(
+            let plan = TradeMatcher.twoWayExploreCore(
                 withWorker: cand.workerID, name: cand.name,
                 windowStart: start, windowEnd: end,
                 mySeeking: mySeeking, theirSeeking: profile.seekingDayIDs,
-                myProfile: myProfile, theirProfile: profile, myID: selfID,
-                preloadedMine: mineEntries, preloadedPeer: Array((maps[cand.workerID] ?? [:]).values))
+                myProfile: myProfile, theirProfile: profile,
+                ignoreOwnBlacklist: false,
+                myEntries: mineEntries, peerEntries: Array((maps[cand.workerID] ?? [:]).values))
             plansByPeer[cand.workerID] = plan
             let canTake   = plan.iGive.filter { giveDayIDs.contains($0.dayID) && wouldTake(profile, $0) }.map(\.dayID)
             // The days I'll RECEIVE back, bookends-first. If I'm Bookends Only, non-bookend islands are
@@ -296,6 +340,7 @@ enum TradeRouter {
             let givesBack = TradeRouter.cleanReceiveLegs(plan.iTake.filter { wouldTake(myProfile, $0) },
                                                          wantToWork: myWantToWork,
                                                          bookendsOnly: myBookendsOnly).map(\.dayID)
+                                                         .filter(inReceiveWindow)   // honor the receive window
             if !canTake.isEmpty, !givesBack.isEmpty {
                 peerSwaps.append(PeerSwap(id: cand.workerID, name: cand.name, canTake: canTake, givesBack: givesBack))
             }
@@ -309,7 +354,8 @@ enum TradeRouter {
                 return TradeMatcher.isAnchored(day: day, map: map, plan: plan)
             }
         }
-        // Only people whose rule is "bookends" must keep contiguous breaks.
+        // Only people whose rule is "bookends" must keep contiguous breaks. My side uses my EFFECTIVE
+        // openness (the one-time override, if set), so an "open to all" search skips my contiguity naturally.
         func contiguityOK(_ assignments: [OptimalMatcher.Assignment]) -> Bool {
             for a in assignments {
                 if TradeProfileStore.shared.profile(forWorker: a.id)?.opennessLevel == .bookends,
@@ -331,18 +377,64 @@ enum TradeRouter {
 
         // 1) #3: a SEPARATE two-person trade per peer for the days THEY can reciprocally cover —
         //    full OR partial. The user proposes these individually instead of one bundled N-person
-        //    package; 2-person packages outrank circular via rankPackages (peopleCount). Full-cover
+        //    package; the unified rankScore (people penalty) tends to float 2-person over larger loops.
         //    (one peer takes everything) is flagged optimal so it floats to the top of the 2-person band.
         for ps in peerSwaps {
             let canTakeSet = Set(ps.canTake)
             let cover = giveAll.filter { canTakeSet.contains($0) }
             guard !cover.isEmpty, ps.givesBack.count >= cover.count else { continue }
             let a = [PackageAssignment(workerID: ps.id, name: ps.name,
-                                       giveDayIDs: cover, takeDayIDs: Array(ps.givesBack.prefix(cover.count)))]
+                                       giveDayIDs: cover, takeDayIDs: Array(ps.givesBack.prefix(cover.count)),
+                                       // Single give-day → surface every eligible give-back (ranked) so the
+                                       // card can offer alternatives (e.g. Jul 15 under the top pick).
+                                       takeOptions: cover.count == 1 ? ps.givesBack : [])]
             guard contiguityOK(asOpt(a)) else { continue }
             let fullCover = Set(cover).isSuperset(of: giveDayIDs)
             result.append(TradePackage(id: "two-\(ps.id)", methodology: .greedy, assignments: a,
                                        route: nil, urgency: urgency(of: cover), isOptimal: fullCover))
+        }
+
+        // 1b) QUAL-SWAP TIER (D5): a peer who'd take one of my INTERNATIONAL give-days but LACKS the desk
+        //     qual is normally dropped by `twoWayExplore`'s eligibility gate. If a working bridge can slide
+        //     onto that desk, surface a reciprocal package FLAGGED with the qual-swap leg (bridge candidates
+        //     ride along; the user picks the bridge via the Q button in the package view). These carry a
+        //     `qualSwap` leg; the needsQualBridge friction inside the score sorts them below clean trades. (This
+        //     is the feed's inline offering; the green button's one-way finder + `TradeMerge` is a SEPARATE,
+        //     complementary path for pre-arranging a swap.)
+        let tierCal = Calendar.current
+        let intlGives = giveShifts.filter { !$0.isOff && DeskRules.hasQualGatedSelection(desks: [$0.desk]) }
+        for s in intlGives where giveDayIDs.contains(s.id) {
+            let region  = DeskRules.region(forDesk: s.desk).rawValue
+            let type    = ShiftAvailabilityType.infer(fromStartHour: s.startHour).rawValue
+            let weekday = tierCal.component(.weekday, from: s.date)
+            for cand in universe.sorted(by: { $0.workerID < $1.workerID }) {
+                if Task.isCancelled { return [] }
+                await Task.yield()
+                let pMap = maps[cand.workerID] ?? [:]
+                guard let pe = pMap[s.id], pe.isOff else { continue }                              // peer OFF that day
+                let peerQuals = pMap.values.first?.quals ?? []
+                guard !DeskRules.qualified(quals: peerQuals, forDesk: s.desk) else { continue }    // qualified → normal path
+                guard TradeMatcher.isRested(map: pMap, day: s.date, startHour: s.startHour, cal: tierCal) else { continue }
+                let profile = profileFor(cand.workerID, cand.name)
+                let isBookend = TradeMatcher.anchored(day: s.date, map: pMap, plan: [s.id], cal: tierCal)
+                guard profile.wouldPickUp(onDay: s.id, weekday: weekday, desk: s.desk,
+                                          shiftType: type, region: region, isBookend: isBookend) else { continue }
+                // Reciprocal give-back (their days I'd take), clean/bookend-first, inside the receive window.
+                let givesBack = TradeRouter.cleanReceiveLegs((plansByPeer[cand.workerID]?.iTake ?? []).filter { wouldTake(myProfile, $0) },
+                                                             wantToWork: myWantToWork, bookendsOnly: myBookendsOnly)
+                                                             .map(\.dayID).filter(inReceiveWindow)
+                guard !givesBack.isEmpty else { continue }
+                // A bridge must exist, else it's a true dead end — don't surface it. (buildQualSwapLeg = nil.)
+                guard let leg = await TradeMatcher.buildQualSwapLeg(
+                    giveDayID: s.id, giveDesk: s.desk, giveStartHour: s.startHour,
+                    giverID: selfID, takerID: cand.workerID, takerName: cand.name, takerQuals: peerQuals) else { continue }
+                let a = [PackageAssignment(workerID: cand.workerID, name: cand.name,
+                                           giveDayIDs: [s.id], takeDayIDs: Array(givesBack.prefix(1)),
+                                           takeOptions: givesBack)]
+                guard contiguityOK(asOpt(a)) else { continue }
+                result.append(TradePackage(id: "qualtrade-\(s.id)-\(cand.workerID)", methodology: .greedy,
+                                           assignments: a, route: nil, urgency: urgency(of: [s.id]), qualSwap: leg))
+            }
         }
 
         // 2) Also offer a fewest-people MULTI-person cover of your days (optimal, else a greedy balanced
@@ -354,7 +446,11 @@ enum TradeRouter {
                 OptimalMatcher.Cand(id: $0.id, name: $0.name, canTake: Set($0.canTake), givesBack: $0.givesBack)
             }
             var addedMulti = false
-            if let opt = OptimalMatcher.minPeopleReciprocal(giveDayIDs: giveAll, peers: cands, contiguous: contiguityOK) {
+            // ≥2 peers only: a single-peer "cover" is already emitted as a `two-` card in step 1 (both are
+            // peopleCount==2 → both render as compact cards → the SAME peer shows twice). Step 2 exists for
+            // genuine MULTI-person covers, so skip the degenerate 1-peer case here. (B6-DEDUP.)
+            if let opt = OptimalMatcher.minPeopleReciprocal(giveDayIDs: giveAll, peers: cands, contiguous: contiguityOK),
+               opt.count >= 2 {
                 let a = opt.map { PackageAssignment(workerID: $0.id, name: $0.name,
                                                     giveDayIDs: $0.giveDayIDs, takeDayIDs: $0.takeDayIDs) }
                 result.append(TradePackage(
@@ -389,7 +485,9 @@ enum TradeRouter {
                     usedBack.formUnion(takes)
                     pool.removeAll { $0.id == ps.id }
                 }
-                if uncovered.isEmpty, !assigns.isEmpty, contiguityOK(asOpt(assigns)) {
+                // Same ≥2-peer rule as the optimal branch: a lone-peer greedy cover duplicates its step-1
+                // `two-` card, so only surface genuine multi-person covers here. (B6-DEDUP.)
+                if uncovered.isEmpty, assigns.count >= 2, contiguityOK(asOpt(assigns)) {
                     result.append(TradePackage(
                         id: "recip-" + assigns.map(\.workerID).sorted().joined(separator: ","),
                         methodology: .greedy, assignments: assigns, route: nil,
@@ -402,9 +500,23 @@ enum TradeRouter {
         //    the caller widened the scope (Lucky/Generate with N-Way/Both and ≥3 people), never in the
         //    fast background pass. `maxDepth` is bounded to the requested people cap.
         if generation.maxPeople >= 3, generation.engine != .minCost {
-            let loops = await nWayRoutes(seedShifts: giveShifts, maxDepth: generation.maxPeople,
-                                         excluding: selfID, maxRoutes: 500,   // high safety backstop; the floor curates
-                                         preloadedMaps: maps)                 // U-PERF: reuse the loaded window
+            // OFF-MAIN (Step 3): snapshot the main-actor state the DFS reads, then run it detached — same
+            // pattern as intentSolutions so the Generate tap can't freeze the UI either.
+            let notesByDay = DayIntentStore.shared.notes
+            let topologyByDay = DayIntentStore.shared.topologies
+            let myKeepDays = DayIntentStore.shared.keepDayIDs
+            let myReliefThrough = SettingsManager.shared.effectiveReliefThrough
+            let profilesByID = ctx.profilesByID
+            let loops: [NWayRoute] = await Task.detached(priority: .utility) {
+                nWayRoutes(seedShifts: giveShifts, maxDepth: generation.maxPeople,
+                           excluding: selfID, maxRoutes: 500,   // high safety backstop; the floor curates
+                           windowStart: start, maps: maps,      // U-PERF: reuse the loaded window
+                           myProfile: myProfile, profilesByID: profilesByID,
+                           myKeepDays: myKeepDays, mySeeking: mySeeking,
+                           myReliefThrough: myReliefThrough,
+                           notesByDay: notesByDay, topologyByDay: topologyByDay)
+            }.value
+            if Task.isCancelled { return [] }
             for loop in loops.prefix(targetCount * 2) {
                 var gv: [String: [String]] = [:]   // peer → my days they cover
                 var tk: [String: [String]] = [:]   // peer → their days I cover
@@ -500,16 +612,16 @@ enum TradeRouter {
             }
             return p
         }
-        // Rank, then the shared variable score-floor + safety ceiling (same gate as every match type).
-        // Step 2/3/5: real packageLogProb per package → score-order + floor + ceiling.
-        let qualsDict = ctx.qualsDict
-        let priors = ctx.priors   // U-PERF: built once in ctx (one responses scan, not per-leg)
-        let rescored = scored.map { p -> TradePackage in
-            var q = p
-            q.acceptanceScore = packageQuality(for: p, selfID: selfID, maps: maps, quals: qualsDict,
-                                               priors: priors, start: start)
-            q.coverageCount = myGiveCoverage(p, selfID: selfID)
-            return q
+        // U-OBJ: one objective end-to-end. acceptanceScore = per-leg quality (floor/display);
+        // rankScore = quality × intent-aware people penalty × urgency-weighted coverage.
+        let urgencyByDay = Dictionary(uniqueKeysWithValues: giveAll.map { ($0, dayUrgency($0)) })
+        let rescored = scored.map { p in
+            applyObjective(p, selfID: selfID, maps: maps, quals: qualsDict, priors: priors,
+                           start: start, mySeeking: mySeeking, myWantToWork: myWantToWork,
+                           profilesByID: ctx.profilesByID,
+                           coverageFrac: coverageFraction(p, selfID: selfID,
+                                                          selectedDayIDs: giveDayIDs,
+                                                          urgencyByDay: urgencyByDay))
         }
         // Bookends Only (my setting): hard-exclude any package that would hand me a non-bookend island —
         // across 2-way, multi-person, AND circular. Open-to-all keeps them (ranked below clean via rankLess).
@@ -534,7 +646,7 @@ enum TradeRouter {
     /// marked no give. Marked legs are placed first so a balanced k-for-k swap maximises mutual intent.
     /// Returns the chosen give/take day IDs + the mutual-marked leg count (the intent score). nil if
     /// nothing marked on either side, or it can't balance.
-    static func assembleIntentDeal(_ p: IntentPairing) -> (gives: [String], takes: [String], mutualMarked: Int)? {
+    nonisolated static func assembleIntentDeal(_ p: IntentPairing) -> (gives: [String], takes: [String], mutualMarked: Int)? {
         guard !p.myGiveMarked.isEmpty || !p.theirGiveMarked.isEmpty else { return nil }   // marketplace seed
         let giveOrdered = p.myGiveMarked + p.myGivePref       // marked first → kept when we trim to balance
         let takeOrdered = p.theirGiveMarked + p.theirGivePref
@@ -545,25 +657,6 @@ enum TradeRouter {
         let myMarked = Set(p.myGiveMarked), theirMarked = Set(p.theirGiveMarked)
         let mutual = gives.filter(myMarked.contains).count + takes.filter(theirMarked.contains).count
         return (gives, takes, mutual)
-    }
-
-    /// PURE, testable: the Intents ranking — INTENT-FIRST. The most mutual marked intent (`fireCount`)
-    /// wins, THEN fewest people, then bookends/date/urgency. This is the marquee difference from
-    /// `rankPackages` (Trade Solutions), which sorts fewest-people first.
-    static func rankIntentPackages(_ packages: [TradePackage]) -> [TradePackage] {
-        var seen = Set<String>()
-        let deduped = packages.filter { seen.insert($0.id).inserted }
-        return deduped.sorted {
-            if $0.fireCount != $1.fireCount { return $0.fireCount > $1.fireCount }        // most mutual intent first
-            if $0.dirtyReceives != $1.dirtyReceives { return $0.dirtyReceives < $1.dirtyReceives } // then clean (bookend) receives
-            if $0.peopleCount != $1.peopleCount { return $0.peopleCount < $1.peopleCount } // then fewest people
-            if $0.bookendTotal != $1.bookendTotal { return $0.bookendTotal > $1.bookendTotal }
-            if $0.partnerPrior != $1.partnerPrior { return $0.partnerPrior > $1.partnerPrior } // H2: likelier-to-accept partners
-            let e0 = $0.earliestDayID ?? "9999-12-31", e1 = $1.earliestDayID ?? "9999-12-31"
-            if e0 != e1 { return e0 < e1 }
-            if $0.urgency != $1.urgency { return $0.urgency > $1.urgency }
-            return $0.id < $1.id
-        }
     }
 
     /// The Intents feed's engine — a MARKETPLACE of intent-for-intent deals involving you, ranked
@@ -578,7 +671,7 @@ enum TradeRouter {
     /// Mutual mode — there, 🔥 means both-sides-marked, so unclaimed/robot records are meaningless clutter.
     /// In **All** mode every peer is eligible (an unclaimed peer can still be a valid bookend counterparty),
     /// so All keeps showing matches even before anyone has claimed an account. See `peerEligibleForIntents`.
-    static func peerEligibleForIntents(isActiveAccount: Bool, mutualOnly: Bool) -> Bool {
+    nonisolated static func peerEligibleForIntents(isActiveAccount: Bool, mutualOnly: Bool) -> Bool {
         !mutualOnly || isActiveAccount
     }
 
@@ -588,10 +681,23 @@ enum TradeRouter {
         let (start, end) = (ctx.start, ctx.end)
         let mySeeking = DayIntentStore.shared.seekingDayIDs
         let myWantToWork = DayIntentStore.shared.wantToWorkDayIDs   // non-bookend days I'll still accept receiving
-        let myProfile = TradeProfileStore.shared.myProfile()
+        // Lucky one-time openness override for my side (else my saved openness).
+        let myProfile = generation.myOpennessOverride.map { TradeProfileStore.shared.myProfile().withOpenness($0) }
+            ?? TradeProfileStore.shared.myProfile()
         let myBookendsOnly = myProfile.opennessLevel == .bookends
 
-        func wouldTake(_ prof: TradeProfile, _ leg: TwoWayLeg) -> Bool {
+        // STEP-1 snapshots: MY per-day intent sources, captured ONCE on the main actor so `dayUrgency`
+        // is a pure lookup with no main-actor read inside the candidate loop (prereq for going off-main).
+        let notesSnapshot = DayIntentStore.shared.notes
+        let topologySnapshot = DayIntentStore.shared.topologies
+        // STEP-3 snapshots: my Keep days + my relief horizon, captured on the main actor so the N-way
+        // DFS (which runs off-main) reads them as pure lookups instead of `.shared`.
+        let myKeepDays = DayIntentStore.shared.keepDayIDs
+        let myReliefThrough = SettingsManager.shared.effectiveReliefThrough
+
+        // These are @Sendable closures (not local funcs) so they can run inside the off-main Task.detached
+        // as well as on-main — they touch only nonisolated helpers + the Sendable snapshots captured above.
+        let wouldTake: @Sendable (TradeProfile, TwoWayLeg) -> Bool = { prof, leg in
             let cal = Calendar.current
             let weekday = cal.component(.weekday, from: leg.date)
             let region  = DeskRules.region(forDesk: leg.desk).rawValue
@@ -599,15 +705,15 @@ enum TradeRouter {
             return prof.wouldPickUp(onDay: leg.dayID, weekday: weekday, desk: leg.desk,
                                     shiftType: type, region: region, isBookend: leg.bookend)
         }
-        func dayUrgency(_ dayID: String) -> Int {
-            let reason = DayIntentStore.shared.note(forDay: dayID)?.reason?.urgency ?? 0
-            switch DayIntentStore.shared.topology(forDay: dayID) {
+        let dayUrgency: @Sendable (String) -> Int = { dayID in
+            let reason = notesSnapshot[dayID]?.reason?.urgency ?? 0
+            switch topologySnapshot[dayID] ?? .standard {
             case .personalMilestone: return reason + 3
             case .highDemand:        return reason + 2
             case .standard:          return reason
             }
         }
-        func urgency(of dayIDs: [String]) -> Int { dayIDs.map(dayUrgency).max() ?? 0 }
+        let urgency: @Sendable ([String]) -> Int = { dayIDs in dayIDs.map(dayUrgency).max() ?? 0 }
 
         // Candidate universe = the whole roster (unknown-profile peers included). Sourced from the
         // shared `ctx` (roster loaded once, maps + universe + priors built once).
@@ -615,13 +721,17 @@ enum TradeRouter {
         let rosterMeta = ctx.rosterMeta
         let profilesByID = ctx.profilesByID
         let universe = ctx.universe
-        func profileFor(_ id: String, _ name: String) -> TradeProfile { ctx.profile(for: id, name: name) }
+        let profileFor: @Sendable (String, String) -> TradeProfile = { id, name in ctx.profile(for: id, name: name) }
         let mineEntries = ctx.mineEntries
         let priors = ctx.priors   // U-PERF: one responses scan for all prior lookups
+        let qualsDict = rosterMeta.mapValues { $0.quals }   // U-OBJ/P7(a): hoisted for the detached loop + scoring
+        // STEP-1 snapshot: per-peer active-account flags (isActiveAccount reads the main-actor profile
+        // store). Captured for the whole window roster so the loop's eligibility check is a pure lookup.
+        let activeByID: [String: Bool] = maps.reduce(into: [:]) { $0[$1.key] = TradeProfileStore.shared.isActiveAccount($1.key) }
 
         // Set-contiguity: a `.bookends` party must keep CONTIGUOUS breaks across the WHOLE set of days
-        // they pick up — not just each leg in isolation. Mirrors `packages`' contiguityOK.
-        func anchoredSet(_ ids: [String], in map: [String: RosterEntry]) -> Bool {
+        // they pick up — not just each leg in isolation. @Sendable so the off-main loop can call it.
+        let anchoredSet: @Sendable ([String], [String: RosterEntry]) -> Bool = { ids, map in
             let plan = Set(ids)
             return ids.allSatisfy { d in
                 guard let day = TradeMatcher.dayDate(fromISO: d) else { return false }
@@ -664,63 +774,79 @@ enum TradeRouter {
         // marked a day (enforced by `assembleIntentDeal`'s marketplace seed) — but the OTHER side may be
         // an unprofiled peer joining via PREFERENCES (bookend-only by default, A8). Low-intent deals
         // simply score lower and fall off the top-20 cap.
-        for cand in candidates {
-            if Task.isCancelled { return [] }   // U-PERF: cancellable mid-scan (Cancel button / supersede)
-            await Task.yield()                  // hand the main run loop a turn so the UI never freezes
-            // Robot gate is Mutual-only (B6-INTENTS): All shows every peer; Mutual = real accounts only.
-            guard peerEligibleForIntents(isActiveAccount: TradeProfileStore.shared.isActiveAccount(cand.workerID),
-                                         mutualOnly: mutualOnly) else { continue }
-            let profile = profileFor(cand.workerID, cand.name)
-            let plan = await TradeMatcher.twoWayExplore(
-                withWorker: cand.workerID, name: cand.name,
-                windowStart: start, windowEnd: end,
-                mySeeking: mySeeking, theirSeeking: profile.seekingDayIDs,
-                myProfile: myProfile, theirProfile: profile, myID: selfID,
-                preloadedMine: mineEntries, preloadedPeer: Array((maps[cand.workerID] ?? [:]).values))
+        // The heavy 2-way exploration runs OFF the main actor (Task.detached over the Sendable snapshots),
+        // so it never blocks the UI. Everything inside touches only pure `nonisolated` helpers + immutable
+        // snapshots — no `.shared` access (the compiler proves it). (N-way still runs on main — Step 3.)
+        let twoWayPkgs: [TradePackage] = await Task.detached(priority: .utility) {
+            var out: [TradePackage] = []
+            for cand in candidates {
+                if Task.isCancelled { break }   // U-PERF: cancellable mid-scan (Cancel button / supersede)
+                await Task.yield()
+                // Robot gate is Mutual-only (B6-INTENTS): All shows every peer; Mutual = real accounts only.
+                guard peerEligibleForIntents(isActiveAccount: activeByID[cand.workerID] ?? false,
+                                             mutualOnly: mutualOnly) else { continue }
+                let profile = profileFor(cand.workerID, cand.name)
+                let plan = TradeMatcher.twoWayExploreCore(
+                    withWorker: cand.workerID, name: cand.name,
+                    windowStart: start, windowEnd: end,
+                    mySeeking: mySeeking, theirSeeking: profile.seekingDayIDs,
+                    myProfile: myProfile, theirProfile: profile,
+                    ignoreOwnBlacklist: false,
+                    myEntries: mineEntries, peerEntries: Array((maps[cand.workerID] ?? [:]).values))
 
-            // Days each side can actually cover, split MARKED (wanted) vs PREF-only.
-            let myTakeable    = plan.iGive.filter { wouldTake(profile, $0) }     // my days the peer takes
-            let theirTakeable = plan.iTake.filter { wouldTake(myProfile, $0) }   // their days I take
-            let pairing = IntentPairing(
-                myGiveMarked:    myTakeable.filter { $0.wanted }.map(\.dayID),
-                myGivePref:      myTakeable.filter { !$0.wanted }.map(\.dayID),
-                theirGiveMarked: theirTakeable.filter { $0.wanted }.map(\.dayID),
-                theirGivePref:   theirTakeable.filter { !$0.wanted }.map(\.dayID))
-            guard let deal = assembleIntentDeal(pairing) else { continue }
-            // Mutual mode (default): require a real TWO-SIDED intent — ≥1 day I marked AND ≥1 day the
-            // peer marked, both inside this deal. So 🔥 truly means both-sides-marked; one-sided "I want"
-            // deals only appear in the "All" view.
-            if mutualOnly {
-                let iMarked    = deal.gives.contains { mySeeking.contains($0) }
-                let theyMarked = deal.takes.contains { profile.seekingDayIDs.contains($0) }
-                guard iMarked && theyMarked else { continue }
+                // Days each side can actually cover, split MARKED (wanted) vs PREF-only.
+                let myTakeable    = plan.iGive.filter { wouldTake(profile, $0) }      // my days the peer takes
+                let theirTakeable = plan.iTake.filter { wouldTake(myProfile, $0) }    // their days I take
+                let pairing = IntentPairing(
+                    myGiveMarked:    myTakeable.filter { $0.wanted }.map(\.dayID),
+                    myGivePref:      myTakeable.filter { !$0.wanted }.map(\.dayID),
+                    theirGiveMarked: theirTakeable.filter { $0.wanted }.map(\.dayID),
+                    theirGivePref:   theirTakeable.filter { !$0.wanted }.map(\.dayID))
+                guard let deal = assembleIntentDeal(pairing) else { continue }
+                // Mutual mode (default): require a real TWO-SIDED intent — ≥1 day I marked AND ≥1 the peer did.
+                if mutualOnly {
+                    let iMarked    = deal.gives.contains { mySeeking.contains($0) }
+                    let theyMarked = deal.takes.contains { profile.seekingDayIDs.contains($0) }
+                    guard iMarked && theyMarked else { continue }
+                }
+                // Set-contiguity for bookend parties.
+                if profile.opennessLevel == .bookends, !anchoredSet(deal.gives, maps[cand.workerID] ?? [:]) { continue }
+                if myProfile.opennessLevel == .bookends, !anchoredSet(deal.takes, maps[selfID] ?? [:]) { continue }
+                let takeOpts = deal.gives.count == 1 ? theirTakeable.map(\.dayID) : []
+                let a = [PackageAssignment(workerID: cand.workerID, name: cand.name,
+                                           giveDayIDs: deal.gives, takeDayIDs: deal.takes, takeOptions: takeOpts)]
+                var pkg = TradePackage(id: "intent-\(cand.workerID)", methodology: .greedy, assignments: a,
+                                       route: nil, urgency: urgency(deal.gives + deal.takes),
+                                       isOptimal: deal.mutualMarked == deal.gives.count + deal.takes.count)
+                pkg.fireCount = deal.mutualMarked
+                pkg.partnerPrior = priors[cand.workerID] ?? 0
+                let takeBookend = Dictionary(theirTakeable.map { ($0.dayID, $0.bookend) }, uniquingKeysWith: { x, _ in x })
+                pkg.dirtyReceives = deal.takes.filter { !(takeBookend[$0] ?? false) && !myWantToWork.contains($0) }.count
+                out.append(pkg)
             }
-            // Set-contiguity for bookend parties: peer covers my gives (anchored in THEIR schedule),
-            // I cover their takes (anchored in MINE). Skip a deal that would split anyone's break.
-            if profile.opennessLevel == .bookends, !anchoredSet(deal.gives, in: maps[cand.workerID] ?? [:]) { continue }
-            if myProfile.opennessLevel == .bookends, !anchoredSet(deal.takes, in: maps[selfID] ?? [:]) { continue }
-            let a = [PackageAssignment(workerID: cand.workerID, name: cand.name,
-                                       giveDayIDs: deal.gives, takeDayIDs: deal.takes)]
-            var pkg = TradePackage(id: "intent-\(cand.workerID)", methodology: .greedy, assignments: a,
-                                   route: nil, urgency: urgency(of: deal.gives + deal.takes),
-                                   isOptimal: deal.mutualMarked == deal.gives.count + deal.takes.count)
-            pkg.fireCount = deal.mutualMarked
-            pkg.partnerPrior = priors[cand.workerID] ?? 0   // H2 (O(1) from the prebuilt map)
-            // Days I RECEIVE that aren't a clean bookend (and I didn't mark want-to-work) → demote/exclude.
-            let takeBookend = Dictionary(theirTakeable.map { ($0.dayID, $0.bookend) }, uniquingKeysWith: { x, _ in x })
-            pkg.dirtyReceives = deal.takes.filter { !(takeBookend[$0] ?? false) && !myWantToWork.contains($0) }.count
-            result.append(pkg)
-        }
+            return out
+        }.value
+        if Task.isCancelled { return [] }
+        result.append(contentsOf: twoWayPkgs)
 
         // Lucky (gated): circular loops that need only ≥1 marked-intent leg (the marked seed
         // guarantees it). Other participants join via PREFERENCES (`allowPrefMiddles`). fireCount =
         // the REAL marked-leg count, so all-intent loops rank highest without hard-coding it.
         if generation.maxPeople >= 3, generation.engine != .minCost {
             let giveShifts = await selfSeekingShifts(myID: selfID, start: start, end: end)
-            let loops = await nWayRoutes(seedShifts: giveShifts, maxDepth: generation.maxPeople,
-                                         excluding: selfID, allowPrefMiddles: true,
-                                         maxRoutes: 500,        // high safety backstop; the floor curates
-                                         preloadedMaps: maps)   // U-PERF: reuse ctx's window
+            // OFF-MAIN (Step 3): the circular DFS is the launch-freeze culprit (maxRoutes:500, recursive).
+            // Run it detached over the Sendable snapshots; the ≤10-package build below stays on main (cheap).
+            let loops: [NWayRoute] = await Task.detached(priority: .utility) {
+                nWayRoutes(seedShifts: giveShifts, maxDepth: generation.maxPeople,
+                           excluding: selfID, allowPrefMiddles: true,
+                           maxRoutes: 500,        // high safety backstop; the floor curates
+                           windowStart: start, maps: maps,   // U-PERF: reuse ctx's window
+                           myProfile: myProfile, profilesByID: profilesByID,
+                           myKeepDays: myKeepDays, mySeeking: mySeeking,
+                           myReliefThrough: myReliefThrough,
+                           notesByDay: notesSnapshot, topologyByDay: topologySnapshot)
+            }.value
+            if Task.isCancelled { return [] }
             func legMarked(_ leg: NWayLeg) -> Bool {
                 leg.fromID == selfID ? mySeeking.contains(leg.dayID)
                     : (profilesByID[leg.fromID]?.seekingDayIDs.contains(leg.dayID) ?? false)
@@ -734,7 +860,7 @@ enum TradeRouter {
                 let participants = Set(gv.keys).union(tk.keys)
                 // Robot gate is Mutual-only (B6-INTENTS): in All mode unclaimed peers may join a loop.
                 guard participants.allSatisfy({
-                    peerEligibleForIntents(isActiveAccount: TradeProfileStore.shared.isActiveAccount($0),
+                    peerEligibleForIntents(isActiveAccount: activeByID[$0] ?? false,
                                            mutualOnly: mutualOnly)
                 }) else { continue }
                 let a = participants.map { pid in
@@ -742,7 +868,7 @@ enum TradeRouter {
                                       giveDayIDs: gv[pid] ?? [], takeDayIDs: tk[pid] ?? [])
                 }
                 var pkg = TradePackage(id: "intent-circular-\(loop.id)", methodology: .circular,
-                                       assignments: a, route: loop, urgency: urgency(of: a.flatMap(\.giveDayIDs)))
+                                       assignments: a, route: loop, urgency: urgency(a.flatMap(\.giveDayIDs)))
                 pkg.fireCount = loop.legs.filter(legMarked).count   // real mutual-intent legs (not assumed)
                 pkg.bookendTotal = loop.bookendCount
                 pkg.dirtyReceives = TradeRouter.routeDirtyReceives(loop, selfID: selfID,
@@ -756,14 +882,12 @@ enum TradeRouter {
             }
         }
 
-        // Step 2/3/5: compute the REAL packageLogProb per package, then score-order + floor + ceiling.
-        let qualsDict = rosterMeta.mapValues { $0.quals }
-        let scored = result.map { p -> TradePackage in
-            var q = p
-            q.acceptanceScore = packageQuality(for: p, selfID: selfID, maps: maps, quals: qualsDict,
-                                               priors: priors, start: start)
-            q.coverageCount = myGiveCoverage(p, selfID: selfID)
-            return q
+        // U-OBJ: unified objective (no coverage target in the marketplace → coverageFrac 1).
+        // acceptanceScore = per-leg quality (floor/display); rankScore = quality × people penalty.
+        let scored = result.map { p in
+            applyObjective(p, selfID: selfID, maps: maps, quals: qualsDict, priors: priors,
+                           start: start, mySeeking: mySeeking, myWantToWork: myWantToWork,
+                           profilesByID: profilesByID, coverageFrac: 1)
         }
         // Bookends Only: hard-exclude any deal/loop that hands me a non-bookend island (open-to-all keeps
         // them but rankLess demotes them below all-clean). Consistent with Trade Solutions.
@@ -782,16 +906,17 @@ enum TradeRouter {
     /// Grade one leg from live data. The RECEIVER picks up `day` (on the giver's `desk`). Pulls the
     /// real intent (want-to-take / want-to-trade), bookend (anchored for the receiver), soonness, qual
     /// friction, and the receiver's tiny acceptance prior. Pure-ish (reads the shared stores).
-    private static func legFeatures(giverID: String, receiverID: String, day: String, desk: String,
+    nonisolated private static func legFeatures(giverID: String, receiverID: String, day: String, desk: String,
                             receiverQuals: [String], maps: [String: DayMap], priors: [String: Double],
-                            selfID: String, start: Date) -> LegFeatures {
+                            selfID: String, start: Date,
+                            mySeeking: Set<String>, myWantToWork: Set<String>,
+                            profilesByID: [String: TradeProfile]) -> LegFeatures {
+        // Snapshots instead of `.shared` reads → pure, runs off-main.
         func seeking(_ id: String) -> Set<String> {
-            id == selfID ? DayIntentStore.shared.seekingDayIDs
-                         : (TradeProfileStore.shared.profile(forWorker: id)?.seekingDayIDs ?? [])
+            id == selfID ? mySeeking : (profilesByID[id]?.seekingDayIDs ?? [])
         }
         func wantWork(_ id: String) -> Set<String> {
-            id == selfID ? DayIntentStore.shared.wantToWorkDayIDs
-                         : (TradeProfileStore.shared.profile(forWorker: id)?.wantToWorkDayIDs ?? [])
+            id == selfID ? myWantToWork : (profilesByID[id]?.wantToWorkDayIDs ?? [])
         }
         let bookend: Bool = {
             guard let d = TradeMatcher.dayDate(fromISO: day), let m = maps[receiverID] else { return false }
@@ -807,13 +932,18 @@ enum TradeRouter {
             personPrior: priors[receiverID] ?? 0)   // O(1) lookup; absent → neutral (U-PERF)
     }
 
-    /// The package's average per-leg acceptance QUALITY (0…1): build per-leg features for every handoff
-    /// and take the geometric mean, with a per-PERSON penalty (not per-leg) so covering more days with
-    /// one clean person isn't punished. Circular reads `route.legs`; a reciprocal package synthesizes
-    /// legs (you→them for gives, them→you for takes).
-    private static func packageQuality(for pkg: TradePackage, selfID: String,
+    /// U-OBJ: build per-leg features ONCE and derive both numbers —
+    ///   acceptanceScore = meanLegQuality (floor + "match strength" display), and
+    ///   rankScore       = packageScore (quality × intent-aware people penalty × coverage).
+    /// Circular reads `route.legs`; a reciprocal package synthesizes legs (you→them gives,
+    /// them→you takes). `coverageFrac` is 1 for the Intents feed.
+    nonisolated private static func applyObjective(_ pkg: TradePackage, selfID: String,
                                maps: [String: DayMap], quals: [String: [String]],
-                               priors: [String: Double], start: Date) -> Double {
+                               priors: [String: Double], start: Date,
+                               mySeeking: Set<String>, myWantToWork: Set<String>,
+                               profilesByID: [String: TradeProfile],
+                               coverageFrac: Double) -> TradePackage {
+        var q = pkg
         var legs: [(g: String, r: String, day: String, desk: String)] = []
         if let route = pkg.route {
             for l in route.legs { legs.append((l.fromID, l.toID, l.dayID, l.desk)) }
@@ -823,15 +953,59 @@ enum TradeRouter {
                 for d in a.takeDayIDs { if let e = maps[a.workerID]?[d] { legs.append((a.workerID, selfID, d, e.desk)) } }
             }
         }
-        guard !legs.isEmpty else { return 0 }
+        guard !legs.isEmpty else { q.acceptanceScore = 0; q.rankScore = 0; return q }
         let feats = legs.map { legFeatures(giverID: $0.g, receiverID: $0.r, day: $0.day, desk: $0.desk,
                                            receiverQuals: quals[$0.r] ?? [], maps: maps, priors: priors,
-                                           selfID: selfID, start: start) }
-        return TradeScore.packageQuality(feats, people: pkg.peopleCount)
+                                           selfID: selfID, start: start,
+                                           mySeeking: mySeeking, myWantToWork: myWantToWork,
+                                           profilesByID: profilesByID) }
+        q.legCount = feats.count
+        q.mutualLegCount = TradeScore.mutualLegCount(feats)
+        q.coverageFrac = coverageFrac
+        q.acceptanceScore = TradeScore.meanLegQuality(feats)
+        q.rankScore = TradeScore.packageScore(feats, people: pkg.peopleCount, coverageFrac: coverageFrac)
+        q.coverageCount = myGiveCoverage(pkg, selfID: selfID)   // kept: UI badge + SearchFilter
+        return q
+    }
+
+    /// Urgency-weighted coverage of MY selected give-days: each day weighs 1 + its urgency,
+    /// so covering the urgent day outranks covering a casual one at equal count.
+    nonisolated private static func coverageFraction(_ pkg: TradePackage, selfID: String,
+                                                     selectedDayIDs: Set<String>,
+                                                     urgencyByDay: [String: Int]) -> Double {
+        guard !selectedDayIDs.isEmpty else { return 1 }
+        let handedOff: Set<String> = pkg.route.map { Set($0.legs.filter { $0.fromID == selfID }.map(\.dayID)) }
+            ?? Set(pkg.assignments.flatMap(\.giveDayIDs))
+        let covered = handedOff.intersection(selectedDayIDs)
+        func mass(_ s: Set<String>) -> Double { s.reduce(0) { $0 + 1 + Double(urgencyByDay[$1] ?? 0) } }
+        let total = mass(selectedDayIDs)
+        return total > 0 ? mass(covered) / total : 1
+    }
+
+    /// Model-ranked leg order (U-OBJ): sort candidate legs by the SAME per-leg model the
+    /// score uses, best first; dayID tiebreak keeps it deterministic. Replaces the coarse
+    /// bookend-first/soonest orderings so the DEFAULT give-back / deal composition is what
+    /// the objective itself would pick.
+    // `private`: the signature uses the file-private `DayMap` typealias, so it cannot be
+    // internal (Swift access rule); it's only called from inside TradeRouter anyway.
+    nonisolated private static func modelRankedLegs(_ legs: [TwoWayLeg], giverID: String, receiverID: String,
+                                            maps: [String: DayMap], quals: [String: [String]],
+                                            priors: [String: Double], start: Date, selfID: String,
+                                            mySeeking: Set<String>, myWantToWork: Set<String>,
+                                            profilesByID: [String: TradeProfile]) -> [TwoWayLeg] {
+        legs.map { leg -> (leg: TwoWayLeg, p: Double) in
+            let f = legFeatures(giverID: giverID, receiverID: receiverID, day: leg.dayID, desk: leg.desk,
+                                receiverQuals: quals[receiverID] ?? [], maps: maps, priors: priors,
+                                selfID: selfID, start: start,
+                                mySeeking: mySeeking, myWantToWork: myWantToWork, profilesByID: profilesByID)
+            return (leg, TradeScore.legProb(f))
+        }
+        .sorted { $0.p != $1.p ? $0.p > $1.p : $0.leg.dayID < $1.leg.dayID }
+        .map(\.leg)
     }
 
     /// How many of YOUR give-days this package covers (distinct days you hand off) — the PRIMARY ranking key.
-    private static func myGiveCoverage(_ pkg: TradePackage, selfID: String) -> Int {
+    nonisolated private static func myGiveCoverage(_ pkg: TradePackage, selfID: String) -> Int {
         if let route = pkg.route { return Set(route.legs.filter { $0.fromID == selfID }.map(\.dayID)).count }
         return Set(pkg.assignments.flatMap(\.giveDayIDs)).count
     }
@@ -872,15 +1046,13 @@ enum TradeRouter {
         }.count
     }
 
-    static func rankLess(_ a: TradePackage, _ b: TradePackage) -> Bool {
-        // Bookends ranked higher even when open-to-all: any package that hands YOU a non-bookend island
-        // sorts below every all-clean package, regardless of coverage. (User: rank bookends significantly
-        // higher; only Bookends-Only mode excludes the island outright.)
-        if a.dirtyReceives != b.dirtyReceives { return a.dirtyReceives < b.dirtyReceives }
-        if a.coverageCount != b.coverageCount { return a.coverageCount > b.coverageCount }   // most days first
-        if a.peopleCount != b.peopleCount { return a.peopleCount < b.peopleCount }           // fewest people
-        if a.bookendTotal != b.bookendTotal { return a.bookendTotal > b.bookendTotal }       // cleaner (bookends)
-        if a.acceptanceScore != b.acceptanceScore { return a.acceptanceScore > b.acceptanceScore } // likelier
+    /// THE single ranker (both feeds): unified score first, then deterministic tiebreaks.
+    /// Exact Double equality is deliberate — an epsilon comparator breaks strict weak
+    /// ordering (UB in sort); genuinely tied structures produce bit-identical scores and
+    /// fall through to fireCount → date → id.
+    nonisolated static func rankLess(_ a: TradePackage, _ b: TradePackage) -> Bool {
+        if a.rankScore != b.rankScore { return a.rankScore > b.rankScore }
+        if a.fireCount != b.fireCount { return a.fireCount > b.fireCount }   // bigger all-mutual deals first on ties
         let e0 = a.earliestDayID ?? "9999-12-31", e1 = b.earliestDayID ?? "9999-12-31"
         if e0 != e1 { return e0 < e1 }
         return a.id < b.id
@@ -888,106 +1060,39 @@ enum TradeRouter {
 
     /// Drop trades whose AVERAGE leg quality is below the floor (never a full-cover just for having many
     /// legs), keep a top-N fallback if the floor empties it, rank coverage-first, then a safety ceiling.
-    static func finalize(_ pkgs: [TradePackage], lucky: Bool) -> [TradePackage] {
+    /// Floor on the per-leg quality (never punishes a full cover for having many legs),
+    /// qual-swap exempt (D6), top-N fallback if the floor empties the feed, one ranker,
+    /// safety ceiling.
+    nonisolated static func finalize(_ pkgs: [TradePackage], lucky: Bool) -> [TradePackage] {
         let floor = lucky ? floorLuckyProb : floorNormalProb
-        let passed = pkgs.filter { $0.acceptanceScore >= floor }
+        let passed = pkgs.filter { $0.acceptanceScore >= floor || $0.needsQualSwap }
         let base = passed.isEmpty
-            ? Array(pkgs.sorted { $0.acceptanceScore > $1.acceptanceScore }.prefix(emptyFallbackCount))
+            ? Array(pkgs.sorted(by: rankLess).prefix(emptyFallbackCount))
             : passed
         return Array(base.sorted(by: rankLess).prefix(intentResultCap))
     }
 
-    /// U4 priority tier (lower = higher priority): 0 = 🔥+bookends, 1 = 🔥-only, 2 = bookends-only.
-    static func packageTier(_ p: TradePackage) -> Int {
-        if p.fireCount > 0 { return p.bookendTotal > 0 ? 0 : 1 }
-        return 2
-    }
-
-    /// PURE, testable (A5 + U4): dedupe by id; drop bookends-only packages below the **top two
-    /// bands** (keep `max` and `max−1`, hide the clutter); then sort **fewest people first**
-    /// (the N groups), then by tier (🔥+bookends → 🔥 → bookends-only), then 🔥 count, then total
-    /// bookends (more is more optimal even when open-to-all), then urgency, then greedy ahead of circular.
-    static func rankPackages(_ packages: [TradePackage]) -> [TradePackage] {
-        var seen = Set<String>()
-        let deduped = packages.filter { seen.insert($0.id).inserted }
-        // Bookends-only tier (no 🔥) is capped to the top two bands. 🔥 packages AND qual-swap
-        // packages are EXEMPT — a qual-swap solution must never be hidden by a low bookend count.
-        let capped = deduped.filter { $0.fireCount == 0 && $0.qualSwap == nil }
-        let exempt = deduped.filter { $0.fireCount > 0 || $0.qualSwap != nil }
-        let keptCapped: [TradePackage]
-        if let maxBO = capped.map(\.bookendTotal).max() {
-            keptCapped = capped.filter { $0.bookendTotal >= maxBO - 1 }
-        } else {
-            keptCapped = capped
-        }
-        return (exempt + keptCapped).sorted {
-            // Clean (bookend) receives ranked higher even when open-to-all — a package that hands YOU an
-            // island sorts below every all-clean one.
-            if $0.dirtyReceives != $1.dirtyReceives { return $0.dirtyReceives < $1.dirtyReceives }
-            if $0.peopleCount != $1.peopleCount { return $0.peopleCount < $1.peopleCount }   // N groups
-            if $0.needsQualSwap != $1.needsQualSwap { return !$0.needsQualSwap }             // D5: clean before qual, same N
-            let t0 = packageTier($0), t1 = packageTier($1)
-            if t0 != t1 { return t0 < t1 }
-            if $0.fireCount != $1.fireCount { return $0.fireCount > $1.fireCount }
-            if $0.bookendTotal != $1.bookendTotal { return $0.bookendTotal > $1.bookendTotal }
-            // #4b: all else equal, the CLOSER (earlier) trade date sorts first.
-            let e0 = $0.earliestDayID ?? "9999-12-31", e1 = $1.earliestDayID ?? "9999-12-31"
-            if e0 != e1 { return e0 < e1 }
-            if $0.urgency != $1.urgency { return $0.urgency > $1.urgency }
-            if ($0.methodology == .greedy) != ($1.methodology == .greedy) { return $0.methodology == .greedy }
-            return $0.id < $1.id
-        }
-    }
-
-    /// B1: ALL qual-swap arrangements for the selected INTERNATIONAL give-days, computed on demand for
-    /// the "Qual Swap" button. Unlike the auto packages, this has NO `isQualBlocked` gate (show options
-    /// even if a direct trade also exists) and uses `.physicalOnly` for the off-taker willingness check
-    /// (so a profileless taker isn't filtered out by the A8 bookends default). One package per (day, taker).
+    /// B1: the BRIDGE-FIRST qual-swap finder (the green double-arrow button). For each selected international
+    /// give-day it lists the **C bridges** — dispatchers WORKING that day who can slide onto my give-desk
+    /// (any desk, not just domestic), favorability-ranked (their qual-swap preference), unfavorable ones
+    /// flagged not dropped. One package per day carrying the bridges as `candidates`; there's no taker yet.
+    /// Selecting + broadcasting sends a standing bridge request that LINKS into a normal A→B trade later
+    /// (same give-day) via `TradeMerge`. (D6.)
     static func qualSwapOptions(forGiveShifts giveShifts: [Shift], excluding selfID: String) async -> [TradePackage] {
         let intlDays = giveShifts.filter { !$0.isOff && DeskRules.hasQualGatedSelection(desks: [$0.desk]) }
         guard !intlDays.isEmpty else { return [] }
-        let (start, end) = horizon
-        let entries = await RosterStore.shared.entries(from: start, to: end)
-        var maps: [String: DayMap] = [:]
-        for e in entries { maps[e.workerID, default: [:]][e.day] = e }
-        func openProfile(_ id: String, _ name: String) -> TradeProfile {
-            TradeProfileStore.shared.profile(forWorker: id) ?? TradeProfile.defaultForUnpublished(workerID: id, name: name)
-        }
         var result: [TradePackage] = []
         for shift in intlDays {
-            let giveDay = shift.id
-            guard let myEntry = (maps[selfID] ?? [:])[giveDay], let dayDate = TradeMatcher.dayDate(fromISO: giveDay) else { continue }
-            var workingPairs: [(QualSwapShift, TradeProfile)] = []
-            var offEntries: [RosterEntry] = []
-            for (wid, m) in maps {
-                guard wid != selfID, let e = m[giveDay] else { continue }
-                if e.isOff { offEntries.append(e) }
-                else { workingPairs.append((QualSwapShift(workerID: wid, name: e.workerName, desk: e.desk,
-                                                          startHour: e.startHour, quals: e.quals), openProfile(wid, e.workerName))) }
-            }
-            let offTakers = offEntries.map { (id: $0.workerID, name: $0.workerName, quals: $0.quals) }
-            let sols = QualSwap.solutions(giveDesk: myEntry.desk, giveStartHour: myEntry.startHour,
-                                          giverID: selfID, workers: workingPairs, offTakers: offTakers)
-            guard !sols.isEmpty else { continue }
-            let giveQual = DeskRules.requiredQual(forDesk: myEntry.desk) ?? "D"
-            for (takerID, group) in Dictionary(grouping: sols, by: { $0.takerID }).sorted(by: { $0.key < $1.key }) {
-                guard let bMap = maps[takerID], let bEntry = bMap[giveDay] else { continue }
-                let bProfile = openProfile(takerID, bEntry.workerName)
-                let willing = group.filter { sol in
-                    TradeEligibility.canCover(coverDayID: giveDay, coverDay: dayDate, desk: sol.bridgeDesk,
-                                              startHour: myEntry.startHour, coverMap: bMap, coverQuals: bEntry.quals,
-                                              coverProfile: bProfile, options: .physicalOnly).eligible
-                }
-                guard !willing.isEmpty else { continue }
-                let candidates = willing.map {
-                    QualSwapCandidate(workerID: $0.bridgeID, name: $0.bridgeName, desk: $0.bridgeDesk, qual: $0.bridgeQual)
-                }
-                let leg = QualSwapLegData(giveShiftDayID: giveDay, giveDesk: myEntry.desk, giveQual: giveQual,
-                                          takerID: takerID, takerName: bEntry.workerName, candidates: candidates)
-                let assignment = PackageAssignment(workerID: takerID, name: bEntry.workerName, giveDayIDs: [giveDay], takeDayIDs: [])
-                result.append(TradePackage(id: "qualswap-\(giveDay)-\(takerID)", methodology: .greedy,
-                                           assignments: [assignment], route: nil, urgency: 0, qualSwap: leg))
-            }
+            let bridges = await TradeMatcher.qualSwapBridges(
+                giveDayID: shift.id, giveDesk: shift.desk, giveStartHour: shift.startHour,
+                excludeIDs: [selfID])   // bridge-first: no taker → lists every working bridge, favorability-ranked
+            guard !bridges.isEmpty else { continue }
+            let giveQual = DeskRules.requiredQual(forDesk: shift.desk) ?? "D"
+            // takerID empty = unbound; the taker is supplied when this links into an A→B trade.
+            let leg = QualSwapLegData(giveShiftDayID: shift.id, giveDesk: shift.desk, giveQual: giveQual,
+                                      takerID: "", takerName: "", candidates: bridges)
+            result.append(TradePackage(id: "qualbridge-\(shift.id)", methodology: .greedy,
+                                       assignments: [], route: nil, urgency: 0, qualSwap: leg))
         }
         return result
     }
@@ -998,7 +1103,7 @@ enum TradeRouter {
     /// route cap, the best loops surface instead of whatever the dictionary happened to yield first.
     /// `score` folds urgency + the TradeScore acceptance estimate (see `seedScore`); higher seeds
     /// first, ties broken by sooner ISO day (give-day IDs are "yyyy-MM-dd" → chronological). PURE.
-    static func bestFirstSeeds(_ seeds: [(dayID: String, score: Double)]) -> [String] {
+    nonisolated static func bestFirstSeeds(_ seeds: [(dayID: String, score: Double)]) -> [String] {
         seeds.sorted { a, b in
             if a.score != b.score { return a.score > b.score }
             return a.dayID < b.dayID
@@ -1008,7 +1113,7 @@ enum TradeRouter {
     /// A1: a give-day's seed promise = urgency (dominant) + the TradeScore acceptance estimate of a
     /// representative leg (so soonness + qual-bridge friction refine within an urgency tier). The
     /// receiver is unknown at seed time, so only the giver-side/day-level features are used.
-    static func seedScore(urgency: Int, daysUntil: Int, qualGatedDesk: Bool) -> Double {
+    nonisolated static func seedScore(urgency: Int, daysUntil: Int, qualGatedDesk: Bool) -> Double {
         let timeValue = exp(-0.05 * Double(max(0, daysUntil)))   // sooner → higher, in (0,1]
         let f = LegFeatures(wantToTake: false, wantToTrade: true, bookend: false,
                             timeValue: timeValue, needsQualBridge: qualGatedDesk)
@@ -1025,30 +1130,27 @@ enum TradeRouter {
     /// `maxRoutes` is the hard mid-search cap: the BASELINE search stops at 60; "I'm Feeling Lucky"
     /// raises it to 100 (the user opted in + narrowed the criteria, so it may take its time). With
     /// best-first seeding, the routes kept under the cap are the most promising ones. (A1.)
-    static func nWayRoutes(seedShifts: [Shift], maxDepth: Int = 4,
+    // PURE / `nonisolated`: runs off the main actor over preloaded maps + Sendable snapshots (no `.shared`
+    // access). Callers snapshot the main-actor state (`myProfile`, peer profiles, my keep/seeking days,
+    // relief horizon, day notes/topologies) on the main actor and pass them in.
+    nonisolated private static func nWayRoutes(seedShifts: [Shift], maxDepth: Int = 4,
                            excluding selfID: String,
                            constraints: MatchConstraints = .standard,
                            allowPrefMiddles: Bool = false,
                            maxRoutes: Int = 60,
-                           preloadedMaps: [String: [String: RosterEntry]]? = nil) async -> [NWayRoute] {
+                           windowStart: Date,
+                           maps: [String: DayMap],
+                           myProfile: TradeProfile,
+                           profilesByID: [String: TradeProfile],
+                           myKeepDays: Set<String>,
+                           mySeeking: Set<String>,
+                           myReliefThrough: Date?,
+                           notesByDay: [String: DayNote],
+                           topologyByDay: [String: DayTopology]) -> [NWayRoute] {
         let giveDays = seedShifts.filter { !$0.isOff }
         guard !giveDays.isEmpty else { return [] }
-
-        let (start, end) = horizon
-        // U-PERF: the feed callers already loaded the whole roster window — reuse their maps instead
-        // of a second SwiftData fetch of the same data. Falls back to a fetch when called standalone.
-        let maps: [String: DayMap]
-        if let preloadedMaps {
-            maps = preloadedMaps
-        } else {
-            var built: [String: DayMap] = [:]
-            for e in await RosterStore.shared.entries(from: start, to: end) {
-                built[e.workerID, default: [:]][e.day] = e
-            }
-            maps = built
-        }
+        let start = windowStart
         guard let selfMap = maps[selfID] else { return [] }
-        let myProfile = TradeProfileStore.shared.myProfile()
 
         var routes: [NWayRoute] = []
         var seen = Set<String>()
@@ -1059,7 +1161,7 @@ enum TradeRouter {
         func canCover(covererID: String, covererMap: DayMap, giver entry: RosterEntry) -> Bool {
             guard let cover = covererMap[entry.day],
                   let day = TradeMatcher.dayDate(fromISO: entry.day) else { return false }
-            let profile = covererID == selfID ? myProfile : TradeProfileStore.shared.profile(forWorker: covererID)
+            let profile: TradeProfile? = covererID == selfID ? myProfile : profilesByID[covererID]
             guard let profile else { return false }
             return TradeEligibility.canCover(
                 coverDayID: entry.day, coverDay: day, desk: entry.desk, startHour: entry.startHour,
@@ -1069,14 +1171,14 @@ enum TradeRouter {
         // A giver never gives away a day they marked KEEP (mustWork) — hard
         // disqualifier on the give side (SPEC S-ENG-9/10).
         func keepDays(_ workerID: String) -> Set<String> {
-            workerID == selfID ? DayIntentStore.shared.keepDayIDs
-                               : (TradeProfileStore.shared.profile(forWorker: workerID)?.keepDayIDs ?? [])
+            workerID == selfID ? myKeepDays
+                               : (profilesByID[workerID]?.keepDayIDs ?? [])
         }
 
         // A relief dispatcher's shift past their horizon isn't real → never give it.
         func reliefThrough(_ workerID: String) -> Date? {
-            workerID == selfID ? SettingsManager.shared.effectiveReliefThrough
-                               : TradeProfileStore.shared.profile(forWorker: workerID)?.reliefThrough
+            workerID == selfID ? myReliefThrough
+                               : profilesByID[workerID]?.reliefThrough
         }
         func giveBlocked(_ workerID: String, _ entry: RosterEntry) -> Bool {
             guard let day = TradeMatcher.dayDate(fromISO: entry.day) else { return true }
@@ -1084,8 +1186,8 @@ enum TradeRouter {
         }
         // A1 seed/expansion promise (hoisted so the DFS can order EVERY node best-first, not just seeds).
         func seedUrgency(_ dayID: String) -> Int {
-            let reason = DayIntentStore.shared.note(forDay: dayID)?.reason?.urgency ?? 0
-            switch DayIntentStore.shared.topology(forDay: dayID) {
+            let reason = notesByDay[dayID]?.reason?.urgency ?? 0
+            switch topologyByDay[dayID] ?? .standard {
             case .personalMilestone: return reason + 3
             case .highDemand:        return reason + 2
             case .standard:          return reason
@@ -1143,7 +1245,7 @@ enum TradeRouter {
                         let route = NWayRoute(
                             participants: participants, legs: legs,
                             tier: .matchingIntents,
-                            score: Double(participants.count) + topologyWeight(of: legs, selfID: selfID),
+                            score: Double(participants.count) + topologyWeight(of: legs, selfID: selfID, topologyByDay: topologyByDay),
                             usesBookends: constraints.enforceChaining,
                             bookendCount: bookendCount)
                         if seen.insert(route.id).inserted { routes.append(route) }
@@ -1161,8 +1263,8 @@ enum TradeRouter {
                 // (`allowPrefMiddles`) lets non-seed participants join via preferences instead — the
                 // marked seed still guarantees ≥1 intent leg, and ranking rewards more marked legs.
                 let wantsGive: Bool = current == selfID
-                    ? DayIntentStore.shared.seekingDayIDs.contains(entry.day)
-                    : (TradeProfileStore.shared.profile(forWorker: current)?.seekingDayIDs.contains(entry.day) ?? false)
+                    ? mySeeking.contains(entry.day)
+                    : (profilesByID[current]?.seekingDayIDs.contains(entry.day) ?? false)
                 if constraints.enforceChaining && !allowPrefMiddles && !wantsGive { continue }
 
                 for (nextID, nextMap) in maps.sorted(by: { $0.key < $1.key }) where !visited.contains(nextID) && nextID != selfID {
@@ -1186,7 +1288,7 @@ enum TradeRouter {
         let orderedGiveDays = seedOrder.compactMap { id in giveDays.first { $0.id == id } }
         for s in orderedGiveDays {
             if Task.isCancelled { break }   // A1: bail the seed loop too when cancelled
-            if constraints.enforceTopology, DayIntentStore.shared.topology(forDay: s.id) != .standard { continue }
+            if constraints.enforceTopology, (topologyByDay[s.id] ?? .standard) != .standard { continue }
             guard let myEntry = selfMap[s.id] else { continue }
             if giveBlocked(selfID, myEntry) { continue }   // relief: my own post-horizon shift isn't real
             for (nextID, nextMap) in maps.sorted(by: { $0.key < $1.key }) where nextID != selfID {
@@ -1203,9 +1305,10 @@ enum TradeRouter {
 
     /// Score bonus for resolving higher-gravity dates (weight − 1 per self give-leg;
     /// standard days add nothing).
-    private static func topologyWeight(of legs: [NWayLeg], selfID: String) -> Double {
+    nonisolated private static func topologyWeight(of legs: [NWayLeg], selfID: String,
+                                                   topologyByDay: [String: DayTopology]) -> Double {
         legs.filter { $0.fromID == selfID }
-            .reduce(0) { $0 + DayIntentStore.shared.topology(forDay: $1.dayID).weight - 1 }
+            .reduce(0) { $0 + (topologyByDay[$1.dayID] ?? .standard).weight - 1 }
     }
 
     /// The user's working days they're actively seeking to give away, as `Shift`s.

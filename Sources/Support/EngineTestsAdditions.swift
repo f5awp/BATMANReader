@@ -116,6 +116,15 @@ extension TradeEngineTests {
         // cover MAY beat a clean HALF cover under the pure score.
         check(dirtyFull > excellentHalf,
               "U-OBJ: pure score — a strong dirty full-cover may outrank a clean half-cover (accepted)")
+
+        // ❻ H2 port — the learned partner prior lifts the score itself (was the dead
+        //    rankIntentPackages tiebreak; now works INSIDE rankScore via legProb).
+        var hiPrior = LegFeatures(wantToTake: true, wantToTrade: true, bookend: true,
+                                  timeValue: 0.5, needsQualBridge: false)
+        var loPrior = hiPrior; hiPrior.personPrior = 1.5; loPrior.personPrior = -1.5
+        check(TradeScore.packageScore([hiPrior, hiPrior], people: 2)
+              > TradeScore.packageScore([loPrior, loPrior], people: 2),
+              "H2: the partner prior lifts rankScore — likelier-to-accept partners rank first")
         return fails
     }
 
@@ -155,6 +164,94 @@ extension TradeEngineTests {
         check(TradeScore.upperBoundMeanLog(partialLegLogSum: promising, maxLegs: maxLegs)
                 >= log(TradeRouter.floorLuckyProb),
               "PRUNE: a promising partial must survive the prune")
+        return fails
+    }
+
+    // MARK: - Ranker: determinism, floating-point ties, strict weak ordering
+
+    static func runRankerTests() -> [String] {
+        var fails: [String] = []
+        func check(_ cond: Bool, _ msg: String) { if !cond { fails.append("❌ \(msg)") } }
+
+        func pkg(_ id: String, rank: Double, fire: Int = 0, day: String? = "2026-08-01") -> TradePackage {
+            var p = TradePackage(id: id, methodology: .greedy,
+                                 assignments: [PackageAssignment(workerID: "w-\(id)", name: id,
+                                                                 giveDayIDs: day.map { [$0] } ?? [],
+                                                                 takeDayIDs: [])],
+                                 route: nil)
+            p.rankScore = rank; p.fireCount = fire
+            return p
+        }
+
+        let a = pkg("a", rank: 0.9), b = pkg("b", rank: 0.8)
+        check(TradeRouter.rankLess(a, b) && !TradeRouter.rankLess(b, a),
+              "RANK: higher rankScore must sort first (and the comparator must be asymmetric)")
+        let t1 = pkg("t1", rank: 0.7, fire: 2), t2 = pkg("t2", rank: 0.7, fire: 1)
+        check(TradeRouter.rankLess(t1, t2), "RANK: exact score tie must fall to more mutual (fireCount)")
+        let u1 = pkg("u1", rank: 0.7), u2 = pkg("u2", rank: 0.7)
+        check(TradeRouter.rankLess(u1, u2) && !TradeRouter.rankLess(u2, u1),
+              "RANK: full tie must resolve by id, exactly one direction")
+        check(!TradeRouter.rankLess(u1, u1), "RANK: comparator must be irreflexive (strict weak ordering)")
+        // Exact-Double cascade: near-ties stay transitive (an epsilon comparator wouldn't).
+        let n1 = pkg("n1", rank: 0.700000000000001)
+        let n2 = pkg("n2", rank: 0.7000000000000005)
+        let n3 = pkg("n3", rank: 0.7)
+        if TradeRouter.rankLess(n1, n2) && TradeRouter.rankLess(n2, n3) {
+            check(TradeRouter.rankLess(n1, n3), "RANK: comparator must be transitive across near-ties")
+        }
+        // ⑦ port — date tiebreak survives (was "#4b" under rankPackages).
+        let early = pkg("zzz", rank: 0.5, day: "2026-07-01")
+        let late  = pkg("aaa", rank: 0.5, day: "2026-12-01")
+        check([late, early].sorted(by: TradeRouter.rankLess).first?.id == "zzz",
+              "#4b: equal score → the earlier-dated trade sorts first (beats alphabetical id)")
+        return fails
+    }
+
+    // MARK: - finalize: empty feed, fallback, qual-swap exemption, ceiling
+
+    static func runFinalizeTests() -> [String] {
+        var fails: [String] = []
+        func check(_ cond: Bool, _ msg: String) { if !cond { fails.append("❌ \(msg)") } }
+
+        func pkg(_ id: String, q: Double, rank: Double, qualSwap: Bool = false) -> TradePackage {
+            var p = TradePackage(id: id, methodology: .greedy,
+                                 assignments: [PackageAssignment(workerID: "w-\(id)", name: id,
+                                                                 giveDayIDs: ["2026-08-01"], takeDayIDs: [])],
+                                 route: nil,
+                                 qualSwap: qualSwap ? QualSwapLegData(giveShiftDayID: "2026-08-01",
+                                                                      giveDesk: "50", giveQual: "E",
+                                                                      takerID: "t", takerName: "t",
+                                                                      candidates: []) : nil)
+            p.acceptanceScore = q; p.rankScore = rank
+            return p
+        }
+
+        check(TradeRouter.finalize([], lucky: false).isEmpty, "FIN: empty in must be empty out")
+
+        // Nothing clears the floor → fallback shows the top few BY RANK, never zero. (⑥ rewrite.)
+        let weak = (0..<8).map { pkg("w\($0)", q: 0.10 + Double($0) * 0.01, rank: 0.10 + Double($0) * 0.01) }
+        let fb = TradeRouter.finalize(weak, lucky: false)
+        check(!fb.isEmpty && fb.count <= TradeRouter.emptyFallbackCount,
+              "FIN: below-floor set must fall back to at most emptyFallbackCount, not empty")
+        check(fb.first?.id == "w7", "FIN: the fallback must surface the BEST below-floor package first (by rankScore)")
+
+        // Qual-swap packages are floor-EXEMPT (D6) and must still surface, sorted by their score.
+        let mixed = [pkg("clean", q: 0.9, rank: 0.9), pkg("qs", q: 0.05, rank: 0.05, qualSwap: true)]
+        let out = TradeRouter.finalize(mixed, lucky: false)
+        check(out.contains { $0.id == "qs" }, "FIN: a below-floor qual-swap package must stay floor-exempt")
+        check(out.first?.id == "clean", "FIN: the exempt qual-swap still sorts by its (low) score")
+
+        // Safety ceiling holds (absorbs the deleted rankIntentPackages ceiling test).
+        let flood = (0..<80).map { pkg("f\($0)", q: 0.9, rank: 0.9) }
+        check(TradeRouter.finalize(flood, lucky: false).count <= TradeRouter.intentResultCap,
+              "FIN: the safety ceiling (intentResultCap) must cap the feed")
+
+        // ⑤ rewrite — coverage now works through rankScore, same intended outcome.
+        var fullCover = pkg("full", q: 0.80, rank: 0.80)                 // κ = 1²
+        var oneDay    = pkg("one",  q: 0.95, rank: 0.95 * pow(1.0 / 3, 2))  // κ = (1/3)²
+        fullCover.coverageFrac = 1; oneDay.coverageFrac = 1.0 / 3
+        check(TradeRouter.finalize([oneDay, fullCover], lucky: false).first?.id == "full",
+              "U-OBJ: coverage-weighted score — the 3-day full-cover still beats the 1-day")
         return fails
     }
 }

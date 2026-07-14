@@ -450,65 +450,16 @@ enum TradeEngineTests {
         check(IntentBrushes.working.allSatisfy { !$0.label.isEmpty } && IntentBrushes.off.allSatisfy { !$0.label.isEmpty },
               "F1: every brush has a label")
 
-        // MARK: A5 — fewest-people ranking (discharges ASSUMED_PRESENT #4). A single-person
-        // full-cover tops the list; greedy ranks ahead of circular at equal people count.
+        // MARK: #4 — a 2-person package is NEVER circular (circular needs ≥3). (U-OBJ: the A5/U4/Q1
+        // ranking assertions moved into runRankerTests/runFinalizeTests/runNPenaltyTests with the
+        // single score-first ranker; #4b date tiebreak ported to runRankerTests.)
         func pa(_ id: String) -> PackageAssignment { PackageAssignment(workerID: id, name: id, giveDayIDs: ["d1"], takeDayIDs: ["d2"]) }
-        let solo  = TradePackage(id: "solo-A", methodology: .greedy, assignments: [pa("A")], route: nil, urgency: 0, isOptimal: true)
-        let multi = TradePackage(id: "multi",  methodology: .greedy, assignments: [pa("A"), pa("B")], route: nil, urgency: 0)
-        let route = NWayRoute(participants: ["me", "A", "B"], legs: [], tier: .matchingIntents, score: 0, usesBookends: false)
-        let circ  = TradePackage(id: "circular-1", methodology: .circular, assignments: [pa("A"), pa("B")], route: route, urgency: 0)
-        let ranked = TradeRouter.rankPackages([circ, multi, solo])
-        check(ranked.first?.id == "solo-A", "A5: single-person full-cover sorts to the very top")
-        check(ranked.map(\.peopleCount) == [2, 3, 3], "A5: fewest people first (solo=2, others=3)")
-        check(ranked[1].methodology == .greedy && ranked[2].methodology == .circular, "A5: greedy before circular at equal people")
-
-        // MARK: U4 — priority sort (🔥+bookends → 🔥 → bookends-only) + bookends-only top-two-bands cap.
-        func pkg(_ id: String, people: Int, fire: Int, book: Int) -> TradePackage {
-            let a = (1..<people).map { pa("P\($0)") }   // people-1 counterparties + you = `people`
-            return TradePackage(id: id, methodology: .greedy, assignments: a, route: nil,
-                                urgency: 0, isOptimal: false, fireCount: fire, bookendTotal: book)
-        }
-        // All N=2 so the tier ordering is the discriminator.
-        let fireBook = pkg("fb", people: 2, fire: 2, book: 3)   // 🔥 + bookends → tier 0
-        let fireOnly = pkg("fo", people: 2, fire: 1, book: 0)   // 🔥 only → tier 1
-        let bookHi   = pkg("b3", people: 2, fire: 0, book: 3)   // bookends-only, max band
-        let bookMid  = pkg("b2", people: 2, fire: 0, book: 2)   // bookends-only, max-1 band
-        let bookLo   = pkg("b1", people: 2, fire: 0, book: 1)   // bookends-only, below cap → dropped
-        let u4 = TradeRouter.rankPackages([bookLo, bookMid, bookHi, fireOnly, fireBook])
-        check(u4.map(\.id).prefix(2).elementsEqual(["fb", "fo"]),
-              "U4: 🔥+bookends first, then 🔥-only")
-        check(u4.contains { $0.id == "b3" } && u4.contains { $0.id == "b2" },
-              "U4: bookends-only top two bands (3 and 2) are kept")
-        check(!u4.contains { $0.id == "b1" },
-              "U4: bookends-only below max-1 (band 1) is filtered out")
-        // N grouping dominates tiers: a fewer-people bookends-only beats a more-people 🔥.
-        let nGroup = TradeRouter.rankPackages([pkg("fire3", people: 3, fire: 5, book: 5),
-                                               pkg("book2", people: 2, fire: 0, book: 1)])
-        check(nGroup.first?.id == "book2", "U4: fewest-people (N) grouping dominates the tier priority")
-        // MARK: #4 — a 2-person package is NEVER circular (circular needs ≥3); #4b — earliest-date tiebreak.
         let route2 = NWayRoute(participants: ["me", "A"], legs: [], tier: .matchingIntents, score: 0, usesBookends: false)
         let twoCirc = TradePackage(id: "c2", methodology: .circular, assignments: [pa("A")], route: route2)
         check(!twoCirc.isCircular, "#4: a 2-participant package is not circular (a 2-cycle is a 2-way swap)")
         let route3 = NWayRoute(participants: ["me", "A", "B"], legs: [], tier: .matchingIntents, score: 0, usesBookends: false)
         let threeCirc = TradePackage(id: "c3", methodology: .circular, assignments: [pa("A"), pa("B")], route: route3)
         check(threeCirc.isCircular, "#4: a 3-participant circular IS circular")
-        // #4b: equal on N/🔥/bookends, the earlier-dated trade sorts first — even past the alphabetical id tiebreak.
-        let earlyPkg = TradePackage(id: "zzz", methodology: .greedy,
-                                    assignments: [PackageAssignment(workerID: "A", name: "A", giveDayIDs: ["2026-07-01"], takeDayIDs: ["2026-07-02"])],
-                                    route: nil)
-        let latePkg = TradePackage(id: "aaa", methodology: .greedy,
-                                   assignments: [PackageAssignment(workerID: "B", name: "B", giveDayIDs: ["2026-12-01"], takeDayIDs: ["2026-12-02"])],
-                                   route: nil)
-        let dateRanked = TradeRouter.rankPackages([latePkg, earlyPkg])
-        check(dateRanked.first?.id == "zzz", "#4b: earlier-dated trade sorts first (beats alphabetical id)")
-
-        // Q1: a qual-swap package (0 bookends) is EXEMPT from the bookends-only cap — never hidden.
-        var qsPkg = pkg("qs", people: 2, fire: 0, book: 0)
-        qsPkg.qualSwap = QualSwapLegData(giveShiftDayID: "d", giveDesk: "50", giveQual: "E",
-                                         takerID: "B", takerName: "B",
-                                         candidates: [QualSwapCandidate(workerID: "C", name: "C", desk: "10", qual: "D")])
-        let qsRank = TradeRouter.rankPackages([pkg("b3", people: 2, fire: 0, book: 3), qsPkg])
-        check(qsRank.contains { $0.id == "qs" }, "Q1: a qual-swap package survives the bookends-only cap (exempt)")
 
         // MARK: A6 — mutual-intent (🔥) match end-to-end (discharges ASSUMED_PRESENT #5).
         // I work k1 (give), off k2; peer off k1, works k2 (gives k2). Both openness .all.
@@ -1182,39 +1133,9 @@ enum TradeEngineTests {
                   "G2c: must-be-off outranks trade-away when a day is in both")
         }
 
-        // MARK: #3 — a separate two-person trade always outranks a three-person circular loop
-        // (Intents prefers individual pairwise trades; loops sink below them).
-        do {
-            let two = TradePackage(id: "two", methodology: .greedy,
-                                   assignments: [PackageAssignment(workerID: "A", name: "A", giveDayIDs: ["d"], takeDayIDs: ["e"])], route: nil)
-            let loop = TradePackage(id: "loop", methodology: .circular,
-                                    assignments: [PackageAssignment(workerID: "A", name: "A", giveDayIDs: ["d"], takeDayIDs: []),
-                                                  PackageAssignment(workerID: "B", name: "B", giveDayIDs: ["f"], takeDayIDs: [])],
-                                    route: nil, fireCount: 9)
-            check(TradeRouter.rankPackages([loop, two]).first?.id == "two",
-                  "#3: a two-person trade outranks a three-person loop even when the loop has more 🔥")
-        }
-
-        // MARK: D5 — qual-swap packages sort UNDER clean ones for the SAME N (regardless of 🔥/
-        // bookend); usual priorities apply WITHIN each group; people-count still dominates.
-        do {
-            func pkg(_ id: String, peers: [String], fire: Int, qual: Bool) -> TradePackage {
-                let a = peers.map { PackageAssignment(workerID: $0, name: $0, giveDayIDs: ["2027-02-01"], takeDayIDs: ["2027-02-02"]) }
-                let q: QualSwapLegData? = qual ? QualSwapLegData(giveShiftDayID: "2027-02-01", giveDesk: "50",
-                        giveQual: "E", takerID: peers.first ?? "A", takerName: peers.first ?? "A", candidates: []) : nil
-                return TradePackage(id: id, methodology: .greedy, assignments: a, route: nil,
-                                    fireCount: fire, bookendTotal: 0, qualSwap: q)
-            }
-            let r1 = TradeRouter.rankPackages([pkg("qual", peers: ["A"], fire: 5, qual: true),
-                                               pkg("clean", peers: ["B"], fire: 0, qual: false)])
-            check(r1.first?.id == "clean", "D5: clean 2-way sorts above a qual-swap 2-way even with more 🔥")
-            let r2 = TradeRouter.rankPackages([pkg("qlow", peers: ["A"], fire: 1, qual: true),
-                                               pkg("qhigh", peers: ["C"], fire: 9, qual: true)])
-            check(r2.first?.id == "qhigh", "D5: within the qual group, more 🔥 sorts first (usual priorities)")
-            let r3 = TradeRouter.rankPackages([pkg("clean3", peers: ["A", "B"], fire: 9, qual: false),
-                                               pkg("qual2", peers: ["C"], fire: 0, qual: true)])
-            check(r3.first?.id == "qual2", "D5: people-count dominates — a qual 2-way precedes a clean 3-way")
-        }
+        // (U-OBJ: retired #3 "pairwise always beats a loop" — it contradicts the intent-aware
+        // N-penalty; and D5 "clean sorts above qual-swap by hard tier" — the qual-bridge drag now
+        // lives INSIDE the score. Ported to runNPenaltyTests ❻ and runObjectiveTests ❹.)
 
         // MARK: G4 — import-success audit. Flags name-less workers (the "660615" malformed
         // import), missing-self, duplicate IDs, empty parse; clean import → ok with no warnings.
@@ -1346,14 +1267,8 @@ enum TradeEngineTests {
             check(unbal?.gives == ["A1"] && unbal?.takes == ["B1"] && unbal?.mutualMarked == 2,
                   "Intents: balances to k=min and keeps the marked legs (drops surplus pref gives)")
 
-            // Intent-first ranking: a 3-person package with MORE mutual intent outranks a 2-person with less.
-            func pkg(_ id: String, people: Int, fire: Int) -> TradePackage {
-                let others = (1..<people).map { PackageAssignment(workerID: "\(id)-\($0)", name: "n", giveDayIDs: ["d"], takeDayIDs: ["e"]) }
-                var p = TradePackage(id: id, methodology: .greedy, assignments: others, route: nil)
-                p.fireCount = fire; return p
-            }
-            let ranked = TradeRouter.rankIntentPackages([pkg("two", people: 2, fire: 1), pkg("three", people: 3, fire: 3)])
-            check(ranked.first?.id == "three", "Intents: MOST mutual intent ranks first, even with more people (vs Trade Solutions' fewest-people-first)")
+            // U-OBJ: "MOST mutual intent ranks first" and the partnerPrior tiebreak now EMERGE from the
+            // unified score (ported to runNPenaltyTests ❻ and runObjectiveTests H2), not a dead ranker.
 
             // H2: person-prior — neutral at no history; +/- with accept/decline; clamped; weights the logit.
             check(PersonPrior.logOdds(accepted: 0, declined: 0) == 0, "H2: no history → neutral prior (0)")
@@ -1364,17 +1279,8 @@ enum TradeEngineTests {
             var fLo = fHi; fHi.personPrior = 1.5; fLo.personPrior = -1.5
             check(TradeScore.legProb(fHi) > TradeScore.legProb(fLo), "H2: a higher person-prior raises the leg's acceptance probability")
 
-            // H2 tiebreaker: equal intent/people/bookends → the higher partnerPrior package ranks first.
-            var pa = pkg("low", people: 2, fire: 2); pa.partnerPrior = -0.5
-            var pb = pkg("high", people: 2, fire: 2); pb.partnerPrior = 0.5
-            check(TradeRouter.rankIntentPackages([pa, pb]).first?.id == "high", "H2: all else equal, the likelier-to-accept partner ranks first")
-
-            // Safety ceiling: intentSolutions never shows more than intentResultCap (the score floor
-            // does the real curation; this is just a runaway guard).
+            // Safety ceiling constant (the finalize ceiling test in runFinalizeTests exercises the cap).
             check(TradeRouter.intentResultCap == 60, "Intents: safety ceiling is 60")
-            let many = (0..<70).map { pkg("p\($0)", people: 2, fire: $0 % 5) }
-            check(Array(TradeRouter.rankIntentPackages(many).prefix(TradeRouter.intentResultCap)).count == 60,
-                  "Intents: safety ceiling caps the list at 60")
 
             // finalize (unified gate): AVERAGE-leg-quality floor (normal 0.32 / Lucky 0.07), then
             // coverage-first ranking, with a top-N empty-feed fallback. acceptanceScore is now 0…1.
@@ -1389,12 +1295,8 @@ enum TradeEngineTests {
                   "finalize: normal floor (0.32) keeps only ≥0.32 avg-quality")
             check(TradeRouter.finalize([midp, lop, hi], lucky: true).map(\.id) == ["hi", "mid"],
                   "finalize: Lucky floor (0.07) admits more")
-            check(TradeRouter.finalize([fpkg("w1", 0.01), fpkg("w2", 0.005)], lucky: false).map(\.id) == ["w1", "w2"],
-                  "finalize: empty-feed fallback shows the top few by quality when nothing clears the floor")
-            // THE FIX: a full-cover (more of your days) outranks a higher-scored single-day.
-            let fullCover = fpkg("full", 0.80, coverage: 3), oneDay = fpkg("one", 0.95, coverage: 1)
-            check(TradeRouter.finalize([oneDay, fullCover], lucky: false).map(\.id).first == "full",
-                  "finalize: coverage-first — a 3-day full-cover beats a higher-scored 1-day")
+            // (U-OBJ: empty-feed fallback + coverage-weighted ordering now verified in runFinalizeTests,
+            // where rankScore is set from real coverage — the in-place versions passed only by id-tie luck.)
 
             // packageQuality: covering more DAYS (more legs) with one person doesn't lower quality; more
             // PEOPLE does. (This is what un-buried the full-cover.)
@@ -1825,6 +1727,7 @@ enum TradeEngineTests {
         // U-OBJ redesign — new adversarial blocks (EngineTestsAdditions.swift).
         #if DEBUG
         fails += runNPenaltyTests() + runObjectiveTests() + runPruningBoundTests()
+               + runRankerTests() + runFinalizeTests()
         #endif
 
         return fails
