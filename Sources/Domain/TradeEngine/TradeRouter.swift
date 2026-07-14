@@ -456,22 +456,39 @@ enum TradeRouter {
         //    then floats a full multi-person cover above 2-person partials. (Was gated on `result.isEmpty`,
         //    which hid multi-person covers whenever any 2-person partial existed.)
         if generation.maxPeople >= 3 {
-            let cands = peerSwaps.map {
-                OptimalMatcher.Cand(id: $0.id, name: $0.name, canTake: Set($0.canTake), givesBack: $0.givesBack)
+            // U-OBJ/P6(c): real edge costs — the flow optimizes the same objective the ranker sorts by.
+            let legProbFor: (String, String, String, String) -> Double = { g, r, day, desk in
+                TradeScore.legProb(legFeatures(giverID: g, receiverID: r, day: day, desk: desk,
+                                               receiverQuals: qualsDict[r] ?? [], maps: maps, priors: priors,
+                                               selfID: selfID, start: start, mySeeking: mySeeking,
+                                               myWantToWork: myWantToWork, profilesByID: ctx.profilesByID))
+            }
+            let cands = peerSwaps.map { ps -> OptimalMatcher.Cand in
+                var take: [String: Int] = [:], back: [String: Int] = [:]
+                for d in ps.canTake { if let e = (maps[selfID] ?? [:])[d] {
+                    take[d] = OptimalMatcher.legCost(prob: legProbFor(selfID, ps.id, d, e.desk)) } }
+                for d in ps.givesBack { if let e = (maps[ps.id] ?? [:])[d] {
+                    back[d] = OptimalMatcher.legCost(prob: legProbFor(ps.id, selfID, d, e.desk)) } }
+                return OptimalMatcher.Cand(id: ps.id, name: ps.name, canTake: Set(ps.canTake),
+                                           givesBack: ps.givesBack, takeCost: take, backCost: back)
             }
             var addedMulti = false
-            // ≥2 peers only: a single-peer "cover" is already emitted as a `two-` card in step 1 (both are
-            // peopleCount==2 → both render as compact cards → the SAME peer shows twice). Step 2 exists for
-            // genuine MULTI-person covers, so skip the degenerate 1-peer case here. (B6-DEDUP.)
-            if let opt = OptimalMatcher.minPeopleReciprocal(giveDayIDs: giveAll, peers: cands, contiguous: contiguityOK),
-               opt.count >= 2 {
+            // ≥2 peers only (B6-DEDUP unchanged). [0] = fewest people (isOptimal), [1] = the
+            // k*+1 alternative — the unified score decides between them. The alternate is
+            // skipped when it collapsed to the same peer set as the k* option (a duplicate card).
+            let mpOptions = OptimalMatcher.reciprocalOptions(giveDayIDs: giveAll, peers: cands,
+                                                             contiguous: contiguityOK)
+            let firstSet = Set(mpOptions.first?.map(\.id) ?? [])
+            for (idx, opt) in mpOptions.enumerated()
+                where opt.count >= 2 && (idx == 0 || Set(opt.map(\.id)) != firstSet) {
                 let a = opt.map { PackageAssignment(workerID: $0.id, name: $0.name,
                                                     giveDayIDs: $0.giveDayIDs, takeDayIDs: $0.takeDayIDs) }
                 result.append(TradePackage(
-                    id: "optimal-" + a.map(\.workerID).sorted().joined(separator: ","),
+                    id: (idx == 0 ? "optimal-" : "optimal-alt-")
+                        + a.map(\.workerID).sorted().joined(separator: ","),
                     methodology: .greedy, assignments: a, route: nil,
-                    urgency: urgency(of: a.flatMap(\.giveDayIDs)), isOptimal: true))
-                addedMulti = true
+                    urgency: urgency(of: a.flatMap(\.giveDayIDs)), isOptimal: idx == 0))
+                if idx == 0 { addedMulti = true }
             }
             // Greedy balanced cover — only as a fallback when the optimal one didn't produce a cover.
             if !addedMulti {

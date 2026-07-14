@@ -254,6 +254,56 @@ extension TradeEngineTests {
               "U-OBJ: coverage-weighted score — the 3-day full-cover still beats the 1-day")
         return fails
     }
+
+    // MARK: - OptimalMatcher: costed flow, balance-as-conservation, k*+1 alternate
+
+    static func runOptimalMatcherTests() -> [String] {
+        var fails: [String] = []
+        func check(_ cond: Bool, _ msg: String) { if !cond { fails.append("❌ \(msg)") } }
+        typealias Cand = OptimalMatcher.Cand
+
+        // ❶ Acceptance-optimal WITHIN k: two single-day peers, one much likelier — the flow
+        //    must route the day to the cheap (likely) one, not the first-feasible/first-listed.
+        let cheap = Cand(id: "a-cheap", name: "A", canTake: ["d1"], givesBack: ["b1"],
+                         takeCost: ["d1": 10], backCost: ["b1": 10])
+        let dear  = Cand(id: "b-dear", name: "B", canTake: ["d1"], givesBack: ["b2"],
+                         takeCost: ["d1": 900], backCost: ["b2": 900])
+        let best = OptimalMatcher.minPeopleReciprocal(giveDayIDs: ["d1"], peers: [dear, cheap])
+        check(best?.first?.id == "a-cheap",
+              "OPT: the flow must pick the max-acceptance peer, not the first feasible")
+
+        // ❷ Give-back readback is model-chosen, not prefix order: one peer, two possible
+        //    give-backs, the SECOND-listed one far cheaper → the assignment must take it.
+        let backy = Cand(id: "p", name: "P", canTake: ["d1"], givesBack: ["bBad", "bGood"],
+                         takeCost: ["d1": 10], backCost: ["bBad": 900, "bGood": 10])
+        let picked = OptimalMatcher.minPeopleReciprocal(giveDayIDs: ["d1"], peers: [backy])
+        check(picked?.first?.takeDayIDs == ["bGood"],
+              "OPT: the return leg must be the max-acceptance give-back, not arbitrary prefix")
+
+        // ❸ Global back-day uniqueness: two peers offering the SAME calendar back-day can't
+        //    both hand it to me — 2 gives needing 2 returns on one date is infeasible.
+        let q1 = Cand(id: "q1", name: "Q1", canTake: ["d1"], givesBack: ["same"])
+        let q2 = Cand(id: "q2", name: "Q2", canTake: ["d2"], givesBack: ["same"])
+        check(OptimalMatcher.minPeopleReciprocal(giveDayIDs: ["d1", "d2"], peers: [q1, q2]) == nil,
+              "OPT: one received shift per calendar date — a shared back-day must be infeasible")
+
+        // ❹ The k*+1 alternate rides along when feasible; k* stays first (isOptimal).
+        let r1 = Cand(id: "r1", name: "R1", canTake: ["d1", "d2"], givesBack: ["b1", "b2"],
+                      takeCost: ["d1": 500, "d2": 500])
+        let r2 = Cand(id: "r2", name: "R2", canTake: ["d1"], givesBack: ["b3"], takeCost: ["d1": 5])
+        let r3 = Cand(id: "r3", name: "R3", canTake: ["d2"], givesBack: ["b4"], takeCost: ["d2": 5])
+        let opts = OptimalMatcher.reciprocalOptions(giveDayIDs: ["d1", "d2"], peers: [r1, r2, r3])
+        check(opts.count == 2, "OPT: a feasible k*+1 alternative must be offered alongside k*")
+        check(opts.first?.count == 1 && (opts.last?.count ?? 0) == 2,
+              "OPT: option order must be fewest-people first, alternate second")
+
+        // ❺ Cost-less Cands reproduce the legacy behavior exactly (the Appendix-G goldens
+        //    "Optimal: …" already assert this; here we pin that defaults mean cost 0).
+        let plain = Cand(id: "z", name: "Z", canTake: ["d1"], givesBack: ["b9"])
+        check(plain.takeCost.isEmpty && plain.backCost.isEmpty,
+              "OPT: default Cand carries no costs (legacy zero-cost behavior preserved)")
+        return fails
+    }
 }
 
 #endif

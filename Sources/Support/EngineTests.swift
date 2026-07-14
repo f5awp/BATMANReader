@@ -1727,7 +1727,7 @@ enum TradeEngineTests {
         // U-OBJ redesign — new adversarial blocks (EngineTestsAdditions.swift).
         #if DEBUG
         fails += runNPenaltyTests() + runObjectiveTests() + runPruningBoundTests()
-               + runRankerTests() + runFinalizeTests()
+               + runRankerTests() + runFinalizeTests() + runOptimalMatcherTests()
         #endif
 
         return fails
