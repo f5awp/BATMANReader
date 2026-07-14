@@ -334,13 +334,23 @@ enum TradeRouter {
                 ignoreOwnBlacklist: false,
                 myEntries: mineEntries, peerEntries: Array((maps[cand.workerID] ?? [:]).values))
             plansByPeer[cand.workerID] = plan
-            let canTake   = plan.iGive.filter { giveDayIDs.contains($0.dayID) && wouldTake(profile, $0) }.map(\.dayID)
-            // The days I'll RECEIVE back, bookends-first. If I'm Bookends Only, non-bookend islands are
-            // dropped; if I'm open-to-all they're kept (but sorted last, and demote the package in ranking).
-            let givesBack = TradeRouter.cleanReceiveLegs(plan.iTake.filter { wouldTake(myProfile, $0) },
-                                                         wantToWork: myWantToWork,
-                                                         bookendsOnly: myBookendsOnly).map(\.dayID)
-                                                         .filter(inReceiveWindow)   // honor the receive window
+            // U-OBJ/P6(b): model-rank BOTH directions by the same per-leg model the score uses, so the
+            // default give-back and the greedy fallback's prefix() take the likeliest legs first.
+            let canTake = TradeRouter.modelRankedLegs(
+                plan.iGive.filter { giveDayIDs.contains($0.dayID) && wouldTake(profile, $0) },
+                giverID: selfID, receiverID: cand.workerID,
+                maps: maps, quals: qualsDict, priors: priors, start: start, selfID: selfID,
+                mySeeking: mySeeking, myWantToWork: myWantToWork, profilesByID: ctx.profilesByID)
+                .map(\.dayID)
+            // The days I'll RECEIVE back. If I'm Bookends Only, non-bookend islands are dropped
+            // (cleanReceiveLegs filter); otherwise kept. Order is model-ranked (was bookend-first/soonest).
+            let givesBack = TradeRouter.modelRankedLegs(
+                TradeRouter.cleanReceiveLegs(plan.iTake.filter { wouldTake(myProfile, $0) },
+                                             wantToWork: myWantToWork, bookendsOnly: myBookendsOnly),
+                giverID: cand.workerID, receiverID: selfID,
+                maps: maps, quals: qualsDict, priors: priors, start: start, selfID: selfID,
+                mySeeking: mySeeking, myWantToWork: myWantToWork, profilesByID: ctx.profilesByID)
+                .map(\.dayID).filter(inReceiveWindow)   // honor the receive window
             if !canTake.isEmpty, !givesBack.isEmpty {
                 peerSwaps.append(PeerSwap(id: cand.workerID, name: cand.name, canTake: canTake, givesBack: givesBack))
             }
@@ -419,10 +429,14 @@ enum TradeRouter {
                 let isBookend = TradeMatcher.anchored(day: s.date, map: pMap, plan: [s.id], cal: tierCal)
                 guard profile.wouldPickUp(onDay: s.id, weekday: weekday, desk: s.desk,
                                           shiftType: type, region: region, isBookend: isBookend) else { continue }
-                // Reciprocal give-back (their days I'd take), clean/bookend-first, inside the receive window.
-                let givesBack = TradeRouter.cleanReceiveLegs((plansByPeer[cand.workerID]?.iTake ?? []).filter { wouldTake(myProfile, $0) },
-                                                             wantToWork: myWantToWork, bookendsOnly: myBookendsOnly)
-                                                             .map(\.dayID).filter(inReceiveWindow)
+                // Reciprocal give-back (their days I'd take), model-ranked (U-OBJ/P6(b)), inside the receive window.
+                let givesBack = TradeRouter.modelRankedLegs(
+                    TradeRouter.cleanReceiveLegs((plansByPeer[cand.workerID]?.iTake ?? []).filter { wouldTake(myProfile, $0) },
+                                                 wantToWork: myWantToWork, bookendsOnly: myBookendsOnly),
+                    giverID: cand.workerID, receiverID: selfID,
+                    maps: maps, quals: qualsDict, priors: priors, start: start, selfID: selfID,
+                    mySeeking: mySeeking, myWantToWork: myWantToWork, profilesByID: ctx.profilesByID)
+                    .map(\.dayID).filter(inReceiveWindow)
                 guard !givesBack.isEmpty else { continue }
                 // A bridge must exist, else it's a true dead end — don't surface it. (buildQualSwapLeg = nil.)
                 guard let leg = await TradeMatcher.buildQualSwapLeg(
@@ -794,9 +808,16 @@ enum TradeRouter {
                     ignoreOwnBlacklist: false,
                     myEntries: mineEntries, peerEntries: Array((maps[cand.workerID] ?? [:]).values))
 
-                // Days each side can actually cover, split MARKED (wanted) vs PREF-only.
-                let myTakeable    = plan.iGive.filter { wouldTake(profile, $0) }      // my days the peer takes
-                let theirTakeable = plan.iTake.filter { wouldTake(myProfile, $0) }    // their days I take
+                // Days each side can actually cover, MODEL-RANKED (U-OBJ/P7(b)); the marked-first splitting
+                // in assembleIntentDeal is order-preserving, so this only orders WITHIN the marked/pref groups.
+                let myTakeable = modelRankedLegs(plan.iGive.filter { wouldTake(profile, $0) },
+                    giverID: selfID, receiverID: cand.workerID,
+                    maps: maps, quals: qualsDict, priors: priors, start: start, selfID: selfID,
+                    mySeeking: mySeeking, myWantToWork: myWantToWork, profilesByID: profilesByID)
+                let theirTakeable = modelRankedLegs(plan.iTake.filter { wouldTake(myProfile, $0) },
+                    giverID: cand.workerID, receiverID: selfID,
+                    maps: maps, quals: qualsDict, priors: priors, start: start, selfID: selfID,
+                    mySeeking: mySeeking, myWantToWork: myWantToWork, profilesByID: profilesByID)
                 let pairing = IntentPairing(
                     myGiveMarked:    myTakeable.filter { $0.wanted }.map(\.dayID),
                     myGivePref:      myTakeable.filter { !$0.wanted }.map(\.dayID),
