@@ -92,7 +92,7 @@ enum WorkingIntentState: String, Codable, Sendable, CaseIterable, Identifiable {
         case .mustWork:       return "Keep"   // working-day protect: keep this shift, never trade it away (green). Case unchanged.
         case .wantToWork:     return "Want to Work"
         case .neutralOpen:    return "Open"
-        case .dontWantToWork: return "Want to Trade Away"
+        case .dontWantToWork: return "Want to Trade"
         }
     }
 }
@@ -363,6 +363,23 @@ enum PersonPrior {
 /// Objective: maximize P(trade executes) = ∏ p(leg). Work in log-space (additive → admissible
 /// pruning bound). Per-leg `p = σ(weighted features)`; the σ bounds it to (0,1) intrinsically.
 /// Hand-tuned weights now; later fit from inbox accept/decline data (logistic regression).
+// U-OBJ: ONE objective, used consistently by construction (flow edge costs, DFS
+// ordering/pruning), curation (floor), and ranking (rankLess). Three factors:
+//
+//   Q  = meanLegQuality  — geometric mean of per-leg σ(logit). Size- and people-
+//        neutral, in (0,1]. THE floor signal (0.32/0.07 keep their single-leg
+//        meaning) and the displayed "match strength" basis.
+//   π  = peoplePenalty   — INTENT-AWARE: nPenalty^((N−2)·nonMutualFraction) ·
+//        peopleEdge^(N−2). All-mutual ⇒ only the tiny peopleEdge applies, so a
+//        unanimous 4-way ranks ~as high as a 2-way (and the 2-way still edges it);
+//        every non-mutual leg raises the fraction, so growth-by-coercion falls
+//        below a clean smaller trade. (Owner requirement; replaces flat 0.85^(N−2).)
+//   κ  = coverage        — (urgency-weighted covered fraction)^coverageWeight.
+//        Trade Solutions only; the Intents marketplace has no selected-days target
+//        and passes 1.
+//
+//   rankScore = Q · π · κ    (packageScore below)
+
 enum TradeScore {
     // Weights = the DESIGNED match priorities. WANTS dominate (want-to-take + want-to-trade, 1.5
     // each → dual = 3.0). Bookend is a flat +0.8. The SPLIT penalty SHRINKS as intent grows
@@ -370,9 +387,17 @@ enum TradeScore {
     // a dual trade but wrecks a no-intent one. `qual` friction −1.2; `personPrior` tiny (0.2).
     static let wWant = 1.5, wBook = 0.8, wTime = 0.8, wQual = 1.2, wEcb = 1.5, wPerson = 0.2
     static let splitBase = 2.5, splitRelief = 1.1
-    /// Per-extra-person multiplier on the package score (each participant beyond 2 scales it by this),
-    /// so smaller trades dominate — `allDual+book(N+1) < allDual+split(N)`. (U-PERF N-penalty.)
+
+    /// Per-extra-person multiplier, applied only to the NON-MUTUAL fraction of the package
+    /// (U-N2). An all-mutual trade of any size pays none of this.
     static let nPenalty = 0.85
+    /// Tiny unconditional per-extra-person edge, so between two otherwise-equal all-mutual
+    /// trades the SMALLER one still sorts first (2-way edges a unanimous 4-way by ~1%).
+    static let peopleEdge = 0.995
+    /// Coverage exponent (Trade Solutions): rankScore ×= coverageFrac^coverageWeight. At 2.0,
+    /// an excellent half-cover (Q≈0.99 → 0.25) sorts under even a fair full cover (Q≈0.77) —
+    /// coverage stays a top concern without being an absolute tier.
+    static let coverageWeight = 2.0
 
     static func legLogit(_ f: LegFeatures) -> Double {
         let want = wWant * Double(f.intentLevel)
@@ -384,31 +409,75 @@ enum TradeScore {
              + wEcb * f.ecbValue
              + wPerson * f.personPrior
     }
-    /// Probability the receiver accepts this leg, in (0,1).
+    /// Probability-shaped acceptance signal for one leg, in (0,1). Presented to users only as
+    /// RELATIVE match strength (weights are hand-tuned, not fit) — see `matchStrength`.
     static func legProb(_ f: LegFeatures) -> Double { 1.0 / (1.0 + exp(-legLogit(f))) }
-    /// Joint probability the whole package executes (all parties accept) = ∏ legProb, with the
-    /// N-penalty folded in (each person beyond 2 scales it down).
-    static func packageProb(_ legs: [LegFeatures]) -> Double { exp(packageLogProb(legs)) }
-    /// log of the joint probability + N-penalty = Σ log legProb + (N−2)·log(nPenalty). The ranking +
-    /// floor signal. (Still an admissible upper bound for a partial route — both terms only subtract.)
-    static func packageLogProb(_ legs: [LegFeatures]) -> Double {
-        legs.map { log(legProb($0)) }.reduce(0.0, +) + Double(max(0, legs.count - 2)) * log(nPenalty)
+
+    /// Q — geometric mean of per-leg quality, in (0,1]. Size/people-neutral by design: this is
+    /// the FLOOR + DISPLAY signal, so a clean full-cover reads like a clean single-day and the
+    /// floor constants keep their single-leg calibration. Empty → 0.
+    static func meanLegQuality(_ legs: [LegFeatures]) -> Double {
+        guard !legs.isEmpty else { return 0 }
+        return exp(legs.map { log(legProb($0)) }.reduce(0.0, +) / Double(legs.count))
     }
 
-    /// Average per-leg acceptance QUALITY (geometric mean of legProb), scaled down per extra **person**
-    /// (NOT per day) — so covering more days with one clean person is not penalized. In (0,1]. This is
-    /// the ranking-floor signal: a clean full-cover scores like a clean single-day, and coverage/fewest-
-    /// people are handled by the sort (not by punishing multi-day trades). Fixes the "single-day always
-    /// wins" bug where the joint PRODUCT + per-leg N-penalty buried full covers.
-    static func packageQuality(_ legs: [LegFeatures], people: Int) -> Double {
-        guard !legs.isEmpty else { return 0 }
-        let meanLogLeg = legs.map { log(legProb($0)) }.reduce(0.0, +) / Double(legs.count)   // geometric mean
-        let peoplePenalty = Double(max(0, people - 2)) * log(nPenalty)                        // per PERSON, not leg
-        return exp(meanLogLeg + peoplePenalty)
+    /// Mutual legs = both sides marked the day (giver trade-away AND receiver want-to-work).
+    static func mutualLegCount(_ legs: [LegFeatures]) -> Int {
+        legs.filter { $0.intentLevel == 2 }.count
     }
-    /// Admissible upper bound on a partial route's final log-prob: the running sum (remaining legs
-    /// can only add ≤ 0). Prune mid-DFS when this drops below log(threshold) — never drops a valid route.
-    static func upperBoundLogProb(partial legs: [LegFeatures]) -> Double { packageLogProb(legs) }
+
+    /// π — the intent-aware people penalty. `people` counts every participant including you and
+    /// EXCLUDES a qual-swap bridge (an enabling leg, invariant). Monotone: non-increasing in
+    /// `people`, non-increasing as mutual legs are lost.
+    static func peoplePenalty(people: Int, mutualLegs: Int, legCount: Int) -> Double {
+        guard legCount > 0 else { return 1 }
+        let extra = Double(max(0, people - 2))
+        guard extra > 0 else { return 1 }
+        let f = Double(legCount - min(max(0, mutualLegs), legCount)) / Double(legCount)
+        return exp(extra * (f * log(nPenalty) + log(peopleEdge)))
+    }
+
+    /// THE ranking objective (both feeds): rankScore = Q · π · κ. `coverageFrac` is the
+    /// urgency-weighted share of the user's SELECTED give-days this package covers — pass 1
+    /// for the Intents marketplace (no selected-days target there).
+    static func packageScore(_ legs: [LegFeatures], people: Int, coverageFrac: Double = 1) -> Double {
+        guard !legs.isEmpty else { return 0 }
+        let q = meanLegQuality(legs)
+        let pi = peoplePenalty(people: people, mutualLegs: mutualLegCount(legs), legCount: legs.count)
+        let kappa = pow(min(1, max(0, coverageFrac)), coverageWeight)
+        return q * pi * kappa
+    }
+
+    /// Joint probability the whole package executes (all parties accept) = ∏ legProb, with the
+    /// intent-aware people penalty folded in (legs ≈ participants for a loop).
+    static func packageProb(_ legs: [LegFeatures]) -> Double { exp(packageLogProb(legs)) }
+    /// log of the joint probability + intent-aware penalty. NOTE (U-N2): an all-mutual loop now
+    /// pays only the tiny peopleEdge — a unanimous 3-way SORTS ABOVE a 2-person split, which is
+    /// the owner's intended flip of the old flat-penalty property.
+    static func packageLogProb(_ legs: [LegFeatures]) -> Double {
+        let joint = legs.map { log(legProb($0)) }.reduce(0.0, +)
+        let pi = peoplePenalty(people: legs.count, mutualLegs: mutualLegCount(legs), legCount: legs.count)
+        return joint + log(pi)
+    }
+
+    /// COMPAT (existing tests + any UI reading `acceptanceScore` semantics): per-leg quality ×
+    /// the intent-aware people penalty. Under U-N2 an ALL-MUTUAL package is ~people-invariant
+    /// (only peopleEdge, −0.5%/person); a package with non-mutual legs still drops with people.
+    static func packageQuality(_ legs: [LegFeatures], people: Int) -> Double {
+        meanLegQuality(legs) * peoplePenalty(people: people,
+                                             mutualLegs: mutualLegCount(legs), legCount: legs.count)
+    }
+
+    /// ADMISSIBLE DFS pruning bound: the highest FINAL mean-log-quality any completion of a
+    /// partial route can reach. Each remaining leg contributes log p ≤ 0 and the final leg count
+    /// is at most `maxLegs`, so partialSum/maxLegs (partialSum ≤ 0) over-estimates every
+    /// completion. The floor gates Q (pre-penalty) — the penalty is deliberately ABSENT here:
+    /// with the intent-aware π, adding mutual legs can SHRINK the penalty, so folding π into the
+    /// bound would not be admissible. Prune when this < log(floor) — never drops a valid route.
+    static func upperBoundMeanLog(partialLegLogSum: Double, maxLegs: Int) -> Double {
+        guard maxLegs > 0 else { return 0 }
+        return min(0, partialLegLogSum) / Double(maxLegs)
+    }
 
     /// G3: desirability (log-joint-acceptance) of a circular route from its per-leg bookend/🔥
     /// flags. A non-bookend leg is a SPLIT, and a 🔥 leg is treated as DUAL intent (both want it).
@@ -418,6 +487,24 @@ enum TradeScore {
             LegFeatures(wantToTake: f, wantToTrade: f, bookend: b, timeValue: 0.5, needsQualBridge: false)
         }
         return packageLogProb(feats)
+    }
+
+    // MARK: - Displayed number (calibration decision: RELATIVE strength, not a probability)
+
+    /// The surfaced number: a 0–100 RELATIVE match strength from the per-leg quality Q.
+    /// Deliberately NOT labeled a probability — weights are hand-tuned and per-partner history
+    /// is thin. When enough accept/decline rows exist, a logistic re-fit can upgrade this in
+    /// place without touching the ranking machinery.
+    static func matchStrength(_ meanLegQuality: Double) -> Int {
+        Int((min(1, max(0, meanLegQuality)) * 100).rounded())
+    }
+    /// Card tier label. Thresholds align with the floor: below `floorNormalProb` only surfaces
+    /// via Lucky / the empty-feed fallback → "Long shot".
+    static func strengthTier(_ meanLegQuality: Double) -> String {
+        if meanLegQuality >= 0.80 { return "Excellent" }
+        if meanLegQuality >= 0.55 { return "Good" }
+        if meanLegQuality >= 0.32 { return "Fair" }
+        return "Long shot"
     }
 }
 
@@ -432,6 +519,10 @@ struct SearchFilter: Equatable, Sendable {
     var dateEnd: Date?              // …and on/before this date
     var receiveTypes: Set<ShiftAvailabilityType> = []  // days you PICK UP must be one of these (empty = any)
     var deskQuals: Set<String> = [] // only trades involving desks requiring one of these quals (empty = any)
+    /// Lucky one-time OPENNESS override for MY OWN side of this search (nil = use my saved openness). Lets
+    /// me search as e.g. "Open to all" without changing my permanent setting. My blacklist + protective
+    /// intents still apply; the counterparties' prefs are untouched. `.none` isn't offered (finds nothing).
+    var myOpennessOverride: TradeOpenness? = nil
 
     /// The default "normal" criteria — every engine, up to 4 people, anyone.
     static let normal = SearchFilter()
@@ -453,6 +544,7 @@ struct SearchFilter: Equatable, Sendable {
         if dateStart != nil || dateEnd != nil { parts.append("dates") }
         if !receiveTypes.isEmpty { parts.append(receiveTypes.map(\.rawValue).sorted().joined(separator: "/")) }
         if !deskQuals.isEmpty { parts.append(deskQuals.sorted().joined(separator: "/") + " desks") }
+        if let o = myOpennessOverride { parts.append(o == .all ? "open to all" : "bookends") }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
@@ -474,17 +566,21 @@ struct SearchFilter: Equatable, Sendable {
     /// Apply the package-intrinsic filters (post-search): engine/methodology, maxPeople, a required
     /// participant, and the date range (every moved day must fall inside it). The receive-type and
     /// desk-qual criteria need roster data and are applied in the view via `receiveTypes`/`deskQual`.
-    func filter(_ packages: [TradePackage]) -> [TradePackage] {
+    func filter(_ packages: [TradePackage], selfID: String) -> [TradePackage] {
         let lo = dateStart.map(Self.iso)
         let hi = dateEnd.map(Self.iso)
         return packages.filter { p in
             if p.peopleCount > maxPeople { return false }
             if let req = requiredWorkerID, !contains(req, p) { return false }
             if lo != nil || hi != nil {
-                let days = movedDayIDs(p)
-                if days.isEmpty { return false }
-                if let lo, days.contains(where: { $0 < lo }) { return false }
-                if let hi, days.contains(where: { $0 > hi }) { return false }
+                // The date range is the window you want to trade INTO — so it constrains the days you'd
+                // RECEIVE (your take-backs), NOT the days you give away. A single-date range therefore
+                // matches a single-day trade (give 1, receive 1 that day). Give-days are your selection.
+                let received: [String] = p.route.map { r in r.legs.filter { $0.toID == selfID }.map(\.dayID) }
+                    ?? p.assignments.flatMap(\.takeDayIDs)
+                guard !received.isEmpty else { return false }
+                if let lo, received.contains(where: { $0 < lo }) { return false }
+                if let hi, received.contains(where: { $0 > hi }) { return false }
             }
             switch engine {
             case .minCost: return p.methodology != .circular
@@ -516,10 +612,11 @@ func distinctParticipants(in legs: [TradeLeg]) -> Int {
 /// The intent brushes shown in Mark-Intents — the SINGLE source of truth so the UI
 /// can't silently omit an intent (F1). A test asserts these cover the enums.
 enum IntentBrushes {
-    /// Working-day brushes (every WorkingIntentState that's meaningful on a day you work).
-    static let working: [WorkingIntentState] = [.dontWantToWork, .mustWork, .neutralOpen]
-    /// Off-day brushes — must cover ALL OffIntentState cases.
-    static let off: [OffIntentState] = [.mustBeOff, .wantToWork, .neutralOpen]
+    /// Working-day brushes. "Open" (neutralOpen) is NOT a manual brush — it's the cleared state, reached
+    /// with the intent eraser or set implicitly by the openness shortcut.
+    static let working: [WorkingIntentState] = [.dontWantToWork, .mustWork]
+    /// Off-day brushes. "Open" (neutralOpen) is likewise the cleared state, not a paintable brush.
+    static let off: [OffIntentState] = [.mustBeOff, .wantToWork]
 }
 
 /// Pure metrics helpers for the Home header (H1). Global aggregation (CloudKit) is a
@@ -813,7 +910,7 @@ enum AppGuide {
             summary: "What you mark, what you publish, and who is eligible to match.",
             details: [
                 "Per-day intent lives in DayIntentStore as four disjoint sets: seekingDayIDs (trade-away), keepDayIDs (never give), mustBeOffDayIDs (never take), and wantToWorkDayIDs (off-day you'd pick up). These drive both the legality gates (Keep/Must-Be-Off are hard) and the scoring (intent raises a leg's accept probability).",
-                "Your TradeProfile publishes openness (Bookends-Only / All / None), per-shift-type and per-region/desk blacklists, qual-swap preferences, weekly-hour cap, and relief horizon. It rides a single JSON payload to CloudKit, so adding fields needs no schema change.",
+                "Your TradeProfile publishes openness (Bookends-Only / All / None), per-shift-type and per-region/desk blacklists, qual-swap preferences, and relief horizon. It rides a single JSON payload to CloudKit, so adding fields needs no schema change.",
                 "The candidate universe is computed by MatchUniverse.candidates: EVERY roster worker is a candidate, annotated with willingness — willing (published, open), unknown (no profile yet → still included, ranked lower), or declined (openness=None → excluded unless What-If). A peer with no profile defaults to Bookends-Only via one factory (defaultForUnpublished), so a profileless person is never offered a split-the-weekend pickup.",
             ]),
         MechanismSection(
@@ -821,7 +918,7 @@ enum AppGuide {
             symbol: "square.stack.3d.up",
             summary: "Eligibility predicate → two-way exploration → N-way circular DFS.",
             details: [
-                "Layer 1 — Eligibility (TradeEligibility.canCover): the SINGLE shared predicate every path delegates to. It enforces all HARD gates — desk qualification (DeskRules.qualified), 8-hour inter-shift rest, the Sun–Sat weekly-hour cap, Must-Be-Off, the relief-dispatcher horizon (isPastRelief), and bookend anchoring (isAnchored, the no-split-the-weekend rule). Two option sets, .full and .physicalOnly, let callers include or exclude the soft/preference layer. Because every matcher runs this exact code, the contractual rules can never diverge between feeds.",
+                "Layer 1 — Eligibility (TradeEligibility.canCover): the SINGLE shared predicate every path delegates to. It enforces all HARD gates — desk qualification (DeskRules.qualified), 8-hour inter-shift rest, Must-Be-Off, the relief-dispatcher horizon (isPastRelief), and bookend anchoring (isAnchored, the no-split-the-weekend rule). Two option sets, .full and .physicalOnly, let callers include or exclude the soft/preference layer. Because every matcher runs this exact code, the contractual rules can never diverge between feeds.",
                 "Layer 2 — Two-way exploration (TradeMatcher.twoWayExplore): for a given peer, it constructs the reciprocal balanced set — the days I could cover for them and they for me — gated by BOTH parties' real profiles, and tags each leg as wanted (mutual intent, 🔥) and bookend vs split. Peer schedules are preloaded once, so there is no per-peer re-fetch.",
                 "Layer 3 — N-way circular routing (nWayRoutes): a bounded depth-first search for loops A→B→C→A where each participant gives one shift and receives one, netting equal hours. Loops close only at depth ≥ 3 (a 2-cycle is just a two-way swap). The DFS is best-first at EVERY node (candidates ordered by givePromise — urgency + soonness + qual friction), cooperatively cancellable (Task.isCancelled, so a re-search supersedes rather than races a stale one), and bounded by a maxRoutes backstop (500) — the acceptance floor, not the cap, is what actually curates the results.",
             ]),

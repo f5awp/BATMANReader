@@ -262,29 +262,14 @@ enum TradeEngineTests {
             let df = DateFormatter(); df.calendar = Calendar(identifier: .gregorian); df.dateFormat = "yyyy-MM-dd"
             func d(_ iso: String) -> Date { df.date(from: iso) ?? Date() }
             var f = SearchFilter(); f.dateStart = d("2026-07-01"); f.dateEnd = d("2026-07-31")
-            let kept = f.filter([inWindow, outWindow])
+            let kept = f.filter([inWindow, outWindow], selfID: "")
             check(kept.contains(inWindow) && !kept.contains(outWindow),
-                  "B6-FILTER: date range keeps all-in-window solutions, drops any with a day outside")
+                  "B6-FILTER: date range keeps trades whose RECEIVED day is in-window, drops out-of-window receives")
         }
 
-        // MARK: Vacation auto-intent (SPEC S-PARSE-2). A day flipping to vacation auto-
-        // sets a SOFT, user-changeable Must-Be-Off + "vacation" note. Sentinel day, cleaned up.
-        do {
-            let vd = "2099-03-15"
-            let store = DayIntentStore.shared
-            let wasClean = store.offIntent(forDay: vd) == nil && store.note(forDay: vd) == nil
-            let when = Date(timeIntervalSince1970: 4_080_000_000)
-            let workShift = Shift(id: vd, date: when, startHour: 5, endHour: 14, role: .dispatcher, desk: "29", leaveCode: nil, isOff: false)
-            let vacShift  = Shift(id: vd, date: when, startHour: 0, endHour: 0, role: .off, desk: "", leaveCode: "V", isOff: true)
-            let vdiff = ScheduleDiff(added: [], removed: [],
-                                     changed: [ScheduleDiff.ShiftChange(old: workShift, new: vacShift)],
-                                     unchanged: [])
-            _ = store.reconcile(diff: vdiff)
-            check(store.offIntent(forDay: vd) == .mustBeOff, "Vacation: auto Must-Be-Off set on flip to vacation")
-            check(store.note(forDay: vd)?.message == "vacation", "Vacation: auto note 'vacation' set")
-            store.clearIntent(forDay: vd); store.setNote(nil, forDay: vd)   // cleanup
-            check(wasClean, "Vacation: sentinel day was clean before the check")
-        }
+        // (Removed: the old "vacation auto-sets Must-Be-Off + 'vacation' note" checks — that behavior was
+        // intentionally dropped in the vacation-leave-code model; reconcile no longer auto-blacks-out
+        // vacation days or stamps an auto note.)
 
         // MARK: Trade-type label SOT (SPEC S-ENG-5 / S-TEST-1). The fix for the
         // "3-way / 2-way" contradiction: one function, distinct-people count, three shapes.
@@ -455,12 +440,12 @@ enum TradeEngineTests {
         // MARK: Brush completeness (F1). EVERY intent must be paintable — this is the
         // exact guard against "I thought the brush already covered it". A new enum case
         // with no brush fails here.
-        // Off-day: brushes must cover ALL OffIntentState cases.
-        check(Set(IntentBrushes.off) == Set(OffIntentState.allCases),
-              "F1: off-day brushes cover every OffIntentState (\(OffIntentState.allCases.map(\.rawValue)))")
-        // Working-day: the three meaningful intents are brushable (wantToWork is an off-day concept).
-        check(Set(IntentBrushes.working) == Set([.dontWantToWork, .mustWork, .neutralOpen]),
-              "F1: working brushes = Trade-away + Keep + Open (the working-day intents)")
+        // Off-day: the actionable intents are brushable; "Open" (neutralOpen) is the cleared state (eraser).
+        check(Set(IntentBrushes.off) == Set([.mustBeOff, .wantToWork]),
+              "F1: off-day brushes = Blackout + Want-to-Work (Open = cleared state, not a brush)")
+        // Working-day: Trade-away + Keep are brushable; "Open" (neutralOpen) is the cleared state (eraser).
+        check(Set(IntentBrushes.working) == Set([.dontWantToWork, .mustWork]),
+              "F1: working brushes = Trade-away + Keep (Open = cleared state, not a brush)")
         // Every brush has a non-empty human label (no blank pills).
         check(IntentBrushes.working.allSatisfy { !$0.label.isEmpty } && IntentBrushes.off.allSatisfy { !$0.label.isEmpty },
               "F1: every brush has a label")
@@ -813,7 +798,8 @@ enum TradeEngineTests {
         let c3 = QualSwapShift(workerID: "C3", name: "C3", desk: "64", startHour: 5, quals: ["P", "E"])
         // C4: Domestic desk 11 (D), holds only [D], start 5 → can't take Euro desk 50 → excluded.
         let c4 = QualSwapShift(workerID: "C4", name: "C4", desk: "11", startHour: 5, quals: ["D"])
-        // C5: like C1 but values E=1 < D=2 → won't accept the move → excluded.
+        // C5: like C1 but values E=1 < D=2 → moving onto 50 is UNfavorable. NEW (D6): still listed, but
+        // flagged `favorable == false` (a stretch ask) rather than dropped.
         let c5 = QualSwapShift(workerID: "C5", name: "C5", desk: "10", startHour: 5, quals: ["D", "E"])
         let workers: [(QualSwapShift, TradeProfile)] = [
             (c1, bridgeProf("C1", ["E": 3, "D": 2])),
@@ -824,7 +810,12 @@ enum TradeEngineTests {
         ]
         let bridges = QualSwap.bridges(giveDesk: "50", takerQuals: takerQuals, startHour: 5,
                                        workers: workers, excludeIDs: ["A", "B"])
-        check(bridges.map(\.workerID) == ["C1"], "S-ENG-4: only the qualified, same-hour, willing bridge (C1) returns")
+        // C1 (favorable) + C5 (unfavorable) both qualify + same-hour + B can take their desk; C2 (hour),
+        // C3 (B can't take Pacific 64), C4 (no E) are dropped. Favorable sorts first. (D6.)
+        check(bridges.map(\.workerID) == ["C1", "C5"], "S-ENG-4: favorable (C1) + unfavorable (C5) bridges return, favorable first")
+        check(bridges.first(where: { $0.workerID == "C1" })?.favorable == true
+                && bridges.first(where: { $0.workerID == "C5" })?.favorable == false,
+              "S-ENG-4: C1 flagged favorable, C5 flagged unfavorable")
         // Excluded IDs (A, B) never appear even if working that day.
         let withExcluded = QualSwap.bridges(giveDesk: "50", takerQuals: takerQuals, startHour: 5,
             workers: workers + [(QualSwapShift(workerID: "B", name: "B", desk: "10", startHour: 5, quals: ["D", "E"]),
@@ -946,10 +937,25 @@ enum TradeEngineTests {
                                                   recipientSeeking: [], recipientWantToWork: ["2026-08-05"]),
               "U6: want-to-work pickup only perfect-matches for ECB, not a plain swap")
 
-        // MARK: Q2 — bridge→candidate adapter (derives the freed desk's qual).
-        let adapterCand = QualSwap.candidate(from: QualSwapShift(workerID: "C9", name: "C9", desk: "50", startHour: 5, quals: ["D", "E"]))
-        check(adapterCand.workerID == "C9" && adapterCand.desk == "50" && adapterCand.qual == "E",
-              "Q2-adapter: bridge→candidate derives the freed desk's qual (50→E)")
+        // MARK: Q2 — bridges derive the freed desk's qual + favorability (D6).
+        // Give a Latin desk (72 → L). C9 holds L (can bridge), sits on Euro desk 50. `takerQuals: nil` =
+        // bridge-first (green button) → no taker-can-take check.
+        let favBridges = QualSwap.bridges(
+            giveDesk: "72", takerQuals: nil, startHour: 5,
+            workers: [(QualSwapShift(workerID: "C9", name: "C9", desk: "50", startHour: 5, quals: ["D", "E", "L"]),
+                       bridgeProf("C9", ["L": 3, "E": 2]))],   // Latin(3) > Euro(2) → favorable
+            excludeIDs: [])
+        check(favBridges.first?.desk == "50" && favBridges.first?.qual == "E",
+              "Q2: bridge frees desk 50 → derives qual E")
+        check(favBridges.first?.favorable == true, "Q2: Latin pref (3) ≥ Euro (2) → favorable")
+        // Unfavorable (Latin ranked BELOW their Euro desk) is INCLUDED with the flag, not dropped.
+        let unfavBridges = QualSwap.bridges(
+            giveDesk: "72", takerQuals: nil, startHour: 5,
+            workers: [(QualSwapShift(workerID: "C8", name: "C8", desk: "50", startHour: 5, quals: ["D", "E", "L"]),
+                       bridgeProf("C8", ["L": 1, "E": 3]))],   // Latin(1) < Euro(3) → unfavorable
+            excludeIDs: [])
+        check(unfavBridges.count == 1 && unfavBridges.first?.favorable == false,
+              "Q2: unfavorable bridge (Latin<Euro pref) is listed but flagged unfavorable")
 
         // MARK: Q1 — shared qual-gap SSOT (used by trade search + intents + routes).
         check(DeskRules.qualSwapNeeded(forDesk: "50", takerQuals: ["D"]),
@@ -1249,9 +1255,10 @@ enum TradeEngineTests {
                   "H1: one weak leg drags the package down (weakest-link)")
             check(abs(TradeScore.packageProb([dualBook, dualSplit]) - exp(TradeScore.packageLogProb([dualBook, dualSplit]))) < 1e-9,
                   "H1: packageProb == exp(packageLogProb)")
-            // N-penalty: a bigger all-perfect package scores BELOW a smaller imperfect one.
-            check(TradeScore.packageLogProb(Array(repeating: dualBook, count: 3)) < TradeScore.packageLogProb(Array(repeating: dualSplit, count: 2)),
-                  "H1/N-penalty: all-dual+book(3) < all-dual+split(2)")
+            // U-N2 (intent-aware penalty): a unanimous 3-way pays only peopleEdge, so it now
+            // OUTRANKS a 2-person split — the owner's N-penalty requirement (flip of the old rule).
+            check(TradeScore.packageLogProb(Array(repeating: dualBook, count: 3)) > TradeScore.packageLogProb(Array(repeating: dualSplit, count: 2)),
+                  "U-N2: a unanimous 3-way now outranks a 2-person split (intent-aware penalty)")
             // admissible bound: adding legs never RAISES the log-prob.
             check(TradeScore.packageLogProb([dualBook]) >= TradeScore.packageLogProb([dualBook, dualBook]) - 1e-12,
                   "H1: partial-route log-prob is an admissible upper bound")
@@ -1280,14 +1287,14 @@ enum TradeEngineTests {
             let pkgs = [pkg("solo", peers: ["A"], circular: false),       // 2 people
                         pkg("tri", peers: ["A", "B"], circular: true),     // 3 people
                         pkg("quad", peers: ["A", "B", "C"], circular: true)] // 4 people
-            check(SearchFilter(engine: .both, maxPeople: 2, requiredWorkerID: nil).filter(pkgs).allSatisfy { $0.peopleCount <= 2 },
+            check(SearchFilter(engine: .both, maxPeople: 2, requiredWorkerID: nil).filter(pkgs, selfID: "").allSatisfy { $0.peopleCount <= 2 },
                   "A2: maxPeople caps participant count")
-            check(SearchFilter(engine: .both, maxPeople: 4, requiredWorkerID: nil).filter(pkgs).count == 3, "A2: maxPeople 4 keeps all")
-            check(SearchFilter(engine: .minCost, maxPeople: 4, requiredWorkerID: nil).filter(pkgs).allSatisfy { $0.methodology != .circular },
+            check(SearchFilter(engine: .both, maxPeople: 4, requiredWorkerID: nil).filter(pkgs, selfID: "").count == 3, "A2: maxPeople 4 keeps all")
+            check(SearchFilter(engine: .minCost, maxPeople: 4, requiredWorkerID: nil).filter(pkgs, selfID: "").allSatisfy { $0.methodology != .circular },
                   "A2: minCost engine drops circular")
-            check(SearchFilter(engine: .nWay, maxPeople: 4, requiredWorkerID: nil).filter(pkgs).allSatisfy { $0.methodology == .circular },
+            check(SearchFilter(engine: .nWay, maxPeople: 4, requiredWorkerID: nil).filter(pkgs, selfID: "").allSatisfy { $0.methodology == .circular },
                   "A2: nWay engine keeps only circular")
-            let req = SearchFilter(engine: .both, maxPeople: 4, requiredWorkerID: "C").filter(pkgs)
+            let req = SearchFilter(engine: .both, maxPeople: 4, requiredWorkerID: "C").filter(pkgs, selfID: "")
             check(!req.isEmpty && req.allSatisfy { $0.assignments.contains { a in a.workerID == "C" } },
                   "A2: required person → only solutions containing them")
             check(Set(SearchFilter.Engine.allCases.map(\.rawValue)) == ["minCost", "nWay", "both"], "A2: engine CaseIterable universe guard")
@@ -1396,8 +1403,16 @@ enum TradeEngineTests {
             let q2legs = TradeScore.packageQuality(Array(repeating: cleanLeg, count: 2), people: 2)
             let q6legs = TradeScore.packageQuality(Array(repeating: cleanLeg, count: 6), people: 2)
             check(abs(q2legs - q6legs) < 0.0001, "packageQuality: more days (legs) with one person → same quality")
-            check(TradeScore.packageQuality(Array(repeating: cleanLeg, count: 4), people: 3) < q2legs,
-                  "packageQuality: more PEOPLE lowers quality")
+            // U-N2: for a fully-mutual package the people penalty is only the ~0.5%/person peopleEdge…
+            let q4p3 = TradeScore.packageQuality(Array(repeating: cleanLeg, count: 4), people: 3)
+            check(q4p3 < q2legs, "packageQuality: more people still strictly lowers (peopleEdge)")
+            check(q4p3 / q2legs > 0.99, "packageQuality: an ALL-MUTUAL package is ~people-invariant (U-N2)")
+            // …but NON-mutual legs still pay the real people penalty.
+            let noneLeg = LegFeatures(wantToTake: false, wantToTrade: false, bookend: true,
+                                      timeValue: 1, needsQualBridge: false)
+            check(TradeScore.packageQuality(Array(repeating: noneLeg, count: 4), people: 3)
+                  < 0.9 * TradeScore.packageQuality(Array(repeating: noneLeg, count: 2), people: 2),
+                  "packageQuality: NON-mutual legs still pay the real people penalty")
 
             // Giver-side bookend: a peer's mid-week give (island off) is NOT clean; an edge day is.
             func rEntry(_ day: String, _ off: Bool) -> RosterEntry {
@@ -1806,6 +1821,11 @@ enum TradeEngineTests {
             check(back.mustBeOffDayIDs == ["2026-07-20"], "R-B: mustBeOffDayIDs survive")
             check(back.keepDayIDs == ["2026-07-22"], "R-B: keepDayIDs survive")
         }
+
+        // U-OBJ redesign — new adversarial blocks (EngineTestsAdditions.swift).
+        #if DEBUG
+        fails += runNPenaltyTests() + runObjectiveTests() + runPruningBoundTests()
+        #endif
 
         return fails
     }
