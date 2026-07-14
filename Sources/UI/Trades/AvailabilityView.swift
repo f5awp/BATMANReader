@@ -304,7 +304,7 @@ struct FindCandidatesSection: View {
     private var content: some View {
         if isSearching {
             VStack(spacing: 14) {
-                AnimatedLoader(name: "finding-matches", contentMode: .fill).frame(maxHeight: 240).containerRelativeFrame(.horizontal) { w, _ in w * 0.85 }.clipped()
+                AnimatedLoader(name: "finding-matches", contentMode: .fit).containerRelativeFrame(.horizontal) { w, _ in w * 0.92 }
                 Button(role: .cancel) { searchTask?.cancel(); isSearching = false } label: {
                     Image(systemName: "xmark")
                         .font(.subheadline.weight(.semibold))
@@ -692,7 +692,7 @@ struct ECBTradesView: View {
 
     @ViewBuilder private var content: some View {
         if isSearching {
-            AnimatedLoader(name: "finding-matches", contentMode: .fill).frame(maxHeight: 240).containerRelativeFrame(.horizontal) { w, _ in w * 0.85 }.clipped()
+            AnimatedLoader(name: "finding-matches", contentMode: .fit).containerRelativeFrame(.horizontal) { w, _ in w * 0.92 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if !hasSearched {
             ContentUnavailableView("One-Way ECB Trades", systemImage: "star.circle",
@@ -1159,7 +1159,7 @@ struct TwoWaySheet: View {
         NavigationStack {
             Group {
                 if loading {
-                    AnimatedLoader(name: "finding-matches", contentMode: .fill).frame(maxHeight: 240).containerRelativeFrame(.horizontal) { w, _ in w * 0.85 }.clipped()
+                    AnimatedLoader(name: "finding-matches", contentMode: .fit).containerRelativeFrame(.horizontal) { w, _ in w * 0.92 }
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if let full, (!full.iTake.isEmpty || !full.iGive.isEmpty) {
                     content
@@ -1619,7 +1619,7 @@ struct QualSwapDaysSheet: View {
         NavigationStack {
             Group {
                 if loading {
-                    AnimatedLoader(name: "finding-matches", contentMode: .fill).frame(maxHeight: 240).containerRelativeFrame(.horizontal) { w, _ in w * 0.85 }.clipped()
+                    AnimatedLoader(name: "finding-matches", contentMode: .fit).containerRelativeFrame(.horizontal) { w, _ in w * 0.92 }
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     VStack(spacing: 0) {

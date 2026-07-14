@@ -141,10 +141,10 @@ struct TradeByIntentsFeed: View {
                 if loading {
                     // Animation truly centered in height; Cancel pinned to the bottom (overlay, so it
                     // doesn't pull the animation above center).
-                    AnimatedLoader(name: "finding-matches", contentMode: .fill)
-                        .frame(maxHeight: 240)
-                        .containerRelativeFrame(.horizontal) { w, _ in w * 0.85 }
+                    AnimatedLoader(name: "finding-matches", contentMode: .fit)
+                        .containerRelativeFrame(.horizontal) { w, _ in w * 0.92 }
                         .clipped()
+                        .padding(.vertical, 56)   // substantial breathing room off the segment bar (top + bottom)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .overlay(alignment: .bottom) {
                             Button(role: .cancel) { searchTask?.cancel(); loading = false } label: {
