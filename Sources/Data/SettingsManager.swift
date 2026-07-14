@@ -188,15 +188,15 @@ final class SettingsManager {
     }
     /// The app build whose "What's New" sheet the user has already seen (Z2).
     var lastSeenChangelogBuild: String {
-        didSet { defaults.set(lastSeenChangelogBuild, forKey: Keys.lastSeenChangelog) }
+        didSet { defaults.set(lastSeenChangelogBuild, forKey: Keys.lastSeenChangelog); syncPrefsChanged() }
     }
     /// When the user accepted the in-app terms (the 3-item consent on the welcome walkthrough), and the
     /// app version at acceptance — the on-device consent record. nil = not yet accepted.
     var consentAcceptedAt: Date? {
-        didSet { defaults.set(consentAcceptedAt, forKey: Keys.consentAcceptedAt) }
+        didSet { defaults.set(consentAcceptedAt, forKey: Keys.consentAcceptedAt); syncPrefsChanged() }
     }
     var consentVersion: String {
-        didSet { defaults.set(consentVersion, forKey: Keys.consentVersion) }
+        didSet { defaults.set(consentVersion, forKey: Keys.consentVersion); syncPrefsChanged() }
     }
     /// Record acceptance of the in-app terms (called when all three consent items are agreed + confirmed).
     /// Only stamps the FIRST acceptance so the original consent time is preserved across re-runs of the tour.
@@ -205,10 +205,64 @@ final class SettingsManager {
         consentAcceptedAt = Date()
         consentVersion = "\(AppInfo.version) (\(AppInfo.build))"
     }
-    /// Show the Welcome / What's New sheet on every launch (default ON). When OFF, it only appears
-    /// after an app update (a build the user hasn't seen yet).
+    /// Show the Welcome tour on every launch (default ON). When OFF, it never auto-shows.
     var showWelcomeOnLaunch: Bool {
-        didSet { defaults.set(showWelcomeOnLaunch, forKey: Keys.showWelcomeOnLaunch) }
+        didSet { defaults.set(showWelcomeOnLaunch, forKey: Keys.showWelcomeOnLaunch); syncPrefsChanged() }
+    }
+    /// Show the "What's New" update-notes screen after the welcome and after each app update
+    /// (default ON). When OFF, the update screen never pops automatically.
+    var showUpdateOnLaunch: Bool {
+        didSet { defaults.set(showUpdateOnLaunch, forKey: Keys.showUpdateOnLaunch); syncPrefsChanged() }
+    }
+
+    // MARK: - Cross-device app-prefs sync (welcome / update-notes / consent), LWW by `prefsSyncedAt`.
+    /// LWW clock for the synced app-prefs blob; bumped whenever a synced flag changes locally.
+    var prefsSyncedAt: Date? {
+        didSet { defaults.set(prefsSyncedAt, forKey: Keys.prefsSyncedAt) }
+    }
+    private var suppressPrefsSync = false   // true while adopting a remote blob (so we don't re-publish it)
+
+    /// The device-independent welcome / update-notes / consent flags that follow the user across devices.
+    /// (`tourReplayRequested` is a transient trigger and deliberately NOT synced.)
+    struct SyncedPrefs: Codable {
+        var hasOnboarded: Bool
+        var showWelcomeOnLaunch: Bool
+        var showUpdateOnLaunch: Bool
+        var lastSeenChangelogBuild: String
+        var consentAcceptedAt: Date?
+        var consentVersion: String
+    }
+    func exportSyncedPrefs() -> SyncedPrefs {
+        SyncedPrefs(hasOnboarded: defaults.bool(forKey: Keys.hasOnboarded),
+                    showWelcomeOnLaunch: showWelcomeOnLaunch,
+                    showUpdateOnLaunch: showUpdateOnLaunch,
+                    lastSeenChangelogBuild: lastSeenChangelogBuild,
+                    consentAcceptedAt: consentAcceptedAt,
+                    consentVersion: consentVersion)
+    }
+    func exportSyncedPrefsJSON() -> String? {
+        (try? JSONEncoder().encode(exportSyncedPrefs())).flatMap { String(data: $0, encoding: .utf8) }
+    }
+    /// Adopt a remote prefs blob (remote-newer). Suppresses the change hook so it doesn't re-publish.
+    func applyRemoteSyncedPrefs(_ json: String, at date: Date) {
+        guard let data = json.data(using: .utf8),
+              let p = try? JSONDecoder().decode(SyncedPrefs.self, from: data) else { return }
+        suppressPrefsSync = true
+        defaults.set(p.hasOnboarded, forKey: Keys.hasOnboarded)   // @AppStorage("hasOnboarded") observes this
+        showWelcomeOnLaunch = p.showWelcomeOnLaunch
+        showUpdateOnLaunch = p.showUpdateOnLaunch
+        lastSeenChangelogBuild = p.lastSeenChangelogBuild
+        consentAcceptedAt = p.consentAcceptedAt
+        consentVersion = p.consentVersion
+        prefsSyncedAt = date
+        suppressPrefsSync = false
+    }
+    /// Call when a synced flag (or `hasOnboarded`, from finishing the tour) changes locally: bump the LWW
+    /// clock and push the blob. No-op while adopting a remote blob or during init (didSet doesn't fire then).
+    func syncPrefsChanged() {
+        guard !suppressPrefsSync else { return }
+        prefsSyncedAt = Date()
+        Task { await PrivateStateStore.shared.publishLocalPrefs() }
     }
     /// Once-a-day on-device summary of what needs you (pending trades + unread). Default ON.
     var dailyDigestEnabled: Bool {
@@ -288,7 +342,9 @@ final class SettingsManager {
         lastSeenChangelogBuild   = defaults.string(forKey: Keys.lastSeenChangelog) ?? ""
         consentAcceptedAt        = defaults.object(forKey: Keys.consentAcceptedAt) as? Date
         consentVersion           = defaults.string(forKey: Keys.consentVersion) ?? ""
+        prefsSyncedAt            = defaults.object(forKey: Keys.prefsSyncedAt) as? Date
         showWelcomeOnLaunch      = defaults.object(forKey: Keys.showWelcomeOnLaunch) == nil ? true : defaults.bool(forKey: Keys.showWelcomeOnLaunch)
+        showUpdateOnLaunch       = defaults.object(forKey: Keys.showUpdateOnLaunch) == nil ? true : defaults.bool(forKey: Keys.showUpdateOnLaunch)
         privateNotes             = defaults.string(forKey: Keys.privateNotes) ?? ""
         privateNotesUpdatedAt    = (defaults.object(forKey: Keys.privateNotesAt) as? Date) ?? .distantPast
     }
@@ -326,6 +382,9 @@ final class SettingsManager {
         static let consentAcceptedAt = "batman.consentAcceptedAt"
         static let consentVersion = "batman.consentVersion"
         static let showWelcomeOnLaunch = "batman.showWelcomeOnLaunch"
+        static let showUpdateOnLaunch = "batman.showUpdateOnLaunch"
+        static let prefsSyncedAt = "batman.prefsSyncedAt"
+        static let hasOnboarded = "hasOnboarded"   // matches @AppStorage("hasOnboarded") in the views
         static let privateNotes  = "batman.privateNotes"
         static let privateNotesAt = "batman.privateNotesAt"
         static let appleUserID   = "batman.appleUserID"

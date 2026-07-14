@@ -79,10 +79,15 @@ struct WelcomeWalkthrough: View {
 
     private var header: some View {
         HStack {
-            Text("DX TRADER")
-                .font(.system(size: 11, weight: .heavy))
-                .kerning(2.4)
-                .foregroundColor(WT.accent)
+            HStack(spacing: 8) {
+                Image("dx-standard-dark-1024")   // logo in the top-left corner
+                    .resizable().scaledToFit().frame(width: 24, height: 24)
+                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                Text("DX TRADER")
+                    .font(.system(size: 11, weight: .heavy))
+                    .kerning(2.4)
+                    .foregroundColor(WT.accent)
+            }
             Spacer()
             if index < last {
                 Button("Skip") { withAnimation { index = last } }
@@ -132,14 +137,9 @@ struct WelcomeWalkthrough: View {
     private var welcomeCard: some View {
         VStack(spacing: 16) {
             Spacer()
-            Image("AppIconLarge") // or your plane mark; falls back gracefully if absent
-                .resizable().scaledToFit().frame(width: 84, height: 84)
-                .opacity(0.001) // remove this line + asset note if you add the mark
-                .overlay(
-                    Image(systemName: "airplane")
-                        .font(.system(size: 56, weight: .semibold))
-                        .foregroundColor(WT.accent)
-                )
+            Image("dx-standard-dark-1024")   // the DX Trader logo mark (matches the app icon)
+                .resizable().scaledToFit().frame(width: 104, height: 104)
+                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
             Text("Welcome to DX Trader")
                 .font(.system(size: 30, weight: .heavy))
                 .foregroundColor(WT.text)

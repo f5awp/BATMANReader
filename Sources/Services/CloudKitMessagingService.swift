@@ -174,6 +174,32 @@ final class PrivateStateStore {
         guard SettingsManager.shared.useCloudKit else { return }
         await syncNotesOnLaunch()
         await syncIntentsOnLaunch()   // B4-2 — ALWAYS runs, regardless of the notes record
+        await syncPrefsOnLaunch()     // welcome / update-notes / consent flags across the user's devices
+    }
+
+    /// Reconcile the welcome/update/consent flags across the user's devices (newer wins, by prefsSyncedAt).
+    func syncPrefsOnLaunch() async {
+        guard SettingsManager.shared.useCloudKit else { return }
+        let s = SettingsManager.shared
+        let localAt = s.prefsSyncedAt ?? .distantPast
+        guard let remote = await cloud.fetchPrefs() else {
+            if s.prefsSyncedAt != nil, let json = s.exportSyncedPrefsJSON() {
+                await cloud.publishPrefs(json, updatedAt: localAt)   // seed the record if we have local prefs
+            }
+            return
+        }
+        if remote.updatedAt > localAt {
+            s.applyRemoteSyncedPrefs(remote.json, at: remote.updatedAt)   // remote newer → adopt
+        } else if localAt > remote.updatedAt, let json = s.exportSyncedPrefsJSON() {
+            await cloud.publishPrefs(json, updatedAt: localAt)           // local newer → push
+        }
+    }
+
+    /// Push the local welcome/update/consent flags (called from `SettingsManager.syncPrefsChanged()`).
+    func publishLocalPrefs() async {
+        guard SettingsManager.shared.useCloudKit,
+              let json = SettingsManager.shared.exportSyncedPrefsJSON() else { return }
+        await cloud.publishPrefs(json, updatedAt: SettingsManager.shared.prefsSyncedAt ?? Date())
     }
 
     /// Reconcile local vs remote private notes (newer wins).
@@ -302,6 +328,26 @@ actor CloudKitPrivateStateService {
         guard let record = try? await db.record(for: id),
               let json = record["tradeHistory"] as? String,
               let updatedAt = record["tradeHistoryUpdatedAt"] as? Date else { return nil }
+        return (json, updatedAt)
+    }
+
+    /// App prefs (welcome / update-notes / consent flags) — private, cross-device only. Rides the same
+    /// private_state record in its own fields (needs `appPrefs` / `appPrefsUpdatedAt` deployed in the
+    /// CloudKit Console — see CLOUDKIT_DEPLOY.md).
+    func publishPrefs(_ json: String, updatedAt: Date) async {
+        let record: CKRecord
+        if let existing = try? await db.record(for: id) { record = existing }
+        else { record = CKRecord(recordType: Self.recordType, recordID: id) }
+        record["appPrefs"] = json as CKRecordValue
+        record["appPrefsUpdatedAt"] = updatedAt as CKRecordValue
+        do { _ = try await db.save(record) }
+        catch { print("⚠️ app-prefs publish failed: \(error.localizedDescription)") }
+    }
+
+    func fetchPrefs() async -> (json: String, updatedAt: Date)? {
+        guard let record = try? await db.record(for: id),
+              let json = record["appPrefs"] as? String,
+              let updatedAt = record["appPrefsUpdatedAt"] as? Date else { return nil }
         return (json, updatedAt)
     }
 }

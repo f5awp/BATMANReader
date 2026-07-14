@@ -496,11 +496,13 @@ struct MechanismsView: View {
 
 /// The curated version history — milestones build by build, to show the scope of work.
 /// Card-based (matches the welcome "What's New" page) for clearer contrast than a plain list.
+/// The full release history, from `ReleaseNotes.all` (the What's New source of truth). The current-release
+/// popup is the standalone `WhatsNewView`; this is the scrollable archive reached from Settings.
 struct VersionHistoryView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                ForEach(Array(AppGuide.versionHistory.enumerated()), id: \.element.id) { i, rel in
+                ForEach(Array(ReleaseNotes.all.enumerated()), id: \.element.id) { i, rel in
                     releaseCard(rel, isLatest: i == 0)
                 }
             }
@@ -512,7 +514,6 @@ struct VersionHistoryView: View {
 
     private func releaseCard(_ rel: ReleaseNote, isLatest: Bool) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            // Header: build name in accent + a one-line headline, so each build reads as its own titled block.
             VStack(alignment: .leading, spacing: 3) {
                 Label(rel.version, systemImage: isLatest ? "sparkles" : "shippingbox.fill")
                     .font(.headline).labelStyle(.titleAndIcon).foregroundStyle(AppColor.primary)
@@ -520,19 +521,21 @@ struct VersionHistoryView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             Divider()
-            // Bullets in full-contrast primary text with an accent dot — readable, not washed-out gray.
-            ForEach(rel.points, id: \.self) { p in
+            ForEach(rel.bullets) { b in
                 HStack(alignment: .top, spacing: 10) {
-                    Circle().fill(AppColor.primary).frame(width: 6, height: 6).padding(.top, 6)
-                    Text(p).font(.subheadline).foregroundStyle(.primary)
-                        .fixedSize(horizontal: false, vertical: true)
+                    Text(b.icon).font(.subheadline.weight(.bold)).foregroundStyle(b.color)
+                        .frame(width: 18, alignment: .center)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(b.title).font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
+                        Text(b.body).font(.caption).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
         .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14))
-        // The current build gets an accent ring so it stands out from prior history.
         .overlay(
             RoundedRectangle(cornerRadius: 14)
                 .stroke(isLatest ? AppColor.primary.opacity(0.5) : .clear, lineWidth: 1.5))

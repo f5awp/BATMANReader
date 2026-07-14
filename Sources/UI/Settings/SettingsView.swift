@@ -20,7 +20,7 @@ struct SettingsView: View {
     @State private var showDebugPrompt = false
     @State private var debugPwDraft = ""
     @State private var checkingCloudKit = false
-    @AppStorage("hasOnboarded") private var hasOnboarded = false   // first-run walkthrough gate
+    @AppStorage("tourReplayRequested") private var tourReplayRequested = false   // "Replay tour" one-off trigger
     @State private var rosterProbe: String?   // dev: roster date-span + last-60d readout
     @State private var showImporter = false   // dev: manual master schedule CSV import (moved off Home)
     @State private var importResult: String?
@@ -42,8 +42,11 @@ struct SettingsView: View {
                     DXIconRow(icon: "hand.wave", tint: AppColor.primary, title: "Show Welcome on launch") {
                         Toggle("", isOn: $settings.showWelcomeOnLaunch).labelsHidden().tint(AppColor.success)
                     }
+                    DXIconRow(icon: "sparkles", tint: AppColor.special, title: "Show update notes on launch") {
+                        Toggle("", isOn: $settings.showUpdateOnLaunch).labelsHidden().tint(AppColor.success)
+                    }
                 } footer: {
-                    Text("When on, the first-run welcome tour appears on launch until you finish it. When off, it won't appear automatically — use “Replay tour” below to see it again.")
+                    Text("The welcome tour appears on first launch (replay it below anytime). The “What's New” screen appears after the tour and after each app update — turn it off here to skip it.")
                 }
 
                 // ── App info: installed version + last schedule sync (moved off the Home page) ───
@@ -58,11 +61,10 @@ struct SettingsView: View {
 
                 // ── Help ─────────────────────────────────────────────
                 Section {
-                    // Re-arm the first-run guided tour. Force the launch toggle on so it can't be suppressed,
-                    // then close Settings so the full-screen walkthrough appears.
+                    // Re-arm the guided tour once (independent of the launch toggle), then close Settings so
+                    // the full-screen walkthrough appears.
                     Button {
-                        settings.showWelcomeOnLaunch = true
-                        hasOnboarded = false
+                        tourReplayRequested = true
                         dismiss()
                     } label: {
                         DXIconRow(icon: "play.circle", tint: AppColor.primary, title: "Replay tour") { settingsChevron }

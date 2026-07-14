@@ -30,7 +30,9 @@ struct ContentView: View {
     @State private var showDashboard = false       // trade-status dashboard (from the top-bar status strip)
     @State private var showECB = false             // ECB Accounting ledger (⋯ menu)
     @State private var showChangelog = false   // Z2: "What's New" — now only from Settings, not on launch
-    @AppStorage("hasOnboarded") private var hasOnboarded = false   // first-run WelcomeWalkthrough gate
+    @AppStorage("hasOnboarded") private var hasOnboarded = false   // has completed the tour at least once
+    @State private var walkthroughDismissed = false   // per-launch: closed the tour this session
+    @AppStorage("tourReplayRequested") private var tourReplayRequested = false   // Settings → Replay tour
     @State private var launchLoading = true     // spinner during the initial sync so it never looks frozen
     @Environment(\.scenePhase) private var scenePhase
     @State private var pendingTab: Int? = nil   // C1 phase-2: tab the user wants to leave Home for
@@ -125,8 +127,9 @@ struct ContentView: View {
             Text("\(messaging.blockedRecipient ?? "This dispatcher") doesn't have an active \(AppGuide.appName) profile, so they can't receive trade requests or messages yet. They still show in your matches — reach out another way, or wait until they set up trading in the app.")
         }
         .sheet(isPresented: $showChangelog) {
-            WelcomeView {
-                settings.lastSeenChangelogBuild = AppInfo.build   // mark seen on dismiss
+            WhatsNewView {
+                settings.lastSeenChangelogBuild = AppInfo.build   // mark this build's notes seen
+                showChangelog = false                             // "Continue" dismisses the sheet
             }
             .magnifiable()
         }
@@ -137,16 +140,26 @@ struct ContentView: View {
         )) {
             OnboardingView()
         }
-        // First-run guided tour — replaces the old launch welcome. Shown once, only AFTER identity is set
-        // (so it never stacks with OnboardingView). "Replay tour" in App Settings re-arms it.
+        // Guided tour on launch — driven by the "Show Welcome on launch" toggle (ON ⇒ shows every launch,
+        // OFF ⇒ never). Shown only AFTER identity is set (so it never stacks with OnboardingView), and only
+        // until it's finished this session (walkthroughDismissed), so completing it closes the cover.
         .fullScreenCover(isPresented: Binding(
-            get: { !hasOnboarded
-                   && settings.showWelcomeOnLaunch   // the "Show Welcome on launch" toggle still skips it
+            get: { ((settings.showWelcomeOnLaunch && !walkthroughDismissed) || tourReplayRequested)
                    && !settings.appleUserID.isEmpty
                    && !settings.username.trimmingCharacters(in: .whitespaces).isEmpty },
             set: { _ in }
         )) {
-            WelcomeWalkthrough { hasOnboarded = true }
+            WelcomeWalkthrough {
+                walkthroughDismissed = true   // close the cover for this session (the toggle re-shows it next launch)
+                tourReplayRequested = false   // consume a one-off replay
+                hasOnboarded = true
+                settings.syncPrefsChanged()   // sync "completed the tour" (+ consent) across the user's devices
+                // The "What's New" screen pops right after the welcome (once the cover dismisses).
+                if settings.showUpdateOnLaunch {
+                    Task { try? await Task.sleep(for: .milliseconds(450)); showChangelog = true }
+                }
+            }
+            .magnifiable()   // screen magnifier available during the welcome tour too
         }
         .preferredColorScheme(AppAppearance(rawValue: settings.appearance)?.scheme)
         // Loading animation (loading.json) over the initial cross-device sync.
@@ -188,8 +201,12 @@ struct ContentView: View {
             }
             // Essential data is in → Home renders locally, the app is usable. Drop the loader NOW.
             launchLoading = false
-            // The first-run welcome is now the WelcomeWalkthrough (full-screen cover, gated by
-            // `hasOnboarded`). WelcomeView stays reachable from App Settings as the "How it works" reference.
+            // The first-run welcome is the WelcomeWalkthrough (full-screen cover, gated by `hasOnboarded`),
+            // and it pops the What's New screen on finish. For ALREADY-onboarded users, show What's New once
+            // per app update (build changed) — unless they've turned the update screen off.
+            if hasOnboarded, settings.showUpdateOnLaunch, settings.lastSeenChangelogBuild != AppInfo.build {
+                showChangelog = true
+            }
 
             // PHASE 2 — background housekeeping; none of it gates first paint or Welcome. The remaining
             // cross-device reads (started concurrently above) are awaited HERE, so the loader wasn't held on

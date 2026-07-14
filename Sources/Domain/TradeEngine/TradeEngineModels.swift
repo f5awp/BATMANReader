@@ -782,13 +782,6 @@ struct MechanismSection: Sendable, Identifiable {
     var id: String { title }
 }
 
-/// One shipped release, for the version history (showcases the work done).
-struct ReleaseNote: Sendable, Identifiable {
-    let version: String       // e.g. "Build 3"
-    let headline: String
-    let points: [String]
-    var id: String { version }
-}
 
 /// All the static copy behind the Welcome flow: the purpose pitch, the engineer-level
 /// mechanisms tour, and the version history. Pure data so it's testable + lives in a compiled file.
@@ -1036,85 +1029,6 @@ enum AppGuide {
             why: "Timely nudges about what needs you — without opening the app."),
     ]
 
-    /// Curated version history — milestones, technical, to show the scope of work.
-    static let versionHistory: [ReleaseNote] = [
-        ReleaseNote(
-            version: "v2.2 — ECB Accounting, accessibility & trade polish",
-            headline: "A big update: track your ECB, a screen magnifier for everyone, and clearer, faster trading.",
-            points: [
-                "In \"I'm Feeling Lucky,\" you can now search for trades by the date ranges, shift times, and qualifications you want back!",
-                "The Welcome / What's New screen is now optional — turn off \"Show on every launch\" and it only reappears after an app update.",
-                "The swap calendars are now readable both vertically and horizontally — they fit any device, labels no longer clip, and tapping a day shows its full detail.",
-                "ECB Accounting (tap ⋯ → ECB Accounting): a YNAB-style ledger for all your ECB. Log every deposit (OT, holidays), withdrawal, and trade and it keeps a running balance — Available (cleared, capped at 144), Projected (once scheduled ECB and IOUs land), and what you Owe / are Owed. Budget your ECB like money instead of tracking it on paper. Lines stay pending until you mark them cleared on a pay day.",
-                "ECB trades sync both ways: trade ECB with a dispatcher and it posts to BOTH ledgers once they confirm in their Inbox; accepting an in-app ECB offer posts it automatically. You can even IOU a future deposit before it lands.",
-                "Vacation & ECB-VC days: the master schedule doesn't show whether you traded into a vacation day, so ALL vacation days are set to OFF by default. You can open any of those days and toggle \"Trade Picked Up\" — that updates the app's calendar AND your Apple Calendar to reflect what you actually work.",
-                "Screen magnifier — now ON by default (turn it off in ⋯ → App Settings → Accessibility → Screen magnifier). A DRAGGABLE floating button appears on every screen; drag it wherever, tap it, and pinch with two fingers to zoom and pan (one finger still taps/scrolls). Works on the whole app, including pop-up sheets.",
-                "Intents now has two sections — \"Mutual\" (both of you marked the day) and \"All\" (every possible partner); switching is instant, and the heavy 3+person/circular search is opt-in via \"More: 3+ & loops.\"",
-                "Cleaner, less-cluttered layout: redesigned trade/package cards (one compact \"Name — dates\" line per person) and a refreshed calendar view; Trade Settings are now tap pills (shift types, regions grayed when unqualified, blackout days); a tidier top bar (Inbox · Channel · Trade status with badges · ⋯) with the color key by the Home layers button; and tapping any day opens the full editor directly. \"Keep\" (green) vs \"Blackout\" (slate) are consistent everywhere.",
-                "Home Screen widgets: long-press the Home Screen → ＋ → search \"DX Trader\" to add \"Next Shift\" (your next shift + a week-at-a-glance strip) and \"Trade Requests\" (how many are waiting) — updated automatically.",
-                "Live daily digest refreshes its counts in the background, and @-mentioning a dispatcher in a channel sends them a push.",
-                "— Refinements —",
-                "Trade Inbox is now split into Intents · Search · ECB · Misc, so requests are filed by where they came from. ECB offers live in their own tab: tap an offer to see everyone you sent it to and their response, and tap a name to open the exact card they got.",
-                "ECB Accounting always shows You owe / Owed to you (even at zero) and counts awaiting-confirmation trades, so your outstanding position is always visible.",
-                "The two-calendar swap view now scales to fit any device — side-by-side in landscape (iPhone or iPad), stacked and full-height in portrait — and multi-person trade cards in the Inbox tap open the same calendars. Shift labels no longer clip and off-day intents show.",
-                "Trade Status cards now match the app's card style and colors. Each trade card shows your own row first, from your perspective.",
-                "Trade Solutions \"More\" search adds date-range, shift-time (what you'd pick up), and desk-qualification filters. One-way ECB offers to dispatchers not on the app are now matched to their last-60-day behavior (they won't be offered a shift type they haven't worked).",
-                "Fixes: your held quals (e.g. Latin) now read correctly on the onboarding preferences page, and the update-notes screen matches the welcome design.",
-            ]),
-        ReleaseNote(
-            version: "Build 5 — A cleaner app, smarter trades",
-            headline: "A top-to-bottom design pass plus several trade-quality fixes from beta feedback.",
-            points: [
-                "Bookends rank higher — always. Even with openness set to \"all,\" a trade where the day you receive attaches cleanly to your schedule now ranks above scattered mid-week \"island\" days. Set Bookends-Only and island days are hidden entirely.",
-                "No more junk reciprocals: a trade that would hand you a random day you never asked for is pushed to the bottom (or dropped) — across 2-way, multi-person, circular, and the Intents feed.",
-                "Training & irregular shifts excluded: anyone permanently on a TRN/training shift or an off-hours assignment no longer shows up as a tradeable partner.",
-                "Traded back from vacation? It shows correctly now — if you gave up vacation and picked up a real desk, that day reads as the working shift instead of \"vacation.\"",
-                "Removed the weekly-hours cap setting and its matching limit.",
-                "One clean design language: a single color system (one color = one meaning), one rounded button shape app-wide, a unified top bar (you · Inbox · Channel · ⋯), a compact trades stat, uncluttered month headers, and a collapsible in-app color legend.",
-                "🤖 marks dispatchers who aren't on the app yet, and you're told when someone can't receive a message. The moment they sign up it clears — and they can receive requests and notifications right away.",
-                "@-mentions in channels: tap @ to mention a dispatcher or @everyone.",
-                "A once-a-day summary notification of what needs you (toggle in App Settings), a faster Trades tab with a loading indicator, and manual schedule import moved into Developer settings.",
-            ]),
-        ReleaseNote(
-            version: "Build 4 — Scoring engine, marketplace & beta polish",
-            headline: "The first TestFlight beta: an acceptance model unifies every feed, the Intents marketplace and deep search become first-class, and the Trades tab gets faster and clearer.",
-            points: [
-                "Unified acceptance scoring (TradeScore.packageLogProb): replaced the old count/quality-band heuristics with a per-leg logistic model → log-product package score with an intent-scaled split penalty and a 0.85-per-extra-person N-penalty. One scoring function now drives Trade Solutions, Intents, AND ECB.",
-                "Absolute floor curation replaced top-N caps: finalize() keeps everything above a probability floor (0.32 normal / 0.07 Lucky) with an empty-feed fallback and safety ceiling — so result volume reflects real match quality, not an arbitrary number.",
-                "Per-leg grading from LIVE data (legFeatures): want-to-take/-trade intent, isAnchored bookend detection, exp-decay soonness, qual-bridge friction, and a learned PersonPrior.logOdds acceptance prior (low-weight tiebreaker, computed once per search).",
-                "Intents split off into its own intent-first marketplace engine (intentSolutions/assembleIntentDeal) — seeds from either side's marked day, ranks by mutual 🔥, and supports preference-joined circular loops under Lucky.",
-                "'I'm Feeling Lucky' now GATES the heavy work: the 3+/circular DFS, min-cost optimization, and qual-swap assembly run once on Generate, with best-first seeding at every DFS node and cooperative cancellation (no stale-result races).",
-                "'Max people in a trade' toggle (pairs / ≤3 / unbound) surfaced on the Intents and Trade Solutions pages; the two-way-only gate was removed so progressive-N is curated by the floor.",
-                "Qual-swap ranking: clean packages sort before qual-swap ones at equal N, while a qual-swap can still outrank a larger clean trade (N dominates).",
-                "1:1 chat photo attachments (rides the message JSON payload, no schema change).",
-                "Trades streamlined: the redundant Just 2 tab was removed (use Trade size → Pairs); its full-roster 'Look up a dispatcher' lookup moved to Trade Solutions. Trades is now three tabs — Intents · Trade Solutions · ECB.",
-                "Responsive Trades: a per-tab TradeFeedCache keeps each feed loaded across tab switches and re-runs the engine ONLY when inputs (intents / Trade size / What-If) change; searches are cancellable (Cancel button) and yield to the main run loop so the UI no longer freezes during a long search.",
-                "Performance: per-search MatchContext loads the roster window, day-maps, candidate universe, and acceptance priors ONCE and threads them through every stage — eliminating 2–4 redundant SwiftData fetches and the per-leg responses scan per search.",
-                "CloudKit production schema deployed (candidateIDs/perfectMatch/hasQualSwap indexed on TradeRequest; MetricEvent + PrivateState types) — activating bridge discovery, perfect-match & qual-swap push, team metrics, and private-note sync.",
-            ]),
-        ReleaseNote(
-            version: "Build 2 — Correctness, legibility & resilience",
-            headline: "The matching universe, trade cards, and channel hardened into something accurate and readable.",
-            points: [
-                "Match universe fix (MatchUniverse.candidates): the whole roster is now eligible — unknown-profile peers included (ranked lower), not just the ~handful of opted-in profiles. Profileless peers default to Bookends-Only via one factory, killing split-the-weekend offers at the source.",
-                "Eligibility consolidation: every matcher path (two-way, ECB, candidate scan, n-way) now delegates to the single TradeEligibility.canCover predicate — the last duplicated gate implementations were retired, proven by a gate-matrix regression test.",
-                "Bookend/split correctness (NWayRoute.bookendCount + isAnchored): circular loops count real per-receiver bookends, so split-heavy loops demote below clean ones; 2-cycles are no longer mislabeled 'circular'.",
-                "Per-worker deterministic trade colors and real-name resolution (TradeNames) everywhere; one clean people-count label per card; earliest-date + bookend sort tiebreaks.",
-                "Channel: Reddit-style nested replies (pre-order threaded tree with collapse), single-reaction-per-user on posts/replies/chat, photo posts, oldest→newest ordering.",
-                "Resilience: FetchMerge.keepCacheOnEmpty guard so a transient CloudKit query error can never wipe cached posts/trades/feedback; import sanity audit (ImportAudit) flags nameless/duplicate/missing-self rows.",
-                "Global metrics (MetricEvent event log) and cross-device status/private-note sync via last-write-wins.",
-            ]),
-        ReleaseNote(
-            version: "Build 1 — Foundation",
-            headline: "Read the schedule, model intent, and generate the first legal trades.",
-            points: [
-                "Automatic schedule from the shared master (day-row-spine ScheduleParser → SwiftData RosterStore), with vacation (L|V) handling, self-healing store recovery, and version-stamped re-import.",
-                "Intent model (DayIntentStore): trade-away / keep / must-be-off / want-to-work as disjoint sets, with bulk paint brushes, note stamping, and a save-or-discard editing flow.",
-                "The three-layer matching engine: shared eligibility predicate → two-way reciprocal exploration → bounded N-way circular DFS; plus OptimalMatcher/MinCostFlow for fewest-people covers.",
-                "ECB one-way give-aways with a fair per-shift claim queue; qual-swap 3-party bridge assembly.",
-                "Trade inbox (accept / counter / decline) with 1:1 chat, a broadcast channel, reminders, Home-Screen widgets, and Siri/Shortcuts intents.",
-            ]),
-    ]
 }
 
 /// Outlook/email trade announcement to the dispatch DL (G1). Pure body/URL builders so
