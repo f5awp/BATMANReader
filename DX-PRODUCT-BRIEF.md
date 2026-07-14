@@ -40,6 +40,7 @@ matching engine), so it is comprehensive and up to date — not the older in-app
 | 16 | Screenshots available | ● | |
 | 17 | Suggested deck outline | ● | |
 | 18 | Welcome-screen / training copy suggestions | | ● |
+| 19 | Why CloudKit + iOS is the right foundation (architecture rationale) | ● | |
 
 ---
 
@@ -116,9 +117,9 @@ entire roster and builds every legal trade it can:
 - **Circular loops** (A→B→C→A — everyone covers someone, nobody loses hours),
 - **Qual-swap bridges** (a third qualified person slides aside so an unqualified taker can cover).
 
-Every leg is checked against the **hard rules** — desk qualification, the 8-hour rest gap, weekly-hour cap,
-Must-Be-Off, Keep, the relief-dispatcher horizon, and bookend anchoring — and both people's **preferences**
-before it's ever shown. The same eligibility code runs behind every feed, so the rules can never diverge.
+Every leg is checked against the **hard rules** — desk qualification, the 8-hour rest gap, Must-Be-Off,
+Keep, the relief-dispatcher horizon, and bookend anchoring — and both people's **preferences** before it's
+ever shown. The same eligibility code runs behind every feed, so the rules can never diverge.
 
 ### 4.3 The best matches rise to the top
 Matches are **ranked, not piled.** A deal where **both** of you marked the day (a mutual 🔥) sits at the
@@ -288,8 +289,8 @@ The engine is genuinely sophisticated; use this to make "ranked, legal, trustwor
 
 - **One shared eligibility predicate** (`TradeEligibility.canCover`) enforces every hard gate — dispatch-shift
   timing (only 0500/1300/2100 starts, never training desks), off-on-cover-day, **desk qualification**,
-  **8-hour rest**, **weekly-hour cap**, **Must-Be-Off**, **Keep**, **relief-dispatcher horizon**, and
-  **bookend anchoring** — plus a soft layer (openness, blacklists, want-to-work overrides, mercenary mode).
+  **8-hour rest**, **Must-Be-Off**, **Keep**, **relief-dispatcher horizon**, and **bookend anchoring** —
+  plus a soft layer (openness, blacklists, want-to-work overrides, mercenary mode).
   Because every path calls this exact code, the rules can **never diverge** between feeds. Returns
   eligible + isBookend.
 - **Two engines, distinct rankings.** `packages()` (Trade Solutions) ranks **coverage-first** (most of *your*
@@ -374,11 +375,11 @@ The engine is genuinely sophisticated; use this to make "ranked, legal, trustwor
   still apply).
 - **Blacklists:** weekdays, desks, shift types (AM/PM/MID), regions; and **qual-swap preferences** (per-qual
   value where higher = preferred, 0 = never; plus a qual-swap desk blacklist).
-- **Relief dispatcher:** limit your known schedule to a horizon (default ~45 days); days beyond it are hidden
-  from you and from others' trading.
-- **Other:** weekly-hour cap and normal max-people search depth; public status; private notes (2000 chars,
-  synced across *your* devices only); contact info; appearance; notification lead time; daily-digest hour;
-  Employee ID + Sign in with Apple.
+- **Relief dispatcher:** limit your known schedule to a horizon date you set (unset by default; the picker
+  starts a few weeks out); days beyond it are hidden from you and from others' trading.
+- **Other:** normal max-people search depth; public status; private notes (2000 chars, synced across *your*
+  devices only); contact info; appearance; notification lead time; daily-digest hour; Employee ID + Sign in
+  with Apple.
 - **Sync model:** the CloudKit public DB holds profiles, channel, trades/responses, and metrics — each record
   stores the whole model as a JSON payload plus a few flat queryable fields (toID, fromID, candidateIDs,
   perfectMatch, hasQualSwap) for cheap server-side filtering, so the data model evolves without schema churn.
@@ -454,6 +455,87 @@ ledger, and the Intents Mutual/All split. When improving it:
 - **Add "Track your ECB"** (the ledger: Available capped at 144, Projected, Owe/Owed, IOUs).
 - **Keep the "How it works" walkthrough** (§4) and the scoring table (§4.4) — they're the trust story.
 - Keep training skimmable: one concept per card, an icon, one action.
+
+---
+
+## 19. Why CloudKit + iOS is the right foundation (architecture rationale)
+
+This is the "why we built it this way" story — useful for the deck's credibility section and for reassuring
+a dispatcher group that their trades and schedule data are safe. Explained from scratch.
+
+### 19.1 What the architecture actually is
+DX Trader is a **native iOS/iPadOS app with no company server behind it.** Most apps have a backend the
+maker operates (a database on AWS/Google, an accounts system, a push server) — a thing that stores your data,
+that someone administers, that can be logged, subpoenaed, breached, billed for, or shut off. DX Trader has
+none of that. Instead it uses **Apple CloudKit**: Apple's own cloud database, built into every iPhone and
+iPad, that each dispatcher reaches through the **iCloud account already on their device.** The app is the
+client; Apple's infrastructure is the backend. There is no middle server that the developer — or the
+airline — runs or can peer into.
+
+Data is split into two Apple-hosted databases:
+- **Private database** (visible only to *you*, synced across *your own* devices): your intents/marks, private
+  notes, your ECB ledger, and your trade history. Not even the app's developer can read it — it lives in your
+  personal iCloud, encrypted, under your Apple ID.
+- **Public database** (shared among people using the app): trade profiles, the channel, trade
+  requests/responses, and anonymous team counts — the shop-wide board. It's the app's shared container, not a
+  company system.
+
+### 19.2 Why it's the right tool — reasons, from the ground up
+
+1. **Everyone already has the hardware and the account.** Every dispatcher has at least a company-issued
+   iPad, and most a personal iPhone — all Apple devices with an Apple ID built in. That means **zero
+   onboarding friction:** no new account to create, no password to hand out, no server login, no IT ticket.
+   The thing that authenticates you (your iCloud/Apple ID) is already signed in. A cross-platform app would
+   have to build and run all of that; here it's free and instant.
+
+2. **Privacy *from the employer* is structural, not a promise.** This is the big one. Because there is **no
+   company-run backend**, there is no place the airline can go to read who's trading what. Your personal
+   marks, notes, ledger, and history sit in *your* private iCloud — the app can't even see them server-side,
+   let alone management. The shared trades live in Apple's CloudKit container tied to the app, not on any AA
+   system, and travel **encrypted in transit and at rest**. The privacy isn't a policy someone could reverse;
+   it's a property of the design — there's simply no log to pull. *(Honest nuance for the pitch: for the
+   strongest separation, use the app under a **personal Apple ID** — e.g. on your iPhone — since a
+   company-managed Apple ID on an MDM-managed iPad can be more tightly administered by the employer. The
+   company iPad is the guaranteed-hardware fallback; the personal device is the privacy-maximizing choice.)*
+
+3. **Data stability and durability come built in.** Apple replicates, backs up, and serves the data — the
+   same infrastructure behind Photos and iCloud Drive, with uptime no volunteer-run server could match. On
+   top of that the app adds its own safety: **last-write-wins** conflict resolution (by timestamp) so two
+   devices never corrupt each other, an **empty-fetch guard** so a momentary network blip can never wipe your
+   local data, and **atomic roster imports** (a new schedule generation is swapped in as one operation, so you
+   never see a half-loaded schedule). Data loss is engineered against at every layer.
+
+4. **It's free — and stays free.** There's no cloud bill, no server to keep patched, no database to
+   administer, no on-call. CloudKit's quotas are generous and scale with the number of users, at no cost to
+   the developer. That matters for a **dispatcher-built tool with no budget:** it can run indefinitely without
+   someone paying a hosting invoice every month or a company signing a vendor contract. Nothing about keeping
+   it alive depends on funding.
+
+5. **Deep OS integration you only get by being native.** Because it's a real iOS app, it plugs straight into
+   the platform: **Home-Screen widgets** (next shift + pending trades at a glance), **Siri & Shortcuts / App
+   Intents** ("what's tomorrow's shift", auto-set an alarm), **Apple Calendar (EventKit)** sync so your shifts
+   land in the calendar you already check (and Google Calendar by extension), and **targeted push
+   notifications** via Apple's own delivery (APNs) with no separate push service to run. A web app or
+   cross-platform shell can't reach these cleanly.
+
+6. **It rides Apple's roadmap — including iOS 27.** New OS capabilities arrive as free upgrades the app can
+   adopt: **on-device Foundation Models AI** (iOS 27) already powers a private, offline schedule summary and a
+   drafted trade-broadcast message — no API keys, no data sent to a third party, no per-use cost. The **Liquid
+   Glass** design language, richer widgets, and expanded App Intents all extend the app without a rebuild.
+   Betting on the native platform means the app gets *better* as the devices everyone already carries get
+   better.
+
+7. **Identity and access control are Apple's problem, solved.** Access is scoped by the user's iCloud account;
+   **Sign in with Apple** provides an unforgeable identity when one is needed. There's no password database to
+   leak because the app never stores one — authentication is delegated to Apple.
+
+### 19.3 The one honest trade-off
+CloudKit is **Apple-only** — it assumes iPhone/iPad, which is exactly true for this group (company iPads +
+personal iPhones), so it's a feature here rather than a limit. If the tool ever had to serve Android users,
+that's the one thing this architecture couldn't do without adding a real backend — and with it, the very
+server-and-privacy exposure this design deliberately avoids. For an all-Apple dispatcher shop that wants
+privacy, stability, zero cost, and deep device integration, CloudKit + native iOS is the *right* tool, not
+just a convenient one.
 
 ---
 

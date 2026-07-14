@@ -13,5 +13,18 @@
 		<string>remote-notification</string>
 		<string>fetch</string>
 	</array>
+	<key>UILaunchScreen</key>
+	<dict>
+		<key>UIColorName</key>
+		<string>LaunchBG</string>
+		<key>UIImageRespectsSafeAreaInsets</key>
+		<true/>
+	</dict>
+	<key>UIAppFonts</key>
+	<array>
+		<string>Archivo-Black.ttf</string>
+		<string>Archivo-Bold.ttf</string>
+		<string>Archivo-SemiBold.ttf</string>
+	</array>
 </dict>
 </plist>

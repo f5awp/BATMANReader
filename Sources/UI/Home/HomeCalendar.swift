@@ -87,11 +87,21 @@ struct IntentCalendarView: View {
     let mode: IntentMode
     let layers: LayerVisibility
     let flashDays: Set<String>
+    let continuous: Bool          // false = paged month view (default); true = continuous week stream
     let onTap: (_ dayID: String, _ isOff: Bool) -> Void
     let onLongPress: (_ dayID: String, _ isOff: Bool) -> Void
 
     private var intents = DayIntentStore.shared
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.horizontalSizeClass) private var hSizeClass
+    /// Pinned type size so the grid renders 1:1 — but a step LARGER on iPad (regular width) so the
+    /// date/shift/desk text scales up proportionally on the bigger canvas.
+    private var calTypeSize: DynamicTypeSize { hSizeClass == .regular ? .xLarge : .large }
     @State private var infoDay: String?
+    @State private var tappedDay: String?   // intent pill flashes only for the day you just tapped
+    // Continuous-calendar month indicator (Tier 2): the month currently at the top of the scroll,
+    // shown in a floating capsule that flashes in as you scroll into a new month, then fades.
+    @State private var expandedMonths: Set<Date> = []   // continuous view: which month tabs are popped open
     private let cal = Calendar.current
     private static let headers = ["Su", "M", "T", "W", "Th", "F", "Sa"]
     private static let isoF: DateFormatter = {
@@ -100,15 +110,45 @@ struct IntentCalendarView: View {
     private static let monthF: DateFormatter = {
         let f = DateFormatter(); f.dateFormat = "MMMM yyyy"; return f
     }()
+    private static let monthAbbrevF: DateFormatter = {
+        let f = DateFormatter(); f.dateFormat = "MMM"; return f   // "AUG" for the continuous month tab
+    }()
 
     init(shifts: [Shift], mode: IntentMode, layers: LayerVisibility, flashDays: Set<String>,
+         continuous: Bool = false,
          onTap: @escaping (String, Bool) -> Void, onLongPress: @escaping (String, Bool) -> Void) {
         self.shifts = shifts; self.mode = mode; self.layers = layers
-        self.flashDays = flashDays; self.onTap = onTap; self.onLongPress = onLongPress
+        self.flashDays = flashDays; self.continuous = continuous
+        self.onTap = onTap; self.onLongPress = onLongPress
     }
 
     private var byDay: [String: Shift] {
         Dictionary(shifts.map { (Self.isoF.string(from: $0.date), $0) }, uniquingKeysWith: { a, _ in a })
+    }
+
+    var body: some View {
+        Group {
+            if continuous { continuousBody } else { pagedBody }
+        }
+        // Auto-dismiss the tapped-day intent pill after a moment.
+        .task(id: tappedDay) {
+            guard tappedDay != nil else { return }
+            try? await Task.sleep(for: .seconds(1.6))
+            withAnimation(.easeOut(duration: 0.3)) { tappedDay = nil }
+        }
+    }
+
+    // MARK: Paged month view (DEFAULT) — one grid per month, pinned header + stats, no grayed days.
+
+    private var pagedBody: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 8, pinnedViews: [.sectionHeaders]) {
+                ForEach(months, id: \.self) { month in
+                    Section { monthGrid(month) } header: { monthHeader(month) }
+                }
+            }
+            .padding(.bottom, 24)
+        }
     }
 
     private var months: [Date] {
@@ -125,47 +165,56 @@ struct IntentCalendarView: View {
         return result
     }
 
-    var body: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 14, pinnedViews: [.sectionHeaders]) {
-                ForEach(months, id: \.self) { month in
-                    Section {
-                        monthGrid(month)
-                    } header: {
-                        // Plain black header (matches the calendar background) — no elevated band
-                        // slicing the view. Opaque so pinned scrolling still occludes rows cleanly.
-                        Text(Self.monthF.string(from: month))
-                            .font(.title3.weight(.semibold))
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal).padding(.top, 10).padding(.bottom, 6)
-                            .background(Color(.systemBackground))
-                    }
-                }
+    /// Pinned month header: the month title + the per-month stats (on / off + each marked intent).
+    private func monthHeader(_ month: Date) -> some View {
+        let s = monthStats(for: month)
+        return VStack(alignment: .leading, spacing: 6) {
+            Text(Self.monthF.string(from: month)).font(DXFont.heading(25))   // §8: Archivo ~25
+            FlowLayout(spacing: 9) {
+                statDot(AppColor.primary,  "\(s.on) on")
+                statDot(AppColor.neutral,  s.vacation > 0 ? "\(s.off) off (\(s.vacation) vac)" : "\(s.off) off")
+                if s.tradeAway  > 0 { statDot(AppColor.special, "\(s.tradeAway) trade") }
+                if s.keep       > 0 { statDot(AppColor.keep,    "\(s.keep) keep") }
+                if s.blackout   > 0 { statDot(AppColor.locked,  "\(s.blackout) blackout") }
+                if s.wantToWork > 0 { statDot(AppColor.pending, "\(s.wantToWork) work") }
             }
-            .padding(.bottom, 24)
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(.secondary)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, DXSpace.screenH)
+        .padding(.top, 12).padding(.bottom, 8)
+        .background(Color(.systemBackground))   // opaque so pinned scrolling occludes the rows
     }
 
-    private func monthGrid(_ month: Date) -> some View {
+    private func monthGrid(_ month: Date, showWeekdayHeader: Bool = true) -> some View {
         let days = gridDays(month)
-        return VStack(spacing: 4) {
-            HStack(spacing: 4) {
-                ForEach(Self.headers, id: \.self) { h in
-                    Text(h).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity)
+        let weekRows = stride(from: 0, to: days.count, by: 7).map { Array(days[$0..<min($0 + 7, days.count)]) }
+        return VStack(spacing: DXSpace.cellGap) {
+            if showWeekdayHeader {
+                HStack(spacing: DXSpace.cellGap) {
+                    ForEach(Self.headers, id: \.self) { h in
+                        Text(h).font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)   // §8
+                            .frame(maxWidth: .infinity)
+                    }
                 }
             }
-            ForEach(0..<(days.count / 7), id: \.self) { week in
-                HStack(spacing: 4) {
-                    ForEach(0..<7, id: \.self) { col in
-                        cell(days[week * 7 + col], month: month)
+            // Skip weeks with no day in this month; render out-of-month days BLANK (not grayed) — mockup.
+            ForEach(weekRows.indices, id: \.self) { wi in
+                let week = weekRows[wi]
+                if week.contains(where: { cal.isDate($0, equalTo: month, toGranularity: .month) }) {
+                    HStack(spacing: DXSpace.cellGap) {
+                        ForEach(week, id: \.self) { date in
+                            if cal.isDate(date, equalTo: month, toGranularity: .month) { cell(date) }
+                            else { Color.clear.frame(maxWidth: .infinity) }
+                        }
                     }
                 }
             }
         }
-        .padding(.horizontal)
-        // Scale with Dynamic Type, but cap it so the day cells stay on their grid.
-        .dynamicTypeSize(...DynamicTypeSize.xLarge)
+        .padding(.horizontal, DXSpace.screenH)
+        .padding(.bottom, 4)
+        .dynamicTypeSize(calTypeSize)
     }
 
     private func gridDays(_ month: Date) -> [Date] {
@@ -175,9 +224,219 @@ struct IntentCalendarView: View {
         return (0..<42).compactMap { cal.date(byAdding: .day, value: $0, to: start) }
     }
 
-    @ViewBuilder private func cell(_ date: Date, month: Date) -> some View {
+    // MARK: Continuous view (opt-in) — one uninterrupted week stream + floating month capsule.
+
+    private var continuousBody: some View {
+        // SHARED-ROW week stream: the previous month's trailing days and the new month's leading days live
+        // in the SAME row, so a month that starts mid-week has NO empty leading row — the only separation
+        // is the new month's cells dropping HALF A CELL (the tight gap you want). Nothing reacts to
+        // scrolling (no per-frame preference), so no scroll lag. The month tab floats in that half-cell gap.
+        VStack(spacing: 0) {
+            pinnedWeekdayHeader   // ONE fixed Su…Sa row for the whole stream
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: DXSpace.cellGap) {
+                    ForEach(Array(weeks.enumerated()), id: \.offset) { idx, week in
+                        weekRow(week)
+                            // Current month's tab sits just under the weekday header, left. If the 1st week
+                            // has leading blank cells (mid-week start), the tab floats in those with the 1st
+                            // week pinned to the top (no gap). ONLY a Sunday-start current month (no leading
+                            // blanks) gets a tab-height gap that pushes its cells down (the exception).
+                            .padding(.top, (idx == 0 && cal.component(.weekday, from: rangeStart) == 1) ? Self.monthTabHeight : 0)
+                            .overlay(alignment: .topLeading) {
+                                if idx == 0, let m = firstDisplayedMonth { monthTab(m, onLeft: true) }
+                            }
+                    }
+                }
+                .padding(.top, 4)
+                .padding(.bottom, 24)
+                .dynamicTypeSize(calTypeSize)
+            }
+        }
+    }
+
+    // The continuous day range: first day of the current month → last day of the last month with data.
+    private var rangeStart: Date {
+        cal.dateInterval(of: .month, for: cal.startOfDay(for: Date()))?.start ?? cal.startOfDay(for: Date())
+    }
+    private var rangeEnd: Date {
+        let today = cal.startOfDay(for: Date())
+        let lastDate = shifts.map { $0.date }.max() ?? today
+        let end = cal.dateInterval(of: .month, for: lastDate)?.end ?? today
+        return cal.date(byAdding: .day, value: -1, to: end) ?? lastDate
+    }
+    private func inRange(_ date: Date) -> Bool { (rangeStart...rangeEnd).contains(cal.startOfDay(for: date)) }
+    private var firstDisplayedMonth: Date? { cal.dateInterval(of: .month, for: rangeStart)?.start }
+
+    /// Sun→Sat week rows spanning the whole range (shared boundary rows — no per-month blank padding).
+    private var weeks: [[Date]] {
+        let start = rangeStart, end = rangeEnd
+        let startWeekday = cal.component(.weekday, from: start) - 1
+        guard let gridStart = cal.date(byAdding: .day, value: -startWeekday, to: start) else { return [] }
+        let endWeekday = cal.component(.weekday, from: end) - 1
+        guard let gridEnd = cal.date(byAdding: .day, value: 6 - endWeekday, to: end) else { return [] }
+        var days: [Date] = []; var d = gridStart
+        while d <= gridEnd {
+            days.append(d)
+            guard let n = cal.date(byAdding: .day, value: 1, to: d) else { break }
+            d = n
+        }
+        return stride(from: 0, to: days.count, by: 7).map { Array(days[$0..<min($0 + 7, days.count)]) }
+    }
+
+    private func weekRow(_ week: [Date]) -> some View {
+        // A month's 1st in this row → its cells drop half a cell; the old month's trailing days stay at the
+        // top. That makes an L-shaped empty gap — a BOTTOM-LEFT strip (below the old days, width = # old
+        // columns) and a TOP-RIGHT strip (above the new days, width = # new columns). The floating tab goes
+        // in the WIDER strip (left preferred): Sunday start → full-width top gap → top-left; Thu–Sat starts
+        // (≥4 old columns) → bottom-left; Mon–Wed starts → top-right.
+        let newMonth: Date? = week.first { inRange($0) && cal.component(.day, from: $0) == 1 }
+            .flatMap { cal.dateInterval(of: .month, for: $0)?.start }
+        let showTab = newMonth != nil && newMonth != firstDisplayedMonth
+        let firstCol = newMonth.map { cal.component(.weekday, from: $0) - 1 } ?? 0   // 0=Sun … 6=Sat
+        // ALL tabs hug the LEFT: a Sunday start has a full-width top gap → top-left; any other start has
+        // the previous month's trailing days on the left, leaving an empty strip BELOW them → bottom-left.
+        let placement: Alignment = firstCol == 0 ? .topLeading : .bottomLeading
+        return HStack(alignment: .top, spacing: DXSpace.cellGap) {
+            ForEach(week, id: \.self) { date in
+                if inRange(date) {
+                    cell(date).padding(.top, monthOffset(date, newMonthInRow: newMonth))
+                } else {
+                    Color.clear.frame(maxWidth: .infinity)   // alignment spacer (prev/next month)
+                }
+            }
+        }
+        .padding(.horizontal, DXSpace.screenH)
+        .overlay(alignment: placement) {
+            if showTab, let m = newMonth { monthTab(m, onLeft: placement.horizontal == .leading) }
+        }
+    }
+
+    /// Half-cell top offset for a cell in the row's NEW month (skips the earliest displayed month).
+    private func monthOffset(_ date: Date, newMonthInRow: Date?) -> CGFloat {
+        guard let nm = newMonthInRow, nm != firstDisplayedMonth,
+              cal.dateInterval(of: .month, for: date)?.start == nm else { return 0 }
+        return Self.monthTabHeight
+    }
+
+    /// The single pinned weekday header for the continuous stream.
+    private var pinnedWeekdayHeader: some View {
+        HStack(spacing: DXSpace.cellGap) {
+            ForEach(Self.headers, id: \.self) { h in
+                Text(h).font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity)
+            }
+        }
+        .padding(.horizontal, DXSpace.screenH)
+        .padding(.vertical, 6)
+        .background(Color(.systemBackground))
+        .dynamicTypeSize(calTypeSize)
+    }
+
+    /// The month offset gap — set equal to the tab's TOTAL height (bar + 2px top/bottom), so the drop
+    /// between months is exactly the size of the tab that floats in it.
+    private static let monthTabHeight: CGFloat = 22
+
+    /// A month tab flush to the given screen edge (`onLeft`), sitting in the half-cell gap. Collapsed = a
+    /// blue "AUG" chip; tap to slide it open HORIZONTALLY into the month's color-box stats (no month
+    /// label). The bar is a few px shorter than the gap so it has breathing room above + below.
+    @ViewBuilder private func monthTab(_ m: Date, onLeft: Bool) -> some View {
+        let open = expandedMonths.contains(m)
+        let barH = Self.monthTabHeight - 4          // 4px shorter than the gap → centered with 2px above/below
+        // Chevron points toward the OPEN direction when collapsed, back toward the edge when open.
+        let chevron = Image(systemName: onLeft ? (open ? "chevron.left" : "chevron.right")
+                                               : (open ? "chevron.right" : "chevron.left"))
+            .font(.system(size: 8, weight: .bold))
+            .foregroundStyle(open ? Color.secondary : Color.white)
+        let content = Group {
+            if open {
+                monthStatChips(m)                                   // opened → color-box stats, no month
+            } else {
+                Text(Self.monthAbbrevF.string(from: m).uppercased())
+                    .font(.system(size: 14, weight: .heavy))
+                    .lineLimit(1).minimumScaleFactor(0.4)
+                    .foregroundStyle(.white)
+            }
+        }
+        Button {
+            withAnimation(.snappy) {
+                if open { expandedMonths.remove(m) } else { expandedMonths.insert(m) }
+            }
+        } label: {
+            HStack(spacing: 5) {
+                if onLeft { content; chevron } else { chevron; content }
+            }
+            .frame(height: barH)
+            .padding(.leading, onLeft ? 10 : 8)     // tighter horizontal padding → less stick-out
+            .padding(.trailing, onLeft ? 8 : 10)
+            .background {
+                let shape = UnevenRoundedRectangle(
+                    topLeadingRadius:     onLeft ? 0 : barH / 2,
+                    bottomLeadingRadius:  onLeft ? 0 : barH / 2,
+                    bottomTrailingRadius: onLeft ? barH / 2 : 0,
+                    topTrailingRadius:    onLeft ? barH / 2 : 0,
+                    style: .continuous)
+                // Open → neutral so the color boxes read like the normal stats; collapsed → deep maroon chip.
+                let maroon = Color(red: 0.40, green: 0.11, blue: 0.18)   // deep maroon
+                if open { shape.fill(Color(.secondarySystemBackground)) } else { shape.fill(maroon) }
+            }
+        }
+        .buttonStyle(.plain)
+        .padding(.vertical, 2)          // equal 2px above/below → centers the bar in the gap
+        .frame(maxWidth: .infinity, alignment: onLeft ? .leading : .trailing)   // hug the chosen edge
+    }
+
+    /// The month's stats as the SAME color-box dots used in the month header (kept, per request).
+    @ViewBuilder private func monthStatChips(_ m: Date) -> some View {
+        let s = monthStats(for: m)
+        HStack(spacing: 10) {
+            statDot(AppColor.primary,  "\(s.on) on")
+            statDot(AppColor.neutral,  s.vacation > 0 ? "\(s.off) off (\(s.vacation) vac)" : "\(s.off) off")
+            if s.tradeAway  > 0 { statDot(AppColor.special, "\(s.tradeAway) trade") }
+            if s.keep       > 0 { statDot(AppColor.keep,    "\(s.keep) keep") }
+            if s.blackout   > 0 { statDot(AppColor.locked,  "\(s.blackout) blackout") }
+            if s.wantToWork > 0 { statDot(AppColor.pending, "\(s.wantToWork) work") }
+        }
+        .font(.system(size: 10, weight: .semibold))
+        .foregroundStyle(.secondary)
+        .fixedSize()
+    }
+
+    private func statDot(_ color: Color, _ label: String) -> some View {
+        HStack(spacing: 5) {
+            RoundedRectangle(cornerRadius: 2, style: .continuous).fill(color).frame(width: 8, height: 8)
+            Text(label)
+        }
+    }
+
+    private struct MonthStats { var on = 0, off = 0, tradeAway = 0, keep = 0, wantToWork = 0, blackout = 0, vacation = 0 }
+
+    /// Per-month tallies: worked ("on") / off days, plus a count for each marked intent.
+    private func monthStats(for month: Date) -> MonthStats {
+        var s = MonthStats()
+        for shift in shifts where cal.isDate(shift.date, equalTo: month, toGranularity: .month) {
+            let id = Self.isoF.string(from: shift.date)
+            if shift.isVacation { s.off += 1; s.vacation += 1; continue }
+            if shift.isOff {
+                s.off += 1
+                switch intents.offIntent(forDay: id) {
+                case .wantToWork: s.wantToWork += 1
+                case .mustBeOff:  s.blackout += 1
+                default: break
+                }
+            } else {
+                s.on += 1
+                switch intents.workingIntent(forDay: id) {
+                case .dontWantToWork: s.tradeAway += 1
+                case .mustWork:       s.keep += 1
+                default: break
+                }
+            }
+        }
+        return s
+    }
+
+    @ViewBuilder private func cell(_ date: Date) -> some View {
         let dayID     = Self.isoF.string(from: date)
-        let inMonth   = cal.isDate(date, equalTo: month, toGranularity: .month)
         let shift     = byDay[dayID]
         let hasShift  = shift != nil
         let isOff     = shift.map { $0.isOff } ?? true
@@ -185,80 +444,129 @@ struct IntentCalendarView: View {
         let today     = cal.startOfDay(for: Date())
         let isToday   = cal.isDate(date, inSameDayAs: today)
         let isPast    = date < today && !isToday
-        let faded     = isFaded(isWorking: isWorking, inMonth: inMonth)
+        let faded     = isFaded(isWorking: isWorking, inMonth: true)
 
-        let marker = markerColor(dayID: dayID, isToday: isToday)
+        let kind = tileKind(dayID: dayID, isWorking: isWorking, hasShift: hasShift, date: date, shift: shift)
 
-        VStack(spacing: 2) {
+        VStack(spacing: 1) {
             ZStack {
-                // Gold = high-impact, pink = personal day, blue = today. When today
-                // also falls on a marked day, ring the gold/pink circle in blue.
-                if let marker {
-                    Circle().fill(marker).frame(width: 24, height: 24)
-                    if isToday && marker != Color.accentColor {
-                        // White gap + blue ring so "today on a marked day" reads on any fill.
-                        Circle().stroke(Color(.systemBackground), lineWidth: 2).frame(width: 27, height: 27)
-                        Circle().stroke(Color.accentColor, lineWidth: 3).frame(width: 30, height: 30)
-                    }
-                }
+                // §10: NO behind-number disc. High-demand (holiday) + personal-milestone days are marked by
+                // the SAME small corner dot as notes (see `noteDot`); plain "today" is the inset tile ring
+                // (see `borderColor`). One consistent marker language — no one-off copper circle.
                 Text("\(cal.component(.day, from: date))")
-                    .font(.headline).fontWeight(isToday ? .black : .semibold)
-                    // Dark text on the light gold circle; white on blue/pink.
-                    .foregroundStyle(marker == nil ? .primary
-                        : (intents.topology(forDay: dayID) == .highDemand ? Color.black.opacity(0.85) : .white))
+                    .font(isToday ? DXFont.dayNumber.weight(.heavy) : DXFont.dayNumber)
+                    .foregroundStyle(numberColor(dayID: dayID, isWorking: isWorking, hasShift: hasShift, date: date, shift: shift))
             }
-            .frame(height: 31)
+            .frame(height: DXSpace.cellNumberH)
             .contentShape(Circle())
             .onTapGesture {
                 if intents.topology(forDay: dayID) != .standard { infoDay = dayID }
-                else if inMonth, hasShift { onTap(dayID, isOff) }   // normal day → same as cell tap
+                else if hasShift { onTap(dayID, isOff) }   // normal day → same as cell tap
+                withAnimation(.snappy) { tappedDay = dayID }
             }
             .popover(isPresented: Binding(get: { infoDay == dayID },
                                           set: { if !$0 { infoDay = nil } })) {
                 topologyInfo(dayID: dayID)
             }
-            dayContent(shift: shift, isWorking: isWorking, isOff: isOff, dayID: dayID)
-                .frame(minHeight: 14)
-            noteDot(dayID)
+            dayContent(shift: shift, isWorking: isWorking, isOff: isOff, dayID: dayID, date: date)
+                .frame(height: DXSpace.cellLabelH)   // FIXED (not minHeight) so every cell is the same size
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 6)
-        .background(background(dayID: dayID, isToday: isToday, isWorking: isWorking, hasShift: hasShift, date: date, shift: shift))
-        .clipShape(RoundedRectangle(cornerRadius: 7))
+        .padding(.vertical, DXSpace.cellVPad)
+        // Ceramic glaze sits on the TILE FILL only (behind the number/label), clipped to the same radius
+        // as the clipShape + stroke so the rim aligns. The intent color is unchanged — just glazed.
+        // §1a/§2a: glazed tiles get a real two-tone ceramic gradient + the wet sheen. OFF is a flat matte
+        // recessed neutral (no gloss). Blackout is flat matte with an inset border, no glaze (§2d).
+        .background {
+            let shape = RoundedRectangle(cornerRadius: DXSpace.cellRadius, style: .continuous)
+            switch kind {
+            case .glazed:
+                shape.fill(ceramicFill(background(dayID: dayID, isToday: isToday, isWorking: isWorking, hasShift: hasShift, date: date, shift: shift)))
+                    .dxGlaze(radius: DXSpace.cellRadius,
+                             intensity: glazeIntensity(dayID: dayID, isWorking: isWorking, hasShift: hasShift, shift: shift))
+            case .off:
+                // Dark: a lighter glazed slate (still glossy — blackout stays the ONLY matte tile, §2d).
+                // Light: flat, shadowless, recessed (§9b) — ON is the only lifted tile.
+                if colorScheme == .dark {
+                    shape.fill(ceramicFill(background(dayID: dayID, isToday: isToday, isWorking: isWorking, hasShift: hasShift, date: date, shift: shift)))
+                        .dxGlaze(radius: DXSpace.cellRadius, intensity: 0.30)
+                } else {
+                    shape.fill(background(dayID: dayID, isToday: isToday, isWorking: isWorking, hasShift: hasShift, date: date, shift: shift))
+                }
+            case .blackout:
+                shape.fill(AppColor.blackout)
+                    .overlay(shape.strokeBorder(AppColor.blackoutBorder, lineWidth: 1))
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: DXSpace.cellRadius))
+        // §9a: lift ONLY glazed tiles off the page in light mode; OFF + blackout stay recessed (no lift).
+        .shadow(color: kind == .glazed ? AppColor.tileShadow : .clear, radius: 1.5, x: 0, y: 1)
         .overlay(
-            RoundedRectangle(cornerRadius: 7)
-                .stroke(borderColor(dayID: dayID, isToday: isToday, isOff: isOff, hasShift: hasShift),
-                        lineWidth: flashDays.contains(dayID) ? 3 : borderWidth(dayID: dayID, isOff: isOff))
+            RoundedRectangle(cornerRadius: DXSpace.cellRadius)
+                .strokeBorder(borderColor(dayID: dayID, isToday: isToday, isOff: isOff, hasShift: hasShift),
+                              lineWidth: flashDays.contains(dayID) ? 3
+                                       : (isToday && intents.topology(forDay: dayID) == .standard ? 2
+                                          : borderWidth(dayID: dayID, isOff: isOff)))
         )
-        .opacity(inMonth ? (faded ? 0.3 : (isPast ? 0.45 : 1)) : 0.12)
+        // Intent pill (TRADE / KEEP / BLACKOUT / WANT) flashes in ONLY when you tap the day — never
+        // rendered persistently, so it can't crowd the number. Notes / events stay top-right.
+        .overlay(alignment: .topLeading) {
+            // Flash the intent pill ONLY in the read-only Main view — while MARKING, each paint-tap
+            // would otherwise flash a stray TRADE/KEEP pill (the tile color already shows the result).
+            if tappedDay == dayID, mode == .off {
+                intentPill(dayID: dayID, isWorking: isWorking, date: date, shift: shift)
+                    .padding(3).transition(.scale.combined(with: .opacity))
+            }
+        }
+        .overlay(alignment: .topTrailing) { noteDot(dayID).padding(3) }
+        .opacity(faded ? 0.3 : (isPast ? 0.45 : 1))
         .contentShape(Rectangle())
-        .onTapGesture { if inMonth, hasShift { onTap(dayID, isOff) } }
-        .onLongPressGesture(minimumDuration: 0.35) { if inMonth, hasShift { onLongPress(dayID, isOff) } }
+        .onTapGesture {
+            if hasShift { onTap(dayID, isOff) }
+            withAnimation(.snappy) { tappedDay = dayID }
+        }
+        .onLongPressGesture(minimumDuration: 0.35) { if hasShift { onLongPress(dayID, isOff) } }
     }
 
-    @ViewBuilder private func dayContent(shift: Shift?, isWorking: Bool, isOff: Bool, dayID: String) -> some View {
-        if isWorking, let shift {
+    @ViewBuilder private func dayContent(shift: Shift?, isWorking: Bool, isOff: Bool, dayID: String, date: Date) -> some View {
+        if let shift, shift.isVacation {
+            // Vacation (V or ECB-VC "w") → "VAC" always shows, on TOP of any intent formatting: it overrides
+            // the blackout lock, and stays on a want-to-work gold tile too (the WANT pill still marks it).
+            Text("VAC")
+                .font(DXFont.dayNote)
+                .foregroundStyle(Color.white.opacity(0.9))
+                .accessibilityLabel("Vacation")
+        } else if isBlackout(dayID: dayID, isWorking: isWorking, date: date, shift: shift) {
+            // §2d: blackout shows a dim lock glyph (no red ✕) on the flat matte tile.
+            Image(systemName: "lock.fill")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(AppColor.blackoutNumber)
+                .accessibilityLabel("Blackout")
+        } else if isWorking, let shift {
             // Type (AM/PM/MID) and desk are independently toggleable. Both off → blank (the colored day
             // circle still marks it as worked).
             let type = layers.shiftType ? shift.shiftTypeLabel : ""
             let desk = (layers.deskAssignments && !shift.desk.isEmpty) ? shift.desk : ""
-            let label = [type, desk].filter { !$0.isEmpty }.joined(separator: " ")
-            if label.isEmpty {
+            if type.isEmpty && desk.isEmpty {
                 Color.clear.frame(height: 14)
             } else {
-                Text(label)
-                    .font(.caption.weight(.heavy)).lineLimit(1).minimumScaleFactor(0.6)
+                // Shift + desk sit in their own row with a clear gap, muted vs the bright day
+                // number (mockup #9fb0c8 on navy); .primary.opacity adapts to light mode.
+                HStack(spacing: 3) {
+                    if !type.isEmpty { Text(type) }
+                    if !desk.isEmpty { Text(desk) }
+                }
+                .font(DXFont.dayNote)
+                // White-ish on vivid / black-blackout tiles, muted primary on neutral tiles.
+                .foregroundStyle(lightText(dayID: dayID, isWorking: isWorking, shift: shift, date: date)
+                                 ? Color.white.opacity(0.85) : Color.primary.opacity(0.7))
+                .lineLimit(1).minimumScaleFactor(0.6)
             }
-        } else if let shift, shift.isVacation {
-            // Vacation reads as a distinct teal state, not a plain day off. (U-VAC)
-            Image(systemName: "beach.umbrella.fill")
-                .font(.caption2.weight(.bold))
-                .foregroundStyle(BrickPalette.vacation)
-                .accessibilityLabel("Vacation")
         } else if isOff, layers.availability {
             // A/P/M availability pills on off days — controlled purely by the "Shift
             // availability" layer toggle (the clock button), so it works in the general
-            // read-only view too, not just while marking days-off.
+            // read-only view too, not just while marking days-off. (Intent itself is shown by
+            // the corner pill + tile color; "WANT" now lives in the corner pill.)
             offAvailability(dayID)
         } else {
             Color.clear.frame(height: 14)
@@ -274,12 +582,10 @@ struct IntentCalendarView: View {
                 .foregroundStyle(BrickPalette.critical)
         } else {
             let legal = Legality.legalTypes(forDayID: dayID, shifts: shifts)
-            let marked = intents.availability(forDay: dayID)
-            // Amber only when you're ACTIVELY soliciting (want-to-work); passive
-            // "open" availability (bookends/all) reads in a faded slate so an open
-            // day off never looks like a want-to-work day.
-            let tint = intents.offIntent(forDay: dayID) == .wantToWork
-                ? BrickPalette.availableOff : BrickPalette.openOff
+            // Per-shift state (gold + ✕ can coexist): gold = actively want-to-work; ✕ = explicitly blacked
+            // out; neither = neutral/open. A cleared/open day has NO ✕ (fixes erase showing all-✕).
+            let wanted = intents.wanted(forDay: dayID)
+            let blacked = intents.blackedShifts(forDay: dayID, legal: Set(legal))
             if legal.isEmpty {
                 // #1: no legal shift is coverable here (rest / legal-start) → auto-X; can't want-to-work it.
                 Image(systemName: "nosign")
@@ -289,13 +595,21 @@ struct IntentCalendarView: View {
             } else {
                 HStack(spacing: 2) {
                     ForEach(ShiftAvailabilityType.allCases.filter { legal.contains($0) }, id: \.self) { t in
-                        let on = marked.contains(t)
+                        let gold = wanted.contains(t)
+                        let x = blacked.contains(t) && !gold   // gold wins if somehow both
                         Text(String(t.rawValue.prefix(1)))
-                            .font(.system(size: 9, weight: .black))   // fixed: the A/P/M pill is a compact glyph
-                            .foregroundStyle(on ? .white : tint.opacity(0.8))
+                            .font(.system(size: 9, weight: .black))
+                            .foregroundStyle(gold ? Color.white : Color(.secondaryLabel))
                             .frame(width: 16, height: 16)
-                            .background(Circle().fill(on ? tint : Color.clear))
-                            .overlay(Circle().stroke(tint.opacity(on ? 0 : 0.6), lineWidth: 1.5))
+                            .background(Circle().fill(gold ? BrickPalette.availableOff : Color(.tertiarySystemFill).opacity(0.5)))
+                            // Red ✕ over any shift type blacked out on this day.
+                            .overlay {
+                                if x {
+                                    Image(systemName: "xmark")
+                                        .font(.system(size: 11, weight: .heavy))
+                                        .foregroundStyle(BrickPalette.critical)
+                                }
+                            }
                     }
                 }
             }
@@ -303,13 +617,18 @@ struct IntentCalendarView: View {
     }
 
     @ViewBuilder private func noteDot(_ dayID: String) -> some View {
-        if layers.notes, let note = intents.note(forDay: dayID) {
+        // §10: ONE small corner dot for every per-day marker. A user note (gated by the Notes layer) takes
+        // the slot first; otherwise an event day — personal milestone or high-demand holiday — shows the same
+        // corner dot in its semantic palette color (was a one-off copper disc behind the number). Vacation-
+        // reason notes stay hidden (the "VAC" label conveys them).
+        let topo = intents.topology(forDay: dayID)
+        if layers.notes, let note = intents.note(forDay: dayID), note.reason != .vacation {
             NoteMarker(note: note)
-        } else if layers.notes, let holiday = Holidays.name(forDay: dayID) {
-            // Auto-label the event for high-demand holidays.
-            EventMarker(name: holiday, color: BrickPalette.warning, icon: "exclamationmark.triangle.fill")
-        } else if layers.notes, intents.topology(forDay: dayID) == .personalMilestone {
+        } else if topo == .personalMilestone {
             EventMarker(name: "Personal milestone", color: BrickPalette.milestone, icon: "star.fill")
+        } else if topo == .highDemand {
+            EventMarker(name: Holidays.name(forDay: dayID) ?? "High-demand day",
+                        color: BrickPalette.highImpact, icon: "star.fill")
         } else {
             Color.clear.frame(height: 9)
         }
@@ -329,12 +648,60 @@ struct IntentCalendarView: View {
     private func background(dayID: String, isToday: Bool, isWorking: Bool, hasShift: Bool,
                             date: Date, shift: Shift?) -> Color {
         if layers.intentOverlays {
-            // Explicit per-day intent wins over the blacklist Blackout tint (B4-3 precedence).
+            // A user blackout (must-be-off) paints the black tile OVER a vacation day — the blackout cell
+            // format is kept; only the lock GLYPH is swapped for "VAC" (in dayContent).
+            if !isWorking, intents.offIntent(forDay: dayID) == .mustBeOff { return AppColor.blackout }
             if let tint = intentTint(dayID: dayID, isWorking: isWorking) { return tint }
-            if let bo = blackoutTint(date: date, shift: shift) { return bo }
+            // A trade-blacklist match (desk / type / region / weekday) also reads as a black blocked tile.
+            if blackoutTint(date: date, shift: shift) != nil { return AppColor.blackout }
         }
+        // Vacation (with NO overriding intent) reads as a teal tile.
+        if let shift, shift.isVacation { return AppColor.vacation }
         if !hasShift { return Color(.systemGray6) }
-        return isWorking ? Color.accentColor.opacity(0.20) : Color(.systemGray5)
+        // Worked no-intent = navy/white surface; off no-intent = slate/light-slate — both ADAPTIVE.
+        return isWorking ? AppColor.cellWorked : AppColor.cellOff
+    }
+
+    /// A blocked/blackout day: explicit "must be off", or a trade-blacklist match with no overriding
+    /// explicit intent (mirrors `background`'s precedence). Black tile → needs white text.
+    private func isBlackout(dayID: String, isWorking: Bool, date: Date, shift: Shift?) -> Bool {
+        guard layers.intentOverlays else { return false }
+        if !isWorking, intents.offIntent(forDay: dayID) == .mustBeOff { return true }
+        if intentTint(dayID: dayID, isWorking: isWorking) != nil { return false }
+        return blackoutTint(date: date, shift: shift) != nil
+    }
+
+    /// Small corner pill naming the day's intent (TRADE / KEEP / BLACKOUT / WANT). White text on a
+    /// translucent chip so it reads on every tile (purple / green / amber / black).
+    @ViewBuilder private func intentPill(dayID: String, isWorking: Bool, date: Date, shift: Shift?) -> some View {
+        if let text = intentLabel(dayID: dayID, isWorking: isWorking, date: date, shift: shift) {
+            DXIntentPill(text: text)
+        }
+    }
+
+    private func intentLabel(dayID: String, isWorking: Bool, date: Date, shift: Shift?) -> String? {
+        if isWorking {
+            switch intents.workingIntent(forDay: dayID) {
+            case .dontWantToWork: return "TRADE"
+            case .mustWork:       return "KEEP"
+            default: break
+            }
+        } else {
+            switch intents.offIntent(forDay: dayID) {
+            case .mustBeOff:  return "BLACKOUT"
+            case .wantToWork: return "WANT"
+            default: break
+            }
+        }
+        // No explicit intent, but a trade-blacklist match still reads as a blackout.
+        if isBlackout(dayID: dayID, isWorking: isWorking, date: date, shift: shift) { return "BLACKOUT" }
+        return nil
+    }
+
+    /// Tiles that need white text in BOTH modes: vivid semantic fills and black blackout tiles.
+    private func lightText(dayID: String, isWorking: Bool, shift: Shift?, date: Date) -> Bool {
+        isVividTile(dayID: dayID, isWorking: isWorking, shift: shift)
+            || isBlackout(dayID: dayID, isWorking: isWorking, date: date, shift: shift)
     }
 
     /// B4-3: tint a day that matches the user's trade blacklist (never traded/worked). Working shifts
@@ -365,13 +732,15 @@ struct IntentCalendarView: View {
     /// reads as the lighter, more passive layer of the calendar.
     private func intentTint(dayID: String, isWorking: Bool) -> Color? {
         if isWorking {
-            guard let s = intents.workingIntent(forDay: dayID) else { return nil }
-            return s.brickColor.opacity(0.62)
+            // Only Keep / Trade-away paint. "Open" (neutralOpen) is the CLEARED state → normal cell color.
+            switch intents.workingIntent(forDay: dayID) {
+            case .dontWantToWork, .mustWork: return intents.workingIntent(forDay: dayID)?.brickColor
+            default: return nil
+            }
         } else {
-            // must-be-off is shown by the red ⊗ marker, not a fill.
-            guard let s = intents.offIntent(forDay: dayID), s != .mustBeOff else { return nil }
-            // Passive "open" is the faintest; an active want-to-work off day is a bit stronger.
-            return s.brickColor.opacity(s == .wantToWork ? 0.45 : 0.30)
+            // Only Want-to-Work paints (amber). Blackout is black (handled in `background`); "Open" is
+            // the cleared state → normal cell color (no faint tint).
+            return intents.offIntent(forDay: dayID) == .wantToWork ? OffIntentState.wantToWork.brickColor : nil
         }
     }
 
@@ -402,22 +771,53 @@ struct IntentCalendarView: View {
         .presentationCompactAdaptation(.popover)
     }
 
-    /// Gold for a high-demand day, pink for a personal day, blue (accent) for today.
-    /// Today is only the fallback when the day isn't otherwise marked.
-    private func markerColor(dayID: String, isToday: Bool) -> Color? {
-        switch intents.topology(forDay: dayID) {
-        case .highDemand:        return BrickPalette.highImpact
-        case .personalMilestone: return BrickPalette.personalDay
-        case .standard:          return isToday ? Color.accentColor : nil
-        }
-    }
-
     private func borderColor(dayID: String, isToday: Bool, isOff: Bool, hasShift: Bool) -> Color {
-        // High-impact / personal days now read as gold/pink circles, not borders.
-        flashDays.contains(dayID) ? BrickPalette.warning : .clear
+        if flashDays.contains(dayID) { return BrickPalette.warning }
+        // "today" is a blue inset ring on the tile (mockup), for ANY day — including a holiday/milestone,
+        // which now carries only the small corner dot (§10) rather than a disc, so the ring is its "today" cue.
+        if isToday { return AppColor.primary }
+        return .clear
     }
 
     private func borderWidth(dayID: String, isOff: Bool) -> CGFloat { 0 }
+
+    /// A "vivid" tile = a saturated semantic fill (keep / trade-away / want-to-work / vacation). Vivid
+    /// tiles take white text + a glossier glaze in BOTH modes (mockup); neutral tiles use adaptive text.
+    private func isVividTile(dayID: String, isWorking: Bool, shift: Shift?) -> Bool {
+        if let shift, shift.isVacation { return true }
+        guard layers.intentOverlays else { return false }
+        if isWorking {
+            switch intents.workingIntent(forDay: dayID) {
+            case .dontWantToWork, .mustWork: return true   // Open = cleared → not vivid
+            default: return false
+            }
+        }
+        return intents.offIntent(forDay: dayID) == .wantToWork
+    }
+
+    /// Glossier glaze on vivid tiles (mockup's strong top-highlight + inner shadow); subtle matte otherwise.
+    private func glazeIntensity(dayID: String, isWorking: Bool, hasShift: Bool, shift: Shift?) -> CGFloat {
+        isVividTile(dayID: dayID, isWorking: isWorking, shift: shift) ? 0.72 : 0.34
+    }
+
+    /// How a cell renders: glazed ceramic gradient (ON navy + all vivid states), flat recessed OFF, or
+    /// flat matte blackout. Drives fill, glaze, shadow, and number color together (§1a / §2b / §2d).
+    private enum TileKind { case glazed, off, blackout }
+    private func tileKind(dayID: String, isWorking: Bool, hasShift: Bool, date: Date, shift: Shift?) -> TileKind {
+        if isBlackout(dayID: dayID, isWorking: isWorking, date: date, shift: shift) { return .blackout }
+        if isVividTile(dayID: dayID, isWorking: isWorking, shift: shift) { return .glazed }   // trade / keep / want / vacation
+        if !hasShift { return .off }
+        return isWorking ? .glazed : .off   // ON navy = glazed; off-neutral = recessed
+    }
+
+    /// Number color per tile: white on vivid tiles, adaptive `.primary` on the ON navy/white tile, dim on
+    /// OFF + blackout. (No marker-disc case anymore — §10 removed the behind-number disc.)
+    private func numberColor(dayID: String, isWorking: Bool, hasShift: Bool, date: Date, shift: Shift?) -> Color {
+        if isBlackout(dayID: dayID, isWorking: isWorking, date: date, shift: shift) { return AppColor.blackoutNumber }
+        if isVividTile(dayID: dayID, isWorking: isWorking, shift: shift) { return Color.white }
+        if !isWorking { return AppColor.cellOffText }   // OFF / empty → dim
+        return Color.primary                             // ON glazed neutral (navy dark / white light)
+    }
 }
 
 // MARK: - Per-day intent editor (long-press)
@@ -581,7 +981,6 @@ struct BlacklistPill: View {
     let selected: Bool
     var enabled: Bool = true
     let action: () -> Void
-    private var blackout: Color { OffIntentState.mustBeOff.brickColor }
 
     var body: some View {
         Button(action: action) {
@@ -589,9 +988,19 @@ struct BlacklistPill: View {
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(!enabled ? Color.secondary.opacity(0.45) : (selected ? .white : .primary))
                 .padding(.horizontal, 13).padding(.vertical, 7)
-                .background(!enabled ? Color(.tertiarySystemFill).opacity(0.4)
-                                     : (selected ? blackout : Color(.tertiarySystemFill)),
-                            in: RoundedRectangle(cornerRadius: DS.controlRadius, style: .continuous))
+                // §5: glazed ceramic chip. ACTIVE = the blackout matte-graphite tile (`AppColor.blackout`),
+                // the SAME language as a blacked-out calendar cell — not the slate "locked" purple that
+                // clashed. Inactive = neutral glazed. A blacklist chip and a blackout cell now read alike.
+                .background {
+                    let shape = RoundedRectangle(cornerRadius: DS.controlRadius, style: .continuous)
+                    if !enabled {
+                        shape.fill(Color(.tertiarySystemFill).opacity(0.4))
+                    } else if selected {
+                        shape.fill(AppColor.blackout).dxGlaze(radius: DS.controlRadius)
+                    } else {
+                        shape.fill(Color(.tertiarySystemFill)).dxGlaze(radius: DS.controlRadius)
+                    }
+                }
         }
         .buttonStyle(.plain)
         .disabled(!enabled)
@@ -698,18 +1107,17 @@ struct TradeSettingsSheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                Picker("", selection: $tab) {
-                    Text("Profile").tag(0)
-                    Text("Trade Settings").tag(1)
-                }
-                .pickerStyle(.segmented)
+                DXSegmented(selection: $tab, options: [
+                    .init(0, "Profile"), .init(1, "Trade Settings"),
+                ])
                 .listRowBackground(Color.clear)
 
                 if tab == 0 { profile } else { tradeSettings }
             }
+            .scrollContentBackground(.hidden)   // §11: drop the grouped-list chrome background
             .navigationTitle("Trade Settings")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+            .toolbar { ToolbarItem(placement: .confirmationAction) { DXCloseButton { dismiss() } } }
             // R-B: single publish funnel — guarantees status/settings edits reach peers even
             // when a vertical TextField swallows .onSubmit (status was blank cross-device).
             .onDisappear { publishProfile() }
@@ -728,8 +1136,21 @@ struct TradeSettingsSheet: View {
                     DayIntentStore.shared.applyOpenness(lvl, shifts: ShiftStore.shared.shifts)
                 }
                 myQuals = settings.cachedQuals   // instant from cache so region pills aren't stale
-                let q = await RosterStore.shared.schedule(forWorker: settings.username).first?.quals ?? []
-                if !q.isEmpty { myQuals = q; settings.cachedQuals = q }
+                if myQuals.isEmpty {
+                    // Fresh user / first launch: the master may still be importing, so the schedule fetch
+                    // (and the import-time qual cache) land late. Poll on BOTH signals until quals resolve
+                    // (~8s) instead of showing "no quals" until the sheet is re-opened.
+                    for _ in 0..<20 {
+                        let q = await RosterStore.shared.schedule(forWorker: settings.username).first?.quals ?? []
+                        if !q.isEmpty { myQuals = q; settings.cachedQuals = q; break }
+                        if !settings.cachedQuals.isEmpty { myQuals = settings.cachedQuals; break }
+                        try? await Task.sleep(for: .milliseconds(400))
+                    }
+                } else {
+                    // Already have cached quals — refresh silently from the roster if it now differs.
+                    let q = await RosterStore.shared.schedule(forWorker: settings.username).first?.quals ?? []
+                    if !q.isEmpty { myQuals = q; settings.cachedQuals = q }
+                }
             }
         }
     }
@@ -967,7 +1388,7 @@ struct PrivateNotesEditor: View {
             }
             .navigationTitle("Private Notes")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+            .toolbar { ToolbarItem(placement: .confirmationAction) { DXCloseButton { dismiss() } } }
             .onDisappear { Task { await PrivateStateStore.shared.publishLocal() } }   // sync up on close (A3)
         }
     }

@@ -190,6 +190,21 @@ final class SettingsManager {
     var lastSeenChangelogBuild: String {
         didSet { defaults.set(lastSeenChangelogBuild, forKey: Keys.lastSeenChangelog) }
     }
+    /// When the user accepted the in-app terms (the 3-item consent on the welcome walkthrough), and the
+    /// app version at acceptance — the on-device consent record. nil = not yet accepted.
+    var consentAcceptedAt: Date? {
+        didSet { defaults.set(consentAcceptedAt, forKey: Keys.consentAcceptedAt) }
+    }
+    var consentVersion: String {
+        didSet { defaults.set(consentVersion, forKey: Keys.consentVersion) }
+    }
+    /// Record acceptance of the in-app terms (called when all three consent items are agreed + confirmed).
+    /// Only stamps the FIRST acceptance so the original consent time is preserved across re-runs of the tour.
+    func recordConsent() {
+        guard consentAcceptedAt == nil else { return }
+        consentAcceptedAt = Date()
+        consentVersion = "\(AppInfo.version) (\(AppInfo.build))"
+    }
     /// Show the Welcome / What's New sheet on every launch (default ON). When OFF, it only appears
     /// after an app update (a build the user hasn't seen yet).
     var showWelcomeOnLaunch: Bool {
@@ -271,6 +286,8 @@ final class SettingsManager {
         cachedQuals              = (defaults.array(forKey: Keys.cachedQuals) as? [String]) ?? []
         tradeEmailDL             = defaults.string(forKey: Keys.tradeEmailDL) ?? "DL_dispatch_trades@aa.com"
         lastSeenChangelogBuild   = defaults.string(forKey: Keys.lastSeenChangelog) ?? ""
+        consentAcceptedAt        = defaults.object(forKey: Keys.consentAcceptedAt) as? Date
+        consentVersion           = defaults.string(forKey: Keys.consentVersion) ?? ""
         showWelcomeOnLaunch      = defaults.object(forKey: Keys.showWelcomeOnLaunch) == nil ? true : defaults.bool(forKey: Keys.showWelcomeOnLaunch)
         privateNotes             = defaults.string(forKey: Keys.privateNotes) ?? ""
         privateNotesUpdatedAt    = (defaults.object(forKey: Keys.privateNotesAt) as? Date) ?? .distantPast
@@ -306,6 +323,8 @@ final class SettingsManager {
         static let cachedQuals = "batman.cachedQuals"
         static let tradeEmailDL    = "batman.tradeEmailDL"
         static let lastSeenChangelog = "batman.lastSeenChangelogBuild"
+        static let consentAcceptedAt = "batman.consentAcceptedAt"
+        static let consentVersion = "batman.consentVersion"
         static let showWelcomeOnLaunch = "batman.showWelcomeOnLaunch"
         static let privateNotes  = "batman.privateNotes"
         static let privateNotesAt = "batman.privateNotesAt"

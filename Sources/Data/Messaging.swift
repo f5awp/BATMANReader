@@ -317,6 +317,9 @@ struct QualSwapCandidate: Sendable, Codable, Hashable, Identifiable {
     let name: String
     let desk: String       // the desk they'd FREE (their current desk that day)
     let qual: String       // that desk's qual — what the taker must hold to take it
+    /// Whether moving onto the give-desk is an equal-or-better qual preference for this bridge (Q4). Default
+    /// `true` so older records / non-annotated candidates behave as favorable. `false` → UI warns (a stretch).
+    var favorable: Bool = true
     var id: String { workerID }
 }
 
@@ -927,9 +930,11 @@ final class MessagingStore {
         return tally.mapValues { PersonPrior.logOdds(accepted: $0.acc, declined: $0.dec) }
     }
 
-    /// The clean active base a finalized qual-swap `bridge` can merge into (nil = none / not mergeable).
+    /// The clean active base a qual-swap `bridge` can merge into (nil = none / not mergeable). Linkable once
+    /// a bridge has COMMITTED — finalized OR ≥1 acceptance. A bridge-FIRST request (no taker yet) never
+    /// finalizes, so an acceptance is enough to fuse it into a base A→B trade on the same give-day. (D6.)
     func mergeBase(for bridge: TradeRequest) -> TradeRequest? {
-        guard bridge.qualSwap?.status == .finalized else { return nil }   // only a settled bridge merges
+        guard let leg = bridge.qualSwap, leg.status == .finalized || !leg.acceptances.isEmpty else { return nil }
         return TradeMerge.findBase(for: bridge, in: Self.active(requests, archived: archivedRequestIDs))
     }
 
@@ -938,6 +943,22 @@ final class MessagingStore {
         guard var leg = request.qualSwap else { return }
         leg.takerDeclined = true
         await updateQualSwapLeg(request, leg)
+    }
+
+    /// PARTIAL ACCEPT (D7): accept only SOME of the offered days by countering back to the sender with the
+    /// kept legs (perspective-flipped: their give = my take, their take = my give). Marks the original
+    /// `.countered` and sends the trimmed counter, which the sender accepts to finalize.
+    func counterWithSubset(_ request: TradeRequest, keepDays: Set<String>) async {
+        let myGive = request.takeDayIDs.filter(keepDays.contains)   // sender's TAKE = my give
+        let myTake = request.giveDayIDs.filter(keepDays.contains)   // sender's GIVE = my take
+        guard !myGive.isEmpty || !myTake.isEmpty else { return }
+        // Carry the qual-swap leg only if its give-day survived the trim.
+        let leg = request.qualSwap.flatMap { keepDays.contains($0.giveShiftDayID) ? $0 : nil }
+        await respond(to: request, status: .countered,
+                      note: "Counter — accepting \(DayFmt.list(Array(keepDays))).")
+        await sendRequest(to: request.fromID, toName: request.fromName,
+                          note: "Counter: I can do these days.",
+                          take: myTake, give: myGive, qualSwap: leg, origin: request.inboxOrigin)
     }
 
     func respond(to request: TradeRequest, status: TradeRequestStatus, note: String,
@@ -1035,6 +1056,24 @@ final class MessagingStore {
 
     var incoming: [TradeRequest] { requests.filter { $0.toID == myID } }
     var outgoing: [TradeRequest] { requests.filter { $0.fromID == myID } }
+
+    /// D6 anti-spam: give-day (and qual-swap give) IDs I've ALREADY proposed to `peerID` in an active
+    /// (not declined / not expired) outgoing request — so a card/Propose for the same peer+day reads
+    /// "Sent" instead of re-blasting them.
+    func proposedGiveDays(to peerID: String) -> Set<String> {
+        var out = Set<String>()
+        for r in outgoing where r.toID == peerID && !r.isExpired && status(of: r) != .declined {
+            out.formUnion(r.giveDayIDs)
+            if let leg = r.qualSwap { out.insert(leg.giveShiftDayID) }
+        }
+        return out
+    }
+    /// True when I've already proposed this package's swap to its peer (same taker + an overlapping
+    /// give-day). Drives the greyed "Sent" button — you can't re-spam the same person for the same day.
+    func alreadyProposed(_ pkg: TradePackage) -> Bool {
+        guard let a = pkg.assignments.first, !a.giveDayIDs.isEmpty else { return false }
+        return !Set(a.giveDayIDs).isDisjoint(with: proposedGiveDays(to: a.workerID))
+    }
 
     /// Incoming requests still awaiting your reply — drives the inbox badge.
     var pendingIncoming: [TradeRequest] {

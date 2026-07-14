@@ -19,6 +19,7 @@
 // Tier 2 — CATEGORICAL (identity only, NO meaning): avatars and per-seat trade colors.
 
 import SwiftUI
+import UIKit
 
 // MARK: - Design tokens (one source of truth for rhythm, radius, and type)
 
@@ -83,6 +84,53 @@ enum AppColor {
     static let passiveOpen = c(0.45, 0.53, 0.60) // faded slate-blue — passively open
     static let vacation    = c(0.11, 0.60, 0.55) // teal — a day OFF on vacation
 
+    // Calendar day-cell SURFACES — ADAPTIVE (light/dark), so they match the mockup in BOTH modes.
+    // (A translucent tint over the background washed out badly in light mode.) One source of truth
+    // for every calendar cell that has no vivid semantic fill.
+    static let cellWorked = Color(UIColor { t in
+        t.userInterfaceStyle == .dark
+            ? UIColor(red: 0.090, green: 0.137, blue: 0.227, alpha: 1)   // #17233a navy (mockup dark)
+            : UIColor(red: 0.953, green: 0.961, blue: 0.973, alpha: 1)   // #f3f5f8 cool near-white (mockup light)
+    })
+    // OFF = the empty/rest state (§2b): a near-neutral tile clearly LIGHTER than ON navy in dark, and a
+    // flat RECESSED gray in light. Differentiated from ON by value + lack of gloss, not a competing hue.
+    static let cellOff = Color(UIColor { t in
+        t.userInterfaceStyle == .dark
+            ? UIColor(red: 0.231, green: 0.255, blue: 0.322, alpha: 1)   // #3b4152 (clearly lighter than ON navy)
+            : UIColor(red: 0.886, green: 0.894, blue: 0.914, alpha: 1)   // #e2e4e9 flat recessed
+    })
+    /// Dim number/label on OFF tiles (§2b): #8B93B5 dark / #8A8F98 light.
+    static let cellOffText = Color(UIColor { t in
+        t.userInterfaceStyle == .dark
+            ? UIColor(red: 0.545, green: 0.576, blue: 0.710, alpha: 1)   // #8b93b5
+            : UIColor(red: 0.541, green: 0.561, blue: 0.596, alpha: 1)   // #8a8f98
+    })
+    // Blackout (§2d, option A): flat MATTE, un-glazed, slightly recessed — a lock glyph, NO red. The
+    // absence of sheen (vs every glazed tradeable tile) is what signals "immovable". Reads the same in
+    // light + dark. Tokens: fill, inset border, dim number/glyph.
+    static let blackout = Color(UIColor { t in
+        t.userInterfaceStyle == .dark
+            ? UIColor(red: 0.110, green: 0.114, blue: 0.129, alpha: 1)   // #1c1d21
+            : UIColor(red: 0.824, green: 0.831, blue: 0.855, alpha: 1)   // #d2d4da
+    })
+    static let blackoutBorder = Color(UIColor { t in
+        t.userInterfaceStyle == .dark
+            ? UIColor(red: 0.165, green: 0.173, blue: 0.188, alpha: 1)   // #2a2c30
+            : UIColor(red: 0.761, green: 0.769, blue: 0.796, alpha: 1)   // #c2c4cb
+    })
+    static let blackoutNumber = Color(UIColor { t in
+        t.userInterfaceStyle == .dark
+            ? UIColor(red: 0.420, green: 0.431, blue: 0.459, alpha: 1)   // #6b6e75
+            : UIColor(red: 0.541, green: 0.561, blue: 0.596, alpha: 1)   // #8a8f98
+    })
+    /// "Keep" (protect this working shift) — a DARK green, distinct from the brighter `success`
+    /// (accepted / optimal / done) so keeping a shift never reads the same as an accepted trade.
+    static let keep = Color(red: 0.086, green: 0.322, blue: 0.157)   // ≈ #165228 dark green
+    /// Drop shadow that lifts a day tile off the near-white page in LIGHT mode so the grouted grid reads;
+    /// none in dark (tiles separate via the dark ground + glaze). (§9a)
+    static let tileShadow = Color(UIColor { $0.userInterfaceStyle == .dark
+        ? .clear : UIColor.black.withAlphaComponent(0.12) })
+
     /// Your schedule reads in the action/"you" blue on every trade surface.
     static var mine: Color { primary }
 
@@ -105,6 +153,7 @@ enum AppColor {
 /// compiling — every one now resolves to an `AppColor` token (the single source of truth).
 enum BrickPalette {
     static let clear     = AppColor.success
+    static let keep      = AppColor.keep      // "Keep" working-shift protect — dark green (distinct from success)
     static let change    = AppColor.special
     static let info      = AppColor.primary
     static let caution   = AppColor.pending
@@ -221,7 +270,8 @@ extension WorkingIntentState {
     var brickColor: Color {
         switch self {
         case .dontWantToWork:        return BrickPalette.change  // trading it away
-        case .mustWork, .wantToWork: return BrickPalette.clear   // keeping / happy to work it
+        case .mustWork:              return BrickPalette.keep    // "Keep" — dark green, protect this shift
+        case .wantToWork:            return BrickPalette.clear   // happy to work it
         case .neutralOpen:           return BrickPalette.neutral
         }
     }
@@ -262,4 +312,46 @@ extension StagingState {
         case .markedOfficialByUser: return BrickPalette.info
         }
     }
+}
+
+// MARK: - Ceramic tile fill (§1a / §2a: a real two-stop hue gradient, derived from the token)
+
+extension Color {
+    /// Shift a color's brightness (HSB) by `delta`, with a slight saturation bump so the darker stop
+    /// reads deeper rather than muddy. Returns a DYNAMIC color that re-resolves `self` per trait — so a
+    /// glazed tile follows light↔dark automatically instead of freezing to whatever mode it first rendered
+    /// in (the "stuck light row after switching to dark" bug).
+    func adjustBrightness(_ delta: CGFloat) -> Color {
+        let ui = UIColor(self)
+        return Color(uiColor: UIColor { traits in
+            var h: CGFloat = 0, s: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+            ui.resolvedColor(with: traits).getHue(&h, saturation: &s, brightness: &b, alpha: &a)
+            return UIColor(hue: h, saturation: min(s * 1.06, 1),
+                           brightness: max(min(b + delta, 1), 0), alpha: a)
+        })
+    }
+}
+
+/// A genuine vertical two-tone gradient of the SAME token hue — lighter top → deeper/darker bottom
+/// (~18–24% depth) — so glazed cells have real ceramic depth. `.dxGlaze()` sits on top for the wet sheen.
+/// Derived from the token, never hardcoded per state. NOT for blackout (that stays flat matte, §2d).
+///
+/// Every stop is a DYNAMIC color: the base hue AND the depth are recomputed inside a `UIColor { traits }`
+/// provider, so the gradient re-resolves on a light↔dark switch instead of baking to the call-time trait
+/// (which left cells stuck in the previous mode).
+func ceramicFill(_ base: Color) -> LinearGradient {
+    let ui = UIColor(base)
+    func stop(_ topLift: Bool) -> Color {
+        Color(uiColor: UIColor { traits in
+            var h: CGFloat = 0, s: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+            ui.resolvedColor(with: traits).getHue(&h, saturation: &s, brightness: &b, alpha: &a)
+            // Depth scales with saturation × brightness so a near-white tile gets only a whisper, a
+            // saturated tile gets real depth, and an already-dark navy tile isn't crushed to black.
+            let depth = 0.04 + 0.22 * s * b
+            let delta = topLift ? min(0.07, depth * 0.5) : -depth   // top: slight lift · bottom: deeper
+            return UIColor(hue: h, saturation: min(s * 1.06, 1),
+                           brightness: max(min(b + delta, 1), 0), alpha: a)
+        })
+    }
+    return LinearGradient(colors: [stop(true), stop(false)], startPoint: .top, endPoint: .bottom)
 }

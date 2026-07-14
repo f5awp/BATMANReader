@@ -16,11 +16,20 @@ enum IntentMode: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+/// Days-Off granular painting: the AM/PM/MID pills mean EITHER "black these shifts out" or "I want to
+/// work these shifts" — mutually exclusive per day (want-to-work overrides blackout). Selected shifts show
+/// as a red ✕ in blackout mode, gold in work mode.
+enum OffPaintMode: String, CaseIterable, Identifiable {
+    case blackout = "Blackout Shifts"
+    case work = "Work Shifts"
+    var id: String { rawValue }
+}
+
 /// Which optional overlays the calendar draws.
 struct LayerVisibility {
     var notes = true          // DayNote markers
     var intentOverlays = true // intent tints
-    var availability = true   // AM/PM/MID pickup markers on off days (#2: now toggleable)
+    var availability = false  // §3: in-cell A/P/M chips OFF by default (toggle kept in VisibilityToolbar)
     var shiftType = true       // show the shift TYPE (AM/PM/MID) on worked days
     var deskAssignments = true // show the desk on worked days ("PM 32" vs just "PM")
 }
@@ -39,12 +48,13 @@ struct HomeView: View {
     @State private var changedDays: Set<String> = []
     @State private var showBanner = false
     @AppStorage("batman.v2.lastReconciledFetch") private var lastReconciledFetch: Double = 0
+    @AppStorage("batman.calendar.continuous") private var continuousCalendar = false   // opt-in continuous layout
     @State private var flashChanged = false
-    @State private var offBrush: ShiftAvailabilityType?   // nil = generic "want to work"
+    @State private var offBrushes: Set<ShiftAvailabilityType> = []   // shift types to paint (multi-select)
+    @State private var offMode: OffPaintMode = .blackout             // do those shifts mean blackout or want-to-work?
     @State private var workBrush: WorkingIntentState = .dontWantToWork
-    @State private var offIntentBrush: OffIntentState = .wantToWork   // direct off-day intent brush (F1)
     @State private var noteBrush = ""   // F2: when set, each tapped day also gets this note
-    @State private var clearNoteMode = false   // when on, tapping a day CLEARS its note (no intent paint)
+    @State private var eraseMode = false   // when on, tapping a day ERASES its intent + note (cleared state)
     @State private var showColorKey = false    // color key / legend (its own button, left of the layers toggle)
     @State private var pendingConflict: PendingConflict?
     @State private var overwriteConfirmed = false   // #10: ask-overwrite ONCE per mass-action session
@@ -65,6 +75,7 @@ struct HomeView: View {
                         Spacer(minLength: 8)
                         // Successful-trade stats moved to the shared bottom bar (TradeStatsBar) so the top
                         // of the calendar isn't crowded (B6-STATS). Color Key sits just left of the layers toggle.
+                        calendarLayoutButton
                         colorKeyButton
                         VisibilityToolbar(layers: $layers)
                     }
@@ -74,9 +85,9 @@ struct HomeView: View {
                     IntentTallyBar(centered: true)
                 }
                 homeNotesBar
-                MarkIntentsToolbar(mode: $mode, offBrush: $offBrush, workBrush: $workBrush,
-                                   offIntentBrush: $offIntentBrush, noteBrush: $noteBrush,
-                                   clearNoteMode: $clearNoteMode, layers: $layers,
+                MarkIntentsToolbar(mode: $mode, offBrushes: $offBrushes, offMode: $offMode, workBrush: $workBrush,
+                                   noteBrush: $noteBrush,
+                                   eraseMode: $eraseMode, layers: $layers,
                                    onSave: saveIntents, onDone: attemptLeaveEditing)
                 Divider()
 
@@ -91,6 +102,7 @@ struct HomeView: View {
                         mode: mode,
                         layers: layers,
                         flashDays: flashChanged ? changedDays : [],
+                        continuous: continuousCalendar,
                         onTap: handleTap,
                         // Detailed per-day editor only inside Mark Intents — general view is read-only.
                         onLongPress: { day, isOff in
@@ -142,8 +154,7 @@ struct HomeView: View {
                 if new == .off { Task { await TradeProfileStore.shared.publishMine() } }
             }
             .onChange(of: workBrush) { _, _ in overwriteConfirmed = false }
-            .onChange(of: offIntentBrush) { _, _ in overwriteConfirmed = false }
-            .onChange(of: offBrush) { _, _ in overwriteConfirmed = false }
+            .onChange(of: offBrushes) { _, _ in overwriteConfirmed = false }
         }
     }
 
@@ -154,15 +165,31 @@ struct HomeView: View {
     /// Enters Mark-Intents (edit) mode — lives on the left of the header row.
     private var markIntentsPill: some View {
         Button { withAnimation(.snappy) { mode = .workingShifts } } label: {
+            // §7: the compact bar's primary action — a NEUTRAL glazed control tile (same surface as the
+            // dock's icon squircles) with the system accent as the LABEL, not a standalone neon-blue pill.
             Label("Mark Intents", systemImage: "pencil.and.list.clipboard")
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(Color.accentColor)
                 .frame(height: DS.controlSize)
                 .padding(.horizontal, 14)
-                .background(Color.accentColor.opacity(0.14),
-                            in: RoundedRectangle(cornerRadius: DS.controlRadius, style: .continuous))
+                .dxControlTile()
         }
         .buttonStyle(.plain)
+    }
+
+    /// Toggles the calendar between the default paged month view and the opt-in continuous stream.
+    private var calendarLayoutButton: some View {
+        Button { withAnimation(.snappy) { continuousCalendar.toggle() } } label: {
+            Image(systemName: continuousCalendar ? "calendar.day.timeline.left" : "calendar")
+                .font(.system(size: 15, weight: .semibold))
+                .frame(width: DS.controlSize, height: DS.controlSize)
+                .foregroundStyle(continuousCalendar ? Color.white : Color.primary)
+                .background(continuousCalendar ? Color.accentColor : Color(.tertiarySystemFill),
+                            in: RoundedRectangle(cornerRadius: DS.controlRadius, style: .continuous))
+                .dxGlaze(radius: DS.controlRadius)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(continuousCalendar ? "Continuous calendar on" : "Continuous calendar off")
     }
 
     /// Color key / legend — a dedicated icon button just left of the layers (visibility) toggle. Same
@@ -175,6 +202,7 @@ struct HomeView: View {
                 .foregroundStyle(Color.primary)
                 .background(Color(.tertiarySystemFill),
                             in: RoundedRectangle(cornerRadius: DS.controlRadius, style: .continuous))
+                .dxGlaze(radius: DS.controlRadius)
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Colors & legend")
@@ -238,8 +266,12 @@ struct HomeView: View {
     private func handleTap(day: String, isOff: Bool) {
         // Clear-note brush: while active, a tap ONLY clears that day's note (no intent paint), so you can
         // sweep dates to wipe notes. Works in both Working and Days-Off sub-modes.
-        if mode != .off, clearNoteMode {
+        if mode != .off, eraseMode {
+            // Intent eraser: wipe any intent, availability, note, and significant-day flag back to the
+            // cleared state — the day returns to its normal (unmarked) color.
+            intents.clearIntent(forDay: day)
             intents.setNote(nil, forDay: day)
+            intents.setTopology(nil, forDay: day)
             return
         }
         switch mode {
@@ -254,31 +286,16 @@ struct HomeView: View {
         case .daysOff:
             guard isOff else { return }
             stampNote(day)
-            if let brush = offBrush {                       // AM/PM/MID granular pill brush
-                // Only legal pickup types can be set.
-                guard Legality.legalTypes(forDayID: day, shifts: store.shifts).contains(brush) else { return }
-                intents.toggleAvailability(brush, forDay: day)
-                return
+            let legal = Legality.legalTypes(forDayID: day, shifts: store.shifts)
+            // No specific shifts selected → the brush means the WHOLE day (all legal shifts).
+            let types = offBrushes.isEmpty ? legal : offBrushes
+            switch offMode {
+            case .blackout:
+                intents.setShiftBlackout(types, forDay: day, legal: legal)        // ✕ the chosen shifts
+            case .work:
+                intents.setShiftWantToWork(types, forDay: day, legal: legal)      // gold — want-to-work (overrides blackout)
             }
-            applyOff(offIntentBrush, on: day)               // direct off-intent brush
         }
-    }
-
-    /// Apply the selected off-day intent brush to a day (toggle off if same;
-    /// confirm if it would overwrite a different intent). Mirrors `applyWorking`.
-    private func applyOff(_ brush: OffIntentState, on day: String) {
-        // #1: Want-to-Work needs a legally-coverable shift; a fully rest-blocked off day can't be marked.
-        if brush == .wantToWork, Legality.legalTypes(forDayID: day, shifts: store.shifts).isEmpty { return }
-        let current = intents.offIntent(forDay: day)
-        if current == brush { intents.setOffIntent(nil, forDay: day); return }
-        if let current, !overwriteConfirmed {
-            pendingConflict = PendingConflict(dayID: day, existing: current.label) {
-                overwriteConfirmed = true                 // #10: confirm once, then paint freely
-                intents.setOffIntent(brush, forDay: day)
-            }
-            return
-        }
-        intents.setOffIntent(brush, forDay: day)
     }
 
     /// Apply the selected working-shift brush to a day (toggle off if same;
@@ -325,22 +342,22 @@ struct HomeView: View {
 
 struct MarkIntentsToolbar: View {
     @Binding var mode: IntentMode
-    @Binding var offBrush: ShiftAvailabilityType?
+    @Binding var offBrushes: Set<ShiftAvailabilityType>
+    @Binding var offMode: OffPaintMode
     @Binding var workBrush: WorkingIntentState
-    @Binding var offIntentBrush: OffIntentState
     @Binding var noteBrush: String
-    @Binding var clearNoteMode: Bool       // when on, tapping a day clears its note
+    @Binding var eraseMode: Bool       // when on, tapping a day clears its note
     @Binding var layers: LayerVisibility   // layers menu rides in the top row while editing
     var onSave: () -> Void          // SAVE this session's marks (clears the dirty glow)
     var onDone: () -> Void          // leave the section (guarded if there are unsaved edits)
     private var intents = DayIntentStore.shared
 
-    init(mode: Binding<IntentMode>, offBrush: Binding<ShiftAvailabilityType?>,
-         workBrush: Binding<WorkingIntentState>, offIntentBrush: Binding<OffIntentState>,
-         noteBrush: Binding<String>, clearNoteMode: Binding<Bool>, layers: Binding<LayerVisibility>,
+    init(mode: Binding<IntentMode>, offBrushes: Binding<Set<ShiftAvailabilityType>>,
+         offMode: Binding<OffPaintMode>, workBrush: Binding<WorkingIntentState>,
+         noteBrush: Binding<String>, eraseMode: Binding<Bool>, layers: Binding<LayerVisibility>,
          onSave: @escaping () -> Void, onDone: @escaping () -> Void) {
-        _mode = mode; _offBrush = offBrush; _workBrush = workBrush
-        _offIntentBrush = offIntentBrush; _noteBrush = noteBrush; _clearNoteMode = clearNoteMode; _layers = layers
+        _mode = mode; _offBrushes = offBrushes; _offMode = offMode; _workBrush = workBrush
+        _noteBrush = noteBrush; _eraseMode = eraseMode; _layers = layers
         self.onSave = onSave; self.onDone = onDone
     }
 
@@ -356,15 +373,26 @@ struct MarkIntentsToolbar: View {
     private var editPanel: some View {
         VStack(spacing: 10) {
             HStack(spacing: 10) {
-                Picker("", selection: $mode.animation(.easeInOut)) {
-                    Text("Working Shifts").tag(IntentMode.workingShifts)
-                    Text("Days Off").tag(IntentMode.daysOff)
-                }
-                .pickerStyle(.segmented)
+                DXSegmented(selection: $mode, options: [
+                    .init(IntentMode.workingShifts, "Working"),
+                    .init(IntentMode.daysOff, "Off"),
+                ])
                 VisibilityToolbar(layers: $layers)
-                Button { onDone() } label: {
-                    Text("Done").font(.subheadline.weight(.bold))
+                // Intent eraser — sits by Done; tapping days clears ALL intent + note back to cleared.
+                Button {
+                    eraseMode.toggle()
+                    if eraseMode { noteBrush = "" }   // eraser + note-stamp are mutually exclusive
+                } label: {
+                    Label("Erase", systemImage: "eraser.line.dashed")
+                        .labelStyle(.titleAndIcon)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(eraseMode ? Color.white : AppColor.danger)
+                        .padding(.horizontal, 10).padding(.vertical, 6)
+                        .background(eraseMode ? AppColor.danger : AppColor.danger.opacity(0.14), in: Capsule())
                 }
+                .buttonStyle(.plain)
+                .accessibilityLabel(eraseMode ? "Intent eraser on" : "Erase intents and notes")
+                DXCloseButton { onDone() }
             }
             .padding(.horizontal)
 
@@ -373,34 +401,19 @@ struct MarkIntentsToolbar: View {
             } else if mode == .daysOff {
                 availabilityPills
             }
-            // F2: optional note stamped onto every day you tap. The eraser toggles a "clear notes" brush —
-            // while on, tapping days wipes their notes instead of stamping.
+            // F2: optional note stamped onto every day you tap.
             HStack(spacing: 8) {
                 Image(systemName: "note.text").foregroundStyle(.secondary)
-                TextField(clearNoteMode ? "Tap days to clear their notes" : "Stamp a note on tapped days (optional)",
+                TextField(eraseMode ? "Eraser on — tap days to clear them" : "Stamp a note on tapped days (optional)",
                           text: $noteBrush)
                     .font(.subheadline)
-                    .disabled(clearNoteMode)
-                    .foregroundStyle(clearNoteMode ? .secondary : .primary)
+                    .disabled(eraseMode)
+                    .foregroundStyle(eraseMode ? .secondary : .primary)
                     .onChange(of: noteBrush) { _, v in if v.count > DayNote.maxLength { noteBrush = String(v.prefix(DayNote.maxLength)) } }
-                if !clearNoteMode, !noteBrush.isEmpty {
+                if !eraseMode, !noteBrush.isEmpty {
                     CharCounter(text: noteBrush, limit: DayNote.maxLength)
                     Button { noteBrush = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
                 }
-                // Clear-note brush toggle (to the right of the note input).
-                Button {
-                    clearNoteMode.toggle()
-                    if clearNoteMode { noteBrush = "" }   // the two brushes are mutually exclusive
-                } label: {
-                    Image(systemName: "eraser.line.dashed")
-                        .font(.subheadline.weight(.semibold))
-                        .frame(width: DS.controlSize, height: DS.controlSize)
-                        .foregroundStyle(clearNoteMode ? Color.white : Color.primary)
-                        .background(clearNoteMode ? AppColor.danger : Color(.tertiarySystemFill),
-                                    in: RoundedRectangle(cornerRadius: DS.controlRadius, style: .continuous))
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(clearNoteMode ? "Clear-note brush on" : "Clear notes")
             }
             .padding(.horizontal)
 
@@ -430,16 +443,14 @@ struct MarkIntentsToolbar: View {
         .animation(.easeInOut(duration: 0.25), value: dirty)
     }
 
-    /// Working-shift intent brushes — EVERY meaningful working intent (F1), driven by
-    /// `IntentBrushes.working` so none can be silently omitted.
+    /// Working-shift intent — a two-way mode switch in the SAME format as the Off panel's
+    /// Blackout ↔ Want-to-Work switch: "Want to Trade" (purple) ↔ "Keep" (green). Driven by
+    /// `IntentBrushes.working` so the two states can never be silently omitted.
     private var workingPills: some View {
-        HStack(spacing: 6) {
-            ForEach(IntentBrushes.working) { state in
-                brushPill(on: workBrush == state, label: state.label, color: state.brickColor) { workBrush = state }
-            }
-            Spacer()
-        }
-        .padding(.horizontal)
+        DXSegmented(selection: $workBrush,
+                    options: IntentBrushes.working.map { .init($0, $0.label) },
+                    color: { $0.brickColor })
+            .padding(.horizontal)
     }
 
     private func brushPill(on: Bool, label: String, color: Color, _ action: @escaping () -> Void) -> some View {
@@ -457,30 +468,34 @@ struct MarkIntentsToolbar: View {
         .buttonStyle(.plain)
     }
 
-    /// Off-day brushes: direct intent brushes (Must Be Off / Want to Work / Open — EVERY
-    /// OffIntentState, F1) on top, plus AM/PM/MID granular pills for "want to work".
+    /// Off-day brushes: a Blackout ↔ Work mode switch, then the AM/PM/MID shift pills. The SAME pills mean
+    /// "black these shifts out" (✕, slate) or "I want to work these shifts" (gold) depending on the mode —
+    /// mutually exclusive per day (want-to-work overrides blackout). No shift selected = the whole day.
     private var availabilityPills: some View {
-        // #10: intent brushes + AM/PM/MID on ONE line (scrolls if narrow), larger/clearer buttons.
-        ScrollView(.horizontal, showsIndicators: false) {
+        // The pill tint tracks the mode so the selection reads the way it'll paint: gold = work, slate = ✕.
+        let selColor = offMode == .work ? OffIntentState.wantToWork.brickColor : AppColor.locked
+        return VStack(spacing: 8) {
+            DXSegmented(selection: $offMode, options: [
+                .init(OffPaintMode.blackout, "Blackout"),
+                .init(OffPaintMode.work, "Want to Work"),
+            ], color: { $0 == .work ? OffIntentState.wantToWork.brickColor : AppColor.locked })
+                .padding(.horizontal)
+
             HStack(spacing: 8) {
-                ForEach(IntentBrushes.off) { state in
-                    brushPill(on: offBrush == nil && offIntentBrush == state, label: state.label, color: state.brickColor) {
-                        offIntentBrush = state; offBrush = nil
-                    }
-                }
-                Divider().frame(height: 24)
-                Text("Shift Availability").font(.caption).foregroundStyle(.secondary)
+                Text(offMode == .work ? "Work shifts" : "Blackout shifts")
+                    .font(.caption).foregroundStyle(.secondary)
                 ForEach(ShiftAvailabilityType.allCases, id: \.self) { type in
-                    let on = offBrush == type
-                    Button { offBrush = on ? nil : type } label: {
+                    let on = offBrushes.contains(type)
+                    Button { if on { offBrushes.remove(type) } else { offBrushes.insert(type) } } label: {
                         Text(type.rawValue)
                             .font(.subheadline.weight(.bold))
                             .padding(.horizontal, 14).padding(.vertical, 7)
-                            .background(on ? BrickPalette.availableOff : Color(.tertiarySystemFill), in: Capsule())
+                            .background(on ? selColor : Color(.tertiarySystemFill), in: Capsule())
                             .foregroundStyle(on ? .white : .primary)
                     }
                     .buttonStyle(.plain)
                 }
+                Spacer(minLength: 0)
             }
             .padding(.horizontal)
         }
@@ -516,6 +531,7 @@ struct VisibilityToolbar: View {
                 .foregroundStyle(anyHidden ? Color.white : Color.primary)
                 .background(anyHidden ? Color.accentColor : Color(.tertiarySystemFill),
                             in: RoundedRectangle(cornerRadius: DS.controlRadius, style: .continuous))
+                .dxGlaze(radius: DS.controlRadius)
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Layer visibility")
@@ -561,7 +577,7 @@ struct IntentKeySheet: View {
             }
             .navigationTitle("Colors & Legend")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+            .toolbar { ToolbarItem(placement: .confirmationAction) { DXCloseButton { dismiss() } } }
         }
     }
 }

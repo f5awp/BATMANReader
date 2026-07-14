@@ -55,7 +55,7 @@ enum DeskRegion: String, Sendable, CaseIterable {
     case coordinator = "Coordinator"
 }
 
-enum DeskRules {
+nonisolated enum DeskRules {
 
     /// Region a desk belongs to (line-dispatcher desk numbers per the user; can
     /// change). Non-numeric desks (A#, C#, OJT, RC…) are coordinator/training.
@@ -151,11 +151,22 @@ enum DeskRules {
     /// `qualified(quals:forDesk:)`.
     static func acceptsQualSwap(into newDesk: String, fromCurrentDesk currentDesk: String,
                                 values: [String: Int]?, blacklistDesks: Set<String>? = nil) -> Bool {
+        qualSwapHardOK(into: newDesk, values: values, blacklistDesks: blacklistDesks)
+            && qualSwapFavorable(into: newDesk, fromCurrentDesk: currentDesk, values: values)
+    }
+
+    /// HARD gate (never overridden): the give-desk isn't a blacklisted desk number and its qual isn't
+    /// blacklisted (value 0). A bridge failing this is dropped entirely.
+    static func qualSwapHardOK(into newDesk: String, values: [String: Int]?, blacklistDesks: Set<String>? = nil) -> Bool {
         let newDeskU = newDesk.uppercased().trimmingCharacters(in: .whitespaces)
-        if blacklistDesks?.contains(newDeskU) == true { return false }   // blacklisted desk number
-        let newQual = requiredQual(forDesk: newDesk)
-        if let nq = newQual, values?[nq] == 0 { return false }   // blacklisted qual
-        return qualValue(newQual, values: values) >= qualValue(requiredQual(forDesk: currentDesk), values: values)
+        if blacklistDesks?.contains(newDeskU) == true { return false }
+        if let nq = requiredQual(forDesk: newDesk), values?[nq] == 0 { return false }
+        return true
+    }
+    /// SOFT signal (Q4): moving onto `newDesk` is an EQUAL-or-BETTER qual preference than their current
+    /// desk. `false` = unfavorable — a stretch ask, surfaced with a warning rather than dropped.
+    static func qualSwapFavorable(into newDesk: String, fromCurrentDesk currentDesk: String, values: [String: Int]?) -> Bool {
+        qualValue(requiredQual(forDesk: newDesk), values: values) >= qualValue(requiredQual(forDesk: currentDesk), values: values)
     }
 }
 
@@ -163,7 +174,7 @@ enum DeskRules {
 
 /// Single source of truth for trade timing. Per the user: **all** trading globally
 /// (not just qual swaps) only ever considers shifts that start at 0500, 1300, or 2100.
-enum TradeTiming {
+nonisolated enum TradeTiming {
     /// The only start hours (24h) that any trade considers.
     static let validStartHours: Set<Int> = [5, 13, 21]
     static func isTradeable(startHour: Int) -> Bool { validStartHours.contains(startHour) }
@@ -195,37 +206,44 @@ struct QualSwapShift: Sendable, Hashable, Identifiable {
     var id: String { workerID }
 }
 
-enum QualSwap {
+nonisolated enum QualSwap {
     /// Bridge partners (C) that unblock GIVING a desk to a willing-but-unqualified taker.
     ///
     /// Scenario: A gives away `giveDesk` (needs qual X) on a day; the off taker (B) is
     /// willing but lacks X. A bridge C — already working that day — slides onto A's desk,
     /// freeing C's desk for B. A goes off. Coverage and start time stay whole.
     ///
-    /// C qualifies iff: starts at the same (tradeable) hour, HOLDS X (can take giveDesk),
-    /// is on a desk whose qual the TAKER holds (so the taker can take C's desk), and
-    /// ACCEPTS moving onto giveDesk per their preference values (Q4). `excludeIDs` drops
-    /// A and B themselves.
-    static func bridges(giveDesk: String, takerQuals: [String], startHour: Int,
+    /// C qualifies iff: starts at the same (tradeable) hour, HOLDS X (can take giveDesk), and is not
+    /// HARD-blocked (blacklisted give-desk/qual). Their desk needn't be domestic — Euro/Pacific bridges are
+    /// fine. When `takerQuals` is provided (trade-first: a real B exists) C's freed desk must be one B can
+    /// hold; when nil (bridge-first: the green button, no B yet) that check is skipped. Each result is
+    /// flagged `favorable` — UNfavorable bridges (they prefer their current desk's qual) are INCLUDED with a
+    /// warning, not dropped. `excludeIDs` drops A and B themselves.
+    static func bridges(giveDesk: String, takerQuals: [String]?, startHour: Int,
                         workers: [(shift: QualSwapShift, profile: TradeProfile)],
-                        excludeIDs: Set<String>) -> [QualSwapShift] {
+                        excludeIDs: Set<String>) -> [QualSwapCandidate] {
         guard TradeTiming.isTradeable(startHour: startHour) else { return [] }
-        return workers.compactMap { worker -> QualSwapShift? in
+        return workers.compactMap { worker -> QualSwapCandidate? in
             let c = worker.shift
             guard !excludeIDs.contains(c.workerID) else { return nil }
-            guard c.startHour == startHour else { return nil }                              // same start time
-            guard DeskRules.qualified(quals: c.quals, forDesk: giveDesk) else { return nil } // C can take give-desk (has X)
-            guard DeskRules.qualified(quals: takerQuals, forDesk: c.desk) else { return nil } // taker can take C's desk
-            guard worker.profile.acceptsQualSwap(into: giveDesk, fromCurrentDesk: c.desk) else { return nil } // C willing (Q4)
-            return c
+            guard c.startHour == startHour else { return nil }                                // same start time
+            guard DeskRules.qualified(quals: c.quals, forDesk: giveDesk) else { return nil }   // C can take give-desk (has X)
+            // The freed desk must need a DIFFERENT qual than the give-desk. If it needs the SAME qual,
+            // the swap is pointless — a taker who can't work the give-desk can't work the freed desk
+            // either (e.g. a Latin FD82 can't be bridged by freeing another Latin desk). (User rule.)
+            guard DeskRules.requiredQual(forDesk: c.desk) != DeskRules.requiredQual(forDesk: giveDesk) else { return nil }
+            if let tq = takerQuals {                                                           // trade-first only
+                guard DeskRules.qualified(quals: tq, forDesk: c.desk) else { return nil }       // taker can take C's freed desk
+            }
+            let vals = worker.profile.qualValues
+            guard DeskRules.qualSwapHardOK(into: giveDesk, values: vals,
+                                           blacklistDesks: worker.profile.qualSwapBlacklistDesks) else { return nil }
+            let favorable = DeskRules.qualSwapFavorable(into: giveDesk, fromCurrentDesk: c.desk, values: vals)
+            return QualSwapCandidate(workerID: c.workerID, name: c.name, desk: c.desk,
+                                     qual: DeskRules.requiredQual(forDesk: c.desk) ?? "D", favorable: favorable)
         }
-    }
-
-    /// Adapter: a blastable candidate (the bridge + the desk they'd FREE + that desk's
-    /// qual) from a bridge shift — what the taker needs to evaluate the offer (Q2/Q6).
-    static func candidate(from shift: QualSwapShift) -> QualSwapCandidate {
-        QualSwapCandidate(workerID: shift.workerID, name: shift.name, desk: shift.desk,
-                          qual: DeskRules.requiredQual(forDesk: shift.desk) ?? "D")
+        // Favorable first, then by name — the caller may re-sort, but a sane default keeps stretch asks last.
+        .sorted { ($0.favorable ? 0 : 1, $0.name) < ($1.favorable ? 0 : 1, $1.name) }
     }
 
     /// One auto-discovered 3-party qual-swap solution (Q1): giver A goes off, bridge C slides
@@ -249,6 +267,9 @@ enum QualSwap {
             let c = w.shift
             guard c.workerID != giverID, c.startHour == giveStartHour else { continue }
             guard DeskRules.qualified(quals: c.quals, forDesk: giveDesk) else { continue }    // C can take A's desk
+            // Freed desk must need a DIFFERENT qual than the give-desk (see `bridges`): a same-qual
+            // freed desk can't help an unqualified taker (Latin→Latin is useless). (User rule.)
+            guard DeskRules.requiredQual(forDesk: c.desk) != DeskRules.requiredQual(forDesk: giveDesk) else { continue }
             guard w.profile.acceptsQualSwap(into: giveDesk, fromCurrentDesk: c.desk) else { continue }  // C willing (Q4)
             let cQual = DeskRules.requiredQual(forDesk: c.desk) ?? "D"
             for b in offTakers where b.id != giverID && b.id != c.workerID {
@@ -473,6 +494,8 @@ enum TradeMatcher {
     /// window: their work days you could cover (bookend for you) and your work
     /// days they could cover (bookend for them). `wanted` legs are days the owner
     /// actively marked to trade away. Single-worker roster queries keep it cheap.
+    /// @MainActor wrapper for callers that DON'T preload schedules (e.g. the two-way sheet): fetch the two
+    /// rosters on the main actor, then delegate to the pure `nonisolated` core below.
     static func twoWayExplore(withWorker workerID: String, name: String,
                               windowStart: Date, windowEnd: Date,
                               mySeeking: Set<String>, theirSeeking: Set<String>,
@@ -480,13 +503,28 @@ enum TradeMatcher {
                               ignoreOwnBlacklist: Bool = false,
                               preloadedMine: [RosterEntry]? = nil,
                               preloadedPeer: [RosterEntry]? = nil) async -> TwoWayPlan {
-        let cal = Calendar.current
-        // Perf (R-A): when the caller already loaded schedules (looping the whole roster), reuse them
-        // instead of re-fetching per peer — avoids ~2×N SwiftData queries across 500+ dispatchers.
+        // Perf (R-A): reuse preloaded schedules when the caller already has them (looping the roster).
         let myEntries: [RosterEntry]
         if let pm = preloadedMine { myEntries = pm } else { myEntries = await RosterStore.shared.schedule(forWorker: myID) }
-        let pEntries: [RosterEntry]
-        if let pp = preloadedPeer { pEntries = pp } else { pEntries = await RosterStore.shared.schedule(forWorker: workerID) }
+        let peerEntries: [RosterEntry]
+        if let pp = preloadedPeer { peerEntries = pp } else { peerEntries = await RosterStore.shared.schedule(forWorker: workerID) }
+        return twoWayExploreCore(withWorker: workerID, name: name, windowStart: windowStart, windowEnd: windowEnd,
+                                 mySeeking: mySeeking, theirSeeking: theirSeeking,
+                                 myProfile: myProfile, theirProfile: theirProfile,
+                                 ignoreOwnBlacklist: ignoreOwnBlacklist,
+                                 myEntries: myEntries, peerEntries: peerEntries)
+    }
+
+    /// PURE two-way exploration over PRELOADED schedules — no `.shared` access, so it runs off the main
+    /// actor (the intent loop calls this directly inside `Task.detached`). Logic identical to before.
+    nonisolated static func twoWayExploreCore(withWorker workerID: String, name: String,
+                              windowStart: Date, windowEnd: Date,
+                              mySeeking: Set<String>, theirSeeking: Set<String>,
+                              myProfile: TradeProfile, theirProfile: TradeProfile,
+                              ignoreOwnBlacklist: Bool,
+                              myEntries: [RosterEntry], peerEntries: [RosterEntry]) -> TwoWayPlan {
+        let cal = Calendar.current
+        let pEntries = peerEntries
         let myMap = Dictionary(myEntries.map { ($0.day, $0) }, uniquingKeysWith: { a, _ in a })
         let pMap  = Dictionary(pEntries.map  { ($0.day, $0) }, uniquingKeysWith: { a, _ in a })
         let myQuals = myEntries.first?.quals ?? []
@@ -691,7 +729,7 @@ enum TradeMatcher {
     }
 
     /// 8-hour rest before/after a shift on `day` vs the map owner's adjacent shifts.
-    private static func rested(map: [String: RosterEntry], day: Date, startHour: Int, cal: Calendar) -> Bool {
+    nonisolated private static func rested(map: [String: RosterEntry], day: Date, startHour: Int, cal: Calendar) -> Bool {
         guard let coverStart = cal.date(byAdding: .hour, value: startHour, to: cal.startOfDay(for: day)) else { return false }
         let coverEnd = coverStart.addingTimeInterval(shiftLength)
         if let prev = cal.date(byAdding: .day, value: -1, to: day), let p = map[iso(prev)], !p.isOff {
@@ -707,7 +745,7 @@ enum TradeMatcher {
 
     /// Whether covering `day` attaches to the map owner's existing work (same
     /// "no floating island" bookend rule as the one-way matcher).
-    static func anchored(day: Date, map: [String: RosterEntry], plan: Set<String>, cal: Calendar) -> Bool {
+    nonisolated static func anchored(day: Date, map: [String: RosterEntry], plan: Set<String>, cal: Calendar) -> Bool {
         func existingWork(_ d: Date) -> Bool { map[iso(d)].map { !$0.isOff } ?? false }
         func worksInPlan(_ d: Date) -> Bool { plan.contains(iso(d)) || existingWork(d) }
         for dir in [-1, 1] {
@@ -725,7 +763,7 @@ enum TradeMatcher {
     /// block — a neighbor is already off/absent — so trading it out extends the giver's time off instead
     /// of leaving an isolated mid-week "island" day off. (Symmetric to `anchored`, which is the pickup
     /// bookend.) Used to stop offering a peer's inconvenient mid-week give-backs.
-    static func isCleanGiveAway(day: Date, map: [String: RosterEntry], cal: Calendar) -> Bool {
+    nonisolated static func isCleanGiveAway(day: Date, map: [String: RosterEntry], cal: Calendar) -> Bool {
         func offOrAbsent(_ d: Date) -> Bool { map[iso(d)].map { $0.isOff } ?? true }
         let base = cal.startOfDay(for: day)
         let prev = cal.date(byAdding: .day, value: -1, to: base) ?? base
@@ -739,11 +777,14 @@ enum TradeMatcher {
     /// holding `takerQuals` but lacking the desk's qual. THE single entry point used by
     /// every matcher path. Returns [] when no swap is needed, the start hour isn't
     /// tradeable, or nobody qualifies. Bridges with no published profile default to open.
+    /// `takerQuals == nil` ⇒ BRIDGE-FIRST (green button, no taker yet): list every working bridge that can
+    /// take the give-desk, skipping the "taker can take C's freed desk" check. Non-nil ⇒ trade-first.
     static func qualSwapBridges(giveDayID: String, giveDesk: String, giveStartHour: Int,
-                                takerID: String, takerQuals: [String],
+                                takerID: String = "", takerQuals: [String]? = nil,
                                 excludeIDs: Set<String>) async -> [QualSwapCandidate] {
-        guard qualSwapNeededShared(forDesk: giveDesk, takerQuals: takerQuals),
-              TradeTiming.isTradeable(startHour: giveStartHour),
+        // A specific taker who ALREADY holds the qual doesn't need a swap; bridge-first (nil) always proceeds.
+        if let tq = takerQuals, !qualSwapNeededShared(forDesk: giveDesk, takerQuals: tq) { return [] }
+        guard TradeTiming.isTradeable(startHour: giveStartHour),
               let date = dateFromISO(giveDayID) else { return [] }
         let working = await RosterStore.shared.dispatchersWorking(on: date)
         let workers: [(QualSwapShift, TradeProfile)] = working.map { e in
@@ -753,9 +794,9 @@ enum TradeMatcher {
                 ?? TradeProfile.defaultForUnpublished(workerID: e.workerID, name: e.workerName)   // A8: missing → Bookends Only
             return (shift, prof)
         }
-        var exclude = excludeIDs; exclude.insert(takerID)
+        var exclude = excludeIDs; if !takerID.isEmpty { exclude.insert(takerID) }
         return QualSwap.bridges(giveDesk: giveDesk, takerQuals: takerQuals, startHour: giveStartHour,
-                                workers: workers, excludeIDs: exclude).map(QualSwap.candidate(from:))
+                                workers: workers, excludeIDs: exclude)
     }
 
     /// Build an embedded qual-swap leg for giving `giveDesk` to a taker. nil when no swap
@@ -782,11 +823,11 @@ enum TradeMatcher {
 
     // MARK: - Snapshot helpers
 
-    private static func iso(_ date: Date) -> String {
+    nonisolated private static func iso(_ date: Date) -> String {
         let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; return f.string(from: date)
     }
 
-    private static func dateFromISO(_ s: String) -> Date? {
+    nonisolated private static func dateFromISO(_ s: String) -> Date? {
         let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"
         return f.date(from: s).map { Calendar.current.startOfDay(for: $0) }
     }
@@ -819,22 +860,22 @@ enum TradeMatcher {
 // reuse the exact same gate logic instead of duplicating it.
 extension TradeMatcher {
     /// 8-hour rest check vs the map owner's adjacent shifts.
-    static func isRested(map: [String: RosterEntry], day: Date, startHour: Int,
+    nonisolated static func isRested(map: [String: RosterEntry], day: Date, startHour: Int,
                          cal: Calendar = .current) -> Bool {
         rested(map: map, day: day, startHour: startHour, cal: cal)
     }
 
     /// Whether covering `day` attaches to existing work (no floating island).
-    static func isAnchored(day: Date, map: [String: RosterEntry], plan: Set<String>,
+    nonisolated static func isAnchored(day: Date, map: [String: RosterEntry], plan: Set<String>,
                            cal: Calendar = .current) -> Bool {
         anchored(day: day, map: map, plan: plan, cal: cal)
     }
 
     /// ISO "yyyy-MM-dd" for a date.
-    static func isoDay(_ date: Date) -> String { iso(date) }
+    nonisolated static func isoDay(_ date: Date) -> String { iso(date) }
 
     /// Parse an ISO "yyyy-MM-dd" day string to a start-of-day Date.
-    static func dayDate(fromISO s: String) -> Date? { dateFromISO(s) }
+    nonisolated static func dayDate(fromISO s: String) -> Date? { dateFromISO(s) }
 
 }
 
@@ -860,8 +901,7 @@ struct CoverCheck: Sendable, Hashable {
 /// THE single per-(coverer, day) eligibility test — every matcher path calls this instead
 /// of its own inline copy (U1). PURE + synchronous: all roster/profile data is passed in
 /// (loaded once per search), so it never fetches and is safe in tight loops at 550-user scale.
-@MainActor
-enum TradeEligibility {
+nonisolated enum TradeEligibility {
     /// Can `coverProfile` (off-roster `coverMap`, holding `coverQuals`) cover a shift on
     /// `coverDay`/`desk`/`startHour`? Returns eligibility + the computed bookend flag.
     static func canCover(coverDayID: String, coverDay: Date, desk: String, startHour: Int,

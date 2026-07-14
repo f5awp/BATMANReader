@@ -476,9 +476,13 @@ struct DXCloseButton: View {
     let action: () -> Void
     var body: some View {
         // Just the glyph — the toolbar supplies the single circular chrome. (No own circle, so it doesn't
-        // double-ring inside the toolbar's button background.)
+        // double-ring inside the toolbar's button background.) The glyph is tiny, so we expand the HIT
+        // AREA to a comfortable ~32pt square (contentShape) — otherwise only the ~13pt glyph pixels are
+        // tappable and the button feels unresponsive / needs multiple taps.
         Button(action: action) {
             Image(systemName: "xmark").font(.footnote.weight(.bold))
+                .frame(width: 32, height: 32)
+                .contentShape(Rectangle())
         }
         .accessibilityLabel("Close")
     }

@@ -38,14 +38,15 @@ final class DayIntentStore {
         var topologies: [String: DayTopology]
         var notes: [String: DayNote]
         var availability: [String: Set<ShiftAvailabilityType>]
+        var wanted: [String: Set<ShiftAvailabilityType>]
         var manualOff: Set<String>
         static let empty = Baseline(working: [:], off: [:], topologies: [:],
-                                    notes: [:], availability: [:], manualOff: [])
+                                    notes: [:], availability: [:], wanted: [:], manualOff: [])
     }
 
     private func captureBaseline() -> Baseline {
         Baseline(working: workingIntents, off: offIntents, topologies: topologies,
-                 notes: notes, availability: offAvailability, manualOff: manualOffDays)
+                 notes: notes, availability: offAvailability, wanted: offWanted, manualOff: manualOffDays)
     }
 
     private func markDirty() { hasUnsavedChanges = true }
@@ -66,6 +67,7 @@ final class DayIntentStore {
         topologies      = savedBaseline.topologies
         notes           = savedBaseline.notes
         offAvailability = savedBaseline.availability
+        offWanted       = savedBaseline.wanted
         manualOffDays   = savedBaseline.manualOff
         hasUnsavedChanges = false
     }
@@ -88,9 +90,16 @@ final class DayIntentStore {
     private(set) var notes: [String: DayNote] {
         didSet { persist(notes, Keys.notes) }
     }
-    /// ISO off-day → which shift types the user would pick up (AM/PM/MID pills).
+    /// ISO off-day → which shift types the user would pick up (AM/PM/MID pills). This is the matcher-facing
+    /// "available" set = legal − blacked-out; the blacked-out shifts are its complement.
     private(set) var offAvailability: [String: Set<ShiftAvailabilityType>] {
         didSet { persist(offAvailability, Keys.availability) }
+    }
+    /// ISO off-day → shift types the user actively WANTS to work (gold pills). A subset of `offAvailability`;
+    /// disjoint from the blacked-out shifts. Neutral shifts are available but neither gold nor ✕. When
+    /// non-empty the day is a want-to-work (gold) day.
+    private(set) var offWanted: [String: Set<ShiftAvailabilityType>] {
+        didSet { persist(offWanted, Keys.wanted) }
     }
     /// Off days the user customized by hand — the openness shortcut won't overwrite these.
     private(set) var manualOffDays: Set<String> {
@@ -147,10 +156,27 @@ final class DayIntentStore {
         topologies      = Self.load(Keys.topology) ?? [:]
         notes           = Self.load(Keys.notes) ?? [:]
         offAvailability = Self.load(Keys.availability) ?? [:]
+        offWanted       = Self.load(Keys.wanted) ?? [:]
         manualOffDays   = Set(UserDefaults.standard.stringArray(forKey: Keys.manualOff) ?? [])
         intentsUpdatedAt = (UserDefaults.standard.object(forKey: Keys.updatedAt) as? Date) ?? .distantPast
         migrateFromTradeIntentStoreIfNeeded()
+        migrateAutoVacationBlackoutsIfNeeded()
         savedBaseline = captureBaseline()   // on-disk state is the saved baseline at launch
+    }
+
+    /// One-time cleanup: older builds AUTO-blacked-out vacation days (a `.mustBeOff` intent paired with a
+    /// `.vacation`-reason note), which made them render as the black blackout tile. Vacation is now a
+    /// display-only fact (teal + "VAC"), so clear those auto-set artifacts. A user's genuine blackout has
+    /// no auto "vacation" note, so it's preserved.
+    private func migrateAutoVacationBlackoutsIfNeeded() {
+        let defaults = UserDefaults.standard
+        guard !defaults.bool(forKey: Keys.migratedAutoVacation) else { return }
+        for (day, note) in notes where note.reason == .vacation {
+            if offIntents[day] == .mustBeOff { offIntents[day] = nil }
+            notes[day] = nil
+            manualOffDays.remove(day)
+        }
+        defaults.set(true, forKey: Keys.migratedAutoVacation)
     }
 
     /// Seed `workingIntents` from the legacy `TradeIntentStore.seekingDayIDs` once,
@@ -205,6 +231,70 @@ final class DayIntentStore {
         markDirty()
     }
 
+    /// A shift can be GOLD (want), ✕ (blacked out), or neutral — gold and ✕ coexist on one day. These three
+    /// helpers keep `offAvailability` (matcher: available = legal − blacked), `offWanted` (gold ⊆ available),
+    /// and the derived day-level `offIntents` consistent.
+
+    /// The types currently AVAILABLE (pickup-able) — legal minus the blacked-out ones. `.mustBeOff` = none.
+    private func currentAvailable(_ dayID: String, _ legal: Set<ShiftAvailabilityType>) -> Set<ShiftAvailabilityType> {
+        if offIntents[dayID] == .mustBeOff { return [] }
+        return (offAvailability[dayID] ?? legal).intersection(legal)   // no explicit set = fully open
+    }
+
+    /// Commit an off day's available + wanted sets, deriving the day-level intent + tile:
+    ///  • no shift available (all ✕)     → `.mustBeOff` (gray blackout cell)
+    ///  • ≥1 gold shift                  → `.wantToWork` (gold cell)
+    ///  • some ✕ but none gold           → neutral (partial blackout keeps the plain off cell)
+    ///  • nothing ✕, nothing gold        → fully cleared/open (nil)
+    private func commitOff(_ dayID: String, available: Set<ShiftAvailabilityType>,
+                           wanted: Set<ShiftAvailabilityType>, legal: Set<ShiftAvailabilityType>) {
+        let avail = available.intersection(legal)
+        let want  = wanted.intersection(avail)                 // gold must be a subset of available
+        if avail.isEmpty {
+            offAvailability[dayID] = nil; offWanted[dayID] = nil; offIntents[dayID] = .mustBeOff
+        } else if want.isEmpty && avail == legal {
+            offAvailability[dayID] = nil; offWanted[dayID] = nil; offIntents[dayID] = nil   // open
+        } else {
+            offAvailability[dayID] = avail
+            offWanted[dayID] = want.isEmpty ? nil : want
+            offIntents[dayID] = want.isEmpty ? nil : .wantToWork
+        }
+        markDirty()
+    }
+
+    /// "Blackout shifts" (Mark Intents · Days Off): ✕ the selected shift TYPES (toggle). Only when EVERY
+    /// legal type ends up blacked does the whole day become must-be-off (gray blackout) — a partial blackout
+    /// keeps the day's existing intent (neutral, or still gold if other shifts are wanted).
+    func setShiftBlackout(_ types: Set<ShiftAvailabilityType>, forDay dayID: String, legal: Set<ShiftAvailabilityType>) {
+        let types = types.intersection(legal)
+        guard !types.isEmpty else { return }
+        manualOffDays.insert(dayID)
+        let avail = currentAvailable(dayID, legal)
+        let blacked = legal.subtracting(avail)
+        let wanted = offWanted[dayID] ?? []
+        if types.isSubset(of: blacked) {                       // already all ✕ → un-blackout (restore, neutral)
+            commitOff(dayID, available: avail.union(types), wanted: wanted, legal: legal)
+        } else {                                               // ✕ the selected → drop from available AND gold
+            commitOff(dayID, available: avail.subtracting(types), wanted: wanted.subtracting(types), legal: legal)
+        }
+    }
+
+    /// "Work shifts" (Mark Intents · Days Off): mark the selected shift TYPES GOLD / want-to-work (toggle).
+    /// Golding a shift un-blackouts it (it must be available); any OTHER shifts stay whatever they were (a
+    /// blacked shift stays ✕). Want-to-work overrides blackout — the day turns gold as soon as ≥1 shift is gold.
+    func setShiftWantToWork(_ types: Set<ShiftAvailabilityType>, forDay dayID: String, legal: Set<ShiftAvailabilityType>) {
+        let types = types.intersection(legal)
+        guard !types.isEmpty else { return }
+        manualOffDays.insert(dayID)
+        let avail = currentAvailable(dayID, legal)
+        let wanted = offWanted[dayID] ?? []
+        if types.isSubset(of: wanted) {                        // already all gold → un-gold (back to neutral)
+            commitOff(dayID, available: avail, wanted: wanted.subtracting(types), legal: legal)
+        } else {                                               // gold the selected → also make them available
+            commitOff(dayID, available: avail.union(types), wanted: wanted.union(types), legal: legal)
+        }
+    }
+
     /// Openness is a SHORTCUT that bulk-sets the per-day availability pills (the
     /// pills are what matching uses), preserving any day you've hand-edited. It
     /// NEVER paints "want to work" — openness is about what matching may find, not
@@ -225,6 +315,7 @@ final class DayIntentStore {
             if manualOffDays.contains(dayID) { continue }   // preserve manual edits
             // A date-range override wins over the base openness for its span.
             let effective = overrides.first { $0.covers(dayID) }?.openness ?? level
+            offWanted[dayID] = nil   // openness never paints gold (per-shift want is manual only)
             switch effective {
             case .none:
                 offAvailability[dayID] = nil
@@ -262,6 +353,7 @@ final class DayIntentStore {
             if manualOffDays.contains(dayID) { continue }   // preserve manual edits
             let legal = Legality.legalTypes(forDayID: dayID, shifts: shifts)
             offAvailability[dayID] = legal.isEmpty ? nil : legal
+            offWanted[dayID] = legal.isEmpty ? nil : legal   // mercenary = want every legal shift (all gold)
             offIntents[dayID] = legal.isEmpty ? .neutralOpen : .wantToWork
         }
     }
@@ -271,6 +363,7 @@ final class DayIntentStore {
         workingIntents[dayID] = nil
         offIntents[dayID] = nil
         offAvailability[dayID] = nil
+        offWanted[dayID] = nil        // drop gold shifts too, so the day reads fully OPEN again
         manualOffDays.remove(dayID)   // back under the openness shortcut's control
         markDirty()
     }
@@ -285,6 +378,15 @@ final class DayIntentStore {
     }
     func note(forDay dayID: String) -> DayNote? { notes[dayID] }
     func availability(forDay dayID: String) -> Set<ShiftAvailabilityType> { offAvailability[dayID] ?? [] }
+    /// Shift types marked GOLD (want-to-work) on an off day.
+    func wanted(forDay dayID: String) -> Set<ShiftAvailabilityType> { offWanted[dayID] ?? [] }
+    /// Shift types explicitly ✕'d out on an off day (for the cell pills). Empty when the day is open/neutral;
+    /// the full legal set when the whole day is must-be-off.
+    func blackedShifts(forDay dayID: String, legal: Set<ShiftAvailabilityType>) -> Set<ShiftAvailabilityType> {
+        if offIntents[dayID] == .mustBeOff { return legal }
+        guard let avail = offAvailability[dayID] else { return [] }   // nil = fully open → nothing blacked
+        return legal.subtracting(avail)
+    }
 
     // MARK: Snapshot-cleanse (DIFF-BASED — see SPEC_STRUCTURAL.md S-PARSE-2)
 
@@ -325,19 +427,18 @@ final class DayIntentStore {
             workingIntents[day]  = nil
             offIntents[day]      = nil
             offAvailability[day] = nil
+            offWanted[day]       = nil
             topologies[day]      = nil
             manualOffDays.remove(day)                 // back under the openness shortcut
             if gone.contains(day) { notes[day] = nil } // removed day → drop its note too
 
-            // Vacation auto-intent (S-PARSE-2): the parser already removed the working
-            // shift (day is now OFF + leaveCode "V"). Set a SOFT, user-changeable
-            // Must-Be-Off + "vacation" note — never overwriting a note the user wrote.
-            if newByDay[day]?.leaveCode == "V" {
-                offIntents[day] = .mustBeOff
-                manualOffDays.insert(day)             // shield from the openness bulk shortcut
-                if notes[day] == nil {
-                    notes[day] = DayNote(dayID: day, message: "vacation", reason: .vacation)
-                }
+            // Vacation (S-PARSE-2): the parser already removed the working shift (day is OFF on a
+            // vacation-origin code — "V" OR ECB-VC "w"). Vacation is a DISPLAY FACT (teal tile + "VAC"
+            // label), NOT an auto-intent — so we do NOT auto-blackout it (that made it wrongly render as
+            // the black blackout tile) and add NO auto note. Only shield it from the openness bulk
+            // want-to-work shortcut, so a vacation day is never silently flipped to want-to-work.
+            if newByDay[day]?.isVacationOrigin == true {
+                manualOffDays.insert(day)
             }
             if hadIntent { wiped.insert(day) }
         }
@@ -354,13 +455,15 @@ final class DayIntentStore {
         var topologies: [String: DayTopology]
         var notes: [String: DayNote]
         var availability: [String: Set<ShiftAvailabilityType>]
+        var wanted: [String: Set<ShiftAvailabilityType>]?   // OPTIONAL → tolerant of older snapshots (no key)
         var manualOff: Set<String>
     }
 
     /// Current state as a JSON blob for publishing.
     func exportSnapshotJSON() -> String? {
         let snap = IntentSnapshot(working: workingIntents, off: offIntents, topologies: topologies,
-                                  notes: notes, availability: offAvailability, manualOff: manualOffDays)
+                                  notes: notes, availability: offAvailability, wanted: offWanted,
+                                  manualOff: manualOffDays)
         guard let data = try? JSONEncoder().encode(snap) else { return nil }
         return String(data: data, encoding: .utf8)
     }
@@ -379,6 +482,7 @@ final class DayIntentStore {
         topologies      = snap.topologies
         notes           = snap.notes
         offAvailability = snap.availability
+        offWanted       = snap.wanted ?? [:]
         manualOffDays   = snap.manualOff
         intentsUpdatedAt = at
         savedBaseline = captureBaseline()
@@ -393,8 +497,10 @@ final class DayIntentStore {
         static let topology = "batman.v2.topologies"
         static let notes    = "batman.v2.dayNotes"
         static let availability = "batman.v2.offAvailability"
+        static let wanted = "batman.v2.offWanted"
         static let manualOff = "batman.v2.manualOffDays"
         static let migrated = "batman.v2.intentMigrated"
+        static let migratedAutoVacation = "batman.v2.migratedAutoVacation"
         static let updatedAt = "batman.v2.intentsUpdatedAt"
     }
 

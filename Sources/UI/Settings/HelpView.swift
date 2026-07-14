@@ -4,6 +4,100 @@
 
 import SwiftUI
 
+// MARK: - Reusable trade-preferences form (onboarding + first-run walkthrough)
+
+/// The essential Trade Settings, embeddable in onboarding flows — same controls as Trade Settings, and
+/// every change publishes immediately. Used by `WelcomeView` (page 3) and the `WelcomeWalkthrough` finale.
+struct WelcomeTradePrefs: View {
+    @Bindable private var settings = SettingsManager.shared
+
+    var body: some View {
+        Form {
+            Section {
+                Text("Set these so you only get trades you'd actually take. You can change everything anytime in Trade Settings.")
+                    .font(.subheadline).foregroundStyle(.secondary)
+            }
+            Section {
+                Picker("Accepting", selection: openness) {
+                    ForEach(TradeOpenness.allCases, id: \.self) { Text($0.label).tag($0) }
+                }
+                Toggle("Mercenary mode (take any qualifying shift)", isOn: mercenary)
+            } header: { Text("Openness") } footer: {
+                Text("Bookends-only offers you a pickup only when it attaches to your existing days off.")
+            }
+            Section("Status (optional, public)") {
+                TextField("e.g. Open to bookends this month", text: $settings.statusBroadcast, axis: .vertical)
+                    .lineLimit(1...3)
+            }
+            Section {
+                pillFlow(ShiftAvailabilityType.allCases.map(\.rawValue),
+                         isOn: { settings.blacklistedShiftTypes.contains($0) },
+                         enabled: { _ in true },
+                         toggle: { toggleSet(&settings.blacklistedShiftTypes, $0) },
+                         label: { $0 })
+            } header: { Text("Blacklisted shift types") } footer: { Text("Tap a type to stop being offered those shifts.") }
+            Section {
+                pillFlow(DeskRegion.allCases.map(\.rawValue),
+                         isOn: { settings.blacklistedRegions.contains($0) },
+                         enabled: { DeskRules.isQualified(quals: settings.cachedQuals, forRegion: DeskRegion(rawValue: $0) ?? .domestic) },
+                         toggle: { toggleSet(&settings.blacklistedRegions, $0) },
+                         label: { $0 })
+            } header: { Text("Blacklisted regions") } footer: { Text("Grayed regions need a qualification you don't hold.") }
+            Section {
+                pillFlow(TradeSettingsSheet.weekdayPills.map { String($0.day) },
+                         isOn: { settings.blacklistedWeekdays.contains(Int($0) ?? 0) },
+                         enabled: { _ in true },
+                         toggle: { toggleSet(&settings.blacklistedWeekdays, Int($0) ?? 0) },
+                         label: { d in TradeSettingsSheet.weekdayPills.first { String($0.day) == d }?.letter ?? d })
+            } header: { Text("Blackout days") } footer: {
+                Text("More options — desks, qual-swap values, relief — live in Trade Settings.")
+            }
+        }
+        .scrollContentBackground(.hidden)
+        .task {
+            guard settings.cachedQuals.isEmpty, !settings.username.isEmpty else { return }
+            for _ in 0..<20 {
+                let q = await RosterStore.shared.schedule(forWorker: settings.username).first?.quals ?? []
+                if !q.isEmpty { settings.cachedQuals = q; return }
+                try? await Task.sleep(nanoseconds: 400_000_000)
+            }
+        }
+    }
+
+    private func pillFlow(_ values: [String], isOn: @escaping (String) -> Bool,
+                          enabled: @escaping (String) -> Bool, toggle: @escaping (String) -> Void,
+                          label: @escaping (String) -> String) -> some View {
+        FlowLayout(spacing: 8) {
+            ForEach(values, id: \.self) { v in
+                BlacklistPill(label: label(v), selected: isOn(v), enabled: enabled(v)) { toggle(v) }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 2)
+    }
+    private func publishPrefs() { settings.markPrefsChanged(); Task { await TradeProfileStore.shared.publishMine() } }
+    private func toggleSet<T: Hashable>(_ set: inout Set<T>, _ value: T) {
+        if set.contains(value) { set.remove(value) } else { set.insert(value) }
+        publishPrefs()
+    }
+    private var openness: Binding<TradeOpenness> {
+        Binding(get: { TradeOpenness(rawValue: settings.tradeOpenness) ?? .bookends },
+                set: { level in
+                    settings.tradeOpenness = level.rawValue
+                    DayIntentStore.shared.applyOpenness(level, shifts: ShiftStore.shared.shifts)
+                    publishPrefs()
+                })
+    }
+    private var mercenary: Binding<Bool> {
+        Binding(get: { settings.isMercenaryMode },
+                set: { on in
+                    settings.isMercenaryMode = on
+                    let level = TradeOpenness(rawValue: settings.tradeOpenness) ?? .bookends
+                    DayIntentStore.shared.applyMercenary(on, openness: level, shifts: ShiftStore.shared.shifts)
+                    publishPrefs()
+                })
+    }
+}
+
 // MARK: - Welcome (startup) — purpose + engineer-level tour + version history
 
 /// The startup welcome: a hero pitch, what-it-does pillars, "What's New" for this build, and links
@@ -15,7 +109,6 @@ struct WelcomeView: View {
     /// Three-step welcome: 0 = who we are / first steps · 1 = "What's New in Build 6" · 2 = set trade preferences.
     @State private var page = 0
     @Bindable private var settings = SettingsManager.shared
-    @State private var myQuals: [String] = []
     private let columns = [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)]
 
     var body: some View {
@@ -39,7 +132,7 @@ struct WelcomeView: View {
                     switch page {
                     case 0:  Button("What's New →") { withAnimation { page = 1 } }
                     case 1:  Button("Set preferences →") { withAnimation { page = 2 } }
-                    default: Button("Done") { onDismiss(); dismiss() }
+                    default: DXCloseButton { onDismiss(); dismiss() }
                     }
                 }
             }
@@ -137,7 +230,9 @@ struct WelcomeView: View {
             Section {
                 pillFlow(DeskRegion.allCases.map(\.rawValue),
                          isOn: { settings.blacklistedRegions.contains($0) },
-                         enabled: { DeskRules.isQualified(quals: myQuals, forRegion: DeskRegion(rawValue: $0) ?? .domestic) },
+                         // Read the @Observable cache DIRECTLY (not a one-shot @State copy) so the regions
+                         // un-gray the instant quals resolve, even if that's after this page appeared.
+                         enabled: { DeskRules.isQualified(quals: settings.cachedQuals, forRegion: DeskRegion(rawValue: $0) ?? .domestic) },
                          toggle: { toggleSet(&settings.blacklistedRegions, $0) },
                          label: { $0 })
             } header: { Text("Blacklisted regions") } footer: { Text("Grayed regions need a qualification you don't hold.") }
@@ -151,14 +246,15 @@ struct WelcomeView: View {
                 Text("More options — desks, qual-swap values, relief — live in Trade Settings.")
             }
         }
+        .scrollContentBackground(.hidden)   // §11: drop the grouped-list chrome background
         .task {
-            // Show cached quals INSTANTLY (fixes the stale-on-first-entry region pills), then refresh
-            // from the roster (async on launch) and update the cache for next time.
-            myQuals = settings.cachedQuals
+            // Ensure the qual cache is populated — the region gating reads `settings.cachedQuals` directly
+            // (reactively), so the moment quals land the regions un-gray, no matter when the roster resolves.
+            guard settings.cachedQuals.isEmpty, !settings.username.isEmpty else { return }
             for _ in 0..<20 {
                 let q = await RosterStore.shared.schedule(forWorker: settings.username).first?.quals ?? []
-                if !q.isEmpty { myQuals = q; settings.cachedQuals = q; return }
-                try? await Task.sleep(nanoseconds: 300_000_000)   // 0.3s between attempts (~6s max)
+                if !q.isEmpty { settings.cachedQuals = q; return }
+                try? await Task.sleep(nanoseconds: 400_000_000)   // ~8s max
             }
         }
     }
@@ -200,12 +296,7 @@ struct WelcomeView: View {
 
     private var hero: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Image("AppLogo")
-                .resizable()
-                .scaledToFill()
-                .frame(width: 76, height: 76)
-                .clipShape(RoundedRectangle(cornerRadius: 18))
-            Text("Welcome to \(AppGuide.appName)").font(.title.bold())
+            DXMosaicHero(title: AppGuide.appName, subtitle: "DISPATCH SHIFT TRADING")
             Text(AppGuide.tagline).font(.headline).foregroundStyle(.secondary)
             if !AppInfo.version.isEmpty {
                 Text("Version \(AppInfo.version) (build \(AppInfo.build))")
@@ -249,9 +340,13 @@ struct WelcomeView: View {
         VStack(alignment: .leading, spacing: 10) {
             Text("What it does").font(.headline)
             LazyVGrid(columns: columns, spacing: 12) {
-                ForEach(AppGuide.pillars, id: \.title) { pillar in
+                ForEach(Array(AppGuide.pillars.enumerated()), id: \.element.title) { i, pillar in
+                    let tint = [AppColor.primary, AppColor.special, AppColor.success, AppColor.vacation][i % 4]
                     VStack(alignment: .leading, spacing: 6) {
-                        Image(systemName: pillar.symbol).font(.title3).foregroundStyle(AppColor.primary)
+                        Image(systemName: pillar.symbol)
+                            .font(.system(size: 14, weight: .semibold)).foregroundStyle(tint)
+                            .frame(width: 26, height: 26)
+                            .background(tint.opacity(0.15), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                         Text(pillar.title).font(.subheadline.weight(.semibold))
                         Text(pillar.blurb).font(.caption).foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -500,7 +595,7 @@ struct HelpView: View {
             }
             .navigationTitle("How to Use")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+            .toolbar { ToolbarItem(placement: .confirmationAction) { DXCloseButton { dismiss() } } }
         }
     }
 
@@ -575,7 +670,7 @@ struct TesterGuideView: View {
             }
             .navigationTitle("Tester Guide")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+            .toolbar { ToolbarItem(placement: .confirmationAction) { DXCloseButton { dismiss() } } }
         }
     }
 

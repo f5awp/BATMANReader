@@ -907,6 +907,14 @@ enum TradeEngineTests {
             excludeIDs: [])
         check(unfavBridges.count == 1 && unfavBridges.first?.favorable == false,
               "Q2: unfavorable bridge (Latin<Euro pref) is listed but flagged unfavorable")
+        // User rule: a bridge whose FREED desk needs the SAME qual as the give-desk is useless — an
+        // unqualified taker who can't work the give-desk can't work the freed desk either. A Latin
+        // give-desk (72) bridged by freeing ANOTHER Latin desk (73) must be excluded, even bridge-first.
+        check(QualSwap.bridges(giveDesk: "72", takerQuals: nil, startHour: 5,
+              workers: [(QualSwapShift(workerID: "CL", name: "CL", desk: "73", startHour: 5, quals: ["D", "L"]),
+                         bridgeProf("CL", ["L": 3]))],
+              excludeIDs: []).isEmpty,
+              "Q2: a same-qual freed desk (Latin 72 ← Latin 73) is NOT a valid bridge (user rule)")
 
         // MARK: Q1 — shared qual-gap SSOT (used by trade search + intents + routes).
         check(DeskRules.qualSwapNeeded(forDesk: "50", takerQuals: ["D"]),

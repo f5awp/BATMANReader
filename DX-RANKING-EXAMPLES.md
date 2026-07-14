@@ -100,8 +100,8 @@ size) → tier (🔥+📖 › 🔥 › 📖) → 🔥 count → bookends → soo
 | 3 | **C** | 0.95 | Clean 2-person bookend; one-sided. |
 | 4 | **D** | 0.92 | Same as C but 45 days out — soonness tiebreak. |
 | 5 | **E** | 0.80 | Clean but no intent — under every intent-bearing trade. |
-| 6 | **G** | 0.84 | Fully mutual, but **fewest-people** pushes the 3-person loop below the 2-person trades. *(The app's own rule: an all-mutual 3-person book sorts below an all-mutual 2-person split.)* |
-| 7 | **F** | 0.84 | Qual-swaps sort **last among same-size trades** regardless of score — a bridge must agree. Q-flagged. |
+| 6 | **F** | 0.84 | A qual-swap is still a **2-person** trade (the enabling bridge isn't counted in `peopleCount`), so it stays *above* the 3-person loop — but `needsQualSwap` sorts it **behind the clean 2-person trades**. Q-flagged. |
+| 7 | **G** | 0.84 | Fully mutual, but it's the only **3-person** trade, and `peopleCount` (sort key #2) puts *every* 2-person trade — even the qual-swap — above it. *(The app's own rule: an all-mutual 3-person book sorts below an all-mutual 2-person split.)* |
 | — | **H** | 0.13 | **Below the 0.32 floor → hidden here.** Appears only under "I'm Feeling Lucky." |
 | — | **J** | 0.04 | **Below the 0.07 floor → never shown.** |
 

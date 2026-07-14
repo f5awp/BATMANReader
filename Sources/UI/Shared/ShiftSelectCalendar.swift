@@ -11,8 +11,10 @@ struct ShiftSelectCalendar: View {
 
     @State private var monthAnchor = Calendar.current.startOfDay(for: Date())
 
-    private var intents = DayIntentStore.shared   // show your marks so the picker isn't blank (C3)
     private let cal = Calendar.current
+    @Environment(\.horizontalSizeClass) private var hSizeClass
+    /// Pinned type size (1:1 grid) but a step larger on iPad so date/shift/desk scale up proportionally.
+    private var calTypeSize: DynamicTypeSize { hSizeClass == .regular ? .xLarge : .large }
     private static let headers = ["Su", "M", "T", "W", "Th", "F", "Sa"]
     private static let isoF: DateFormatter = {
         let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; return f
@@ -45,20 +47,22 @@ struct ShiftSelectCalendar: View {
             }
             .padding(.horizontal, 6)
 
-            HStack(spacing: 3) {
+            HStack(spacing: DXSpace.cellGap) {
                 ForEach(Self.headers, id: \.self) { h in
                     Text(h).font(.system(size: 12, weight: .semibold)).foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity)
                 }
             }
             ForEach(0..<6, id: \.self) { week in
-                HStack(spacing: 3) {
+                HStack(spacing: DXSpace.cellGap) {
                     ForEach(0..<7, id: \.self) { col in
                         cell(days[week * 7 + col])
                     }
                 }
             }
         }
+        // Match IntentCalendarView: pinned type size (larger on iPad) so the grid renders like Home.
+        .dynamicTypeSize(calTypeSize)
     }
 
     private func shiftMonth(_ delta: Int) {
@@ -81,48 +85,70 @@ struct ShiftSelectCalendar: View {
         } label: {
             VStack(spacing: 1) {
                 ZStack {
-                    if isToday { Circle().fill(Color.accentColor).frame(width: 24, height: 24) }
                     Text("\(cal.component(.day, from: date))")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(isToday ? .white : .primary)
+                        .font(isToday ? DXFont.dayNumber.weight(.heavy) : DXFont.dayNumber)
+                        .foregroundStyle(textColor(isWorking: isWorking, isSelected: isSelected))
                 }
-                .frame(height: 24)
-                Text(isWorking ? (shift?.shiftShortLabel ?? "") : "")
-                    .font(.system(size: 13, weight: .heavy))
-                    .foregroundStyle(isSelected ? .white : .primary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-                    .frame(minHeight: 15)
-                // Your working-intent color (trade-away / keep / …) so the picker shows context. C3
-                if isWorking, let id = shift?.id, let w = intents.workingIntent(forDay: id) {
-                    Capsule().fill(w.brickColor).frame(height: 3)
-                } else {
-                    Color.clear.frame(height: 3)
+                .frame(height: DXSpace.cellNumberH)
+                // Shift TYPE + desk as two muted labels — same treatment as Home's `dayContent`
+                // (white·0.9 on the accent pick, muted primary·0.7 on the navy worked tile).
+                Group {
+                    if isWorking, let shift {
+                        HStack(spacing: 3) {
+                            Text(shift.shiftTypeLabel)
+                            if !shift.desk.isEmpty { Text(shift.desk) }
+                        }
+                        .font(DXFont.dayNote)
+                        .foregroundStyle(isSelected ? Color.white.opacity(0.9) : Color.primary.opacity(0.7))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.6)
+                    } else {
+                        Color.clear   // reserve the label row so EVERY cell is the same height (matches Home)
+                    }
                 }
+                .frame(maxWidth: .infinity)
+                .frame(height: DXSpace.cellLabelH)   // fixed → uniform cell size
             }
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 6)
-            .background(background(isWorking: isWorking, isSelected: isSelected))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(isSelected ? Color.accentColor : .clear, lineWidth: 2.5)
-            )
-            .overlay(alignment: .topTrailing) {
-                if let id = shift?.id, intents.note(forDay: id) != nil {
-                    Circle().fill(BrickPalette.info).frame(width: 5, height: 5).padding(3)
-                }
+            .padding(.vertical, DXSpace.cellVPad)
+            // §2: ONE glazed ceramic cell everywhere (matches Home) — no flat gray boxes. Working =
+            // Home's navy `cellWorked`, selected = accent, off/greyed = Home's slate `cellOff`; disabled
+            // days are DIMMED (opacity below), not flattened. Same radius (7) + grout as Home.
+            .background {
+                RoundedRectangle(cornerRadius: DXSpace.cellRadius, style: .continuous)
+                    .fill(ceramicFill(tileColor(isWorking: isWorking, isSelected: isSelected)))
+                    .dxGlaze(radius: DXSpace.cellRadius)
             }
-            .opacity(inMonth ? (isPast ? 0.3 : 1) : 0.18)
+            .clipShape(RoundedRectangle(cornerRadius: DXSpace.cellRadius))
+            .shadow(color: AppColor.tileShadow, radius: 1.5, x: 0, y: 1)
+            .overlay(
+                RoundedRectangle(cornerRadius: DXSpace.cellRadius)
+                    // selected = thick accent ring; plain "today" = 2pt inset ring (matches Home).
+                    .strokeBorder(isSelected ? Color.accentColor : (isToday ? Color.accentColor : .clear),
+                                  lineWidth: isSelected ? 2.5 : (isToday ? 2 : 0))
+            )
+            // No persistent intent pill — Home only flashes it on tap, so the picker shows selection via
+            // the accent tile + ring instead (the "TRADE/KEEP texts all over" were from this overlay).
+            // Selectable days full-strength; off/past greyed but still the same glazed tile; out-of-month dimmest.
+            .opacity(!inMonth ? 0.18 : (isPast ? 0.3 : ((isWorking || isSelected) ? 1 : 0.55)))
         }
         .buttonStyle(.plain)
         .disabled(!isWorking || isPast || !inMonth)
     }
 
-    // Working days are clearly tinted; off days are flat grey.
-    private func background(isWorking: Bool, isSelected: Bool) -> Color {
-        if isSelected { return Color.accentColor.opacity(0.85) }
-        if isWorking  { return Color.accentColor.opacity(0.18) }
-        return Color(.systemGray5)
+    /// The ceramic base color per state — Home's exact tokens so the two calendars read identically:
+    /// selected = accent, selectable working = navy `cellWorked`, off/greyed = slate `cellOff`.
+    private func tileColor(isWorking: Bool, isSelected: Bool) -> Color {
+        if isSelected { return Color.accentColor }
+        if isWorking  { return AppColor.cellWorked }
+        return AppColor.cellOff
+    }
+
+    /// Number/label color, matching Home: white on the accent pick, adaptive `.primary` on the navy tile
+    /// (`cellWorked` is light-in-light / dark-in-dark), dim `cellOffText` on the slate off tile.
+    private func textColor(isWorking: Bool, isSelected: Bool) -> Color {
+        if isSelected { return .white }
+        if isWorking  { return .primary }
+        return AppColor.cellOffText
     }
 }

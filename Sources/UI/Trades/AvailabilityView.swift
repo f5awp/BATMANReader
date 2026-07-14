@@ -42,7 +42,7 @@ struct FindCandidatesSection: View {
     @State private var isSearching = false
     @State private var hasSearched = false
     @State private var calendarExpanded = true
-    @State private var twoWayCandidate: PlanCandidate?
+    @State private var twoWayCandidate: PlanCandidate?    // dispatcher look-up → TwoWaySheet
     @State private var packages: [TradePackage] = []
     @State private var searchText = ""                 // C4: filter candidates by name
     @State private var pinnedPeople: Set<String> = []  // C4: pinned to top (per session)
@@ -61,7 +61,14 @@ struct FindCandidatesSection: View {
     @State private var dayType: [String: ShiftAvailabilityType] = [:]   // "workerID|dayID" → that shift's type
     @State private var dayQual: [String: String] = [:]                  // "workerID|dayID" → desk's required qual
     @State private var myDayQual: [String: String] = [:]                // my give-day id → desk's required qual
-    private var filteredPackages: [TradePackage] { searchFilter.filter(packages).filter(criteriaMatch) }
+    private var filteredPackages: [TradePackage] {
+        searchFilter.filter(packages, selfID: settings.username).filter(criteriaMatch)
+            .filter { !hideQualSwaps || !$0.needsQualSwap }
+    }
+    /// Any qual-swap trades in the (pre-hide) results → show the "No Qual Swap" toggle.
+    private var hasQualSwapPackages: Bool {
+        searchFilter.filter(packages, selfID: settings.username).filter(criteriaMatch).contains { $0.needsQualSwap }
+    }
     /// Quals present across the current results — the qual filter's option list.
     private var availableQuals: [String] { Set(dayQual.values).union(myDayQual.values).sorted() }
     /// Apply the roster-backed More-filter criteria (receive shift-type + desk qual). Date range,
@@ -89,8 +96,7 @@ struct FindCandidatesSection: View {
     }
     // B1: international-desk qual-swap entry — the button glows green only when a selected desk is gated.
     @State private var showQualSwaps = false
-    @State private var qualSwapResults: [TradePackage] = []
-    @State private var loadingQual = false
+    @State private var hideQualSwaps = false   // "No Qual Swap" toggle — appears only when results include qual-swap trades
     private var qualGatedSelected: Bool { DeskRules.hasQualGatedSelection(desks: selectedShifts.map(\.desk)) }
 
     private var hasShifts: Bool { !store.upcomingWorkingShifts().isEmpty }
@@ -129,6 +135,7 @@ struct FindCandidatesSection: View {
         }
         .sheet(isPresented: $showFilter) {
             MasterFilterSheet(filter: $searchFilter, people: rosterPeople, availableQuals: availableQuals,
+                              searchShiftCount: max(1, selectedShifts.count),   // the shifts you're trading away
                               onGenerate: { f in if !selectedIDs.isEmpty { runSearch { await search(generation: f, lucky: true) } } },
                               onReset: { if !selectedIDs.isEmpty { runSearch { await searchFast() } } })
         }
@@ -157,27 +164,31 @@ struct FindCandidatesSection: View {
             }
         }
         .sheet(isPresented: $showQualSwaps) {
-            QualSwapDaysSheet(packages: qualSwapResults, loading: loadingQual, selectedShifts: selectedShifts) { selectedPkgs in
+            QualSwapDaysSheet(selectedShifts: selectedShifts, myID: settings.username) { selectedPkgs in
                 showQualSwaps = false
                 Task {
                     var n = 0
+                    // BRIDGE-FIRST (D6): a standing bridge request per day, self-addressed so it sits in my
+                    // Misc inbox; the selected bridges discover it via `candidateIDs` and accept. It has no
+                    // taker yet — it LINKS into a normal A→B trade later (same give-day) via TradeMerge.
+                    let me = settings.username
                     for pkg in selectedPkgs {
                         guard let leg = pkg.qualSwap else { continue }
                         await MessagingStore.shared.sendRequest(
-                            to: leg.takerID, toName: leg.takerName,
-                            note: "Qual swap to give away \(SwapChips.chipDay(leg.giveShiftDayID)) — \(leg.takerName) takes a freed desk.",
+                            to: me, toName: me,
+                            note: "Bridge request: cover my \(SwapChips.chipDay(leg.giveShiftDayID)) desk \(leg.giveDesk) (\(leg.giveQual)) via a qual swap.",
                             take: [], give: [leg.giveShiftDayID], qualSwap: leg, origin: .search)
                         n += 1
                     }
                     WidgetData.update()
-                    packageSent = "Qual-swap request\(n == 1 ? "" : "s") sent to \(n) dispatcher\(n == 1 ? "" : "s"). Track replies in your Inbox."
+                    packageSent = "Bridge request\(n == 1 ? "" : "s") sent for \(n) day\(n == 1 ? "" : "s"). The bridges you asked will see it; track replies in your Inbox."
                 }
             }
         }
         .sheet(item: $execRoute) { ExecutionConfirmationView(route: $0) }
         .fullScreenCover(item: $detailPackage) { pkg in
             PackageDetailView(package: pkg,
-                              onPropose: { Task { await propose(pkg) } },
+                              onPropose: { p in Task { await propose(p) } },
                               onExecute: { if let r = pkg.route { execRoute = r } })
                 .magnifiable()
         }
@@ -232,13 +243,7 @@ struct FindCandidatesSection: View {
 
                     // Qual Swap surfaces ONLY when a selected desk actually needs it (progressive disclosure).
                     if qualGatedSelected {
-                        Button {
-                            Task {
-                                loadingQual = true; showQualSwaps = true
-                                qualSwapResults = await TradeRouter.qualSwapOptions(forGiveShifts: selectedShifts, excluding: settings.username)
-                                loadingQual = false
-                            }
-                        } label: { Image(systemName: "arrow.triangle.swap") }
+                        Button { showQualSwaps = true } label: { Image(systemName: "arrow.triangle.swap") }   // sheet self-loads
                         .buttonStyle(.borderedProminent).controlSize(.small).tint(AppColor.success)
                         .disabled(isSearching)
                         .accessibilityLabel("Qual swap for international desks")
@@ -299,16 +304,24 @@ struct FindCandidatesSection: View {
     private var content: some View {
         if isSearching {
             VStack(spacing: 14) {
-                AnimatedLoader(name: "finding-matches", maxSize: 260)
+                AnimatedLoader(name: "finding-matches", contentMode: .fill).frame(maxHeight: 240).containerRelativeFrame(.horizontal) { w, _ in w * 0.85 }.clipped()
                 Button(role: .cancel) { searchTask?.cancel(); isSearching = false } label: {
-                    Label("Cancel", systemImage: "xmark.circle")
+                    Image(systemName: "xmark")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 32, height: 32)
+                        .contentShape(Rectangle())
                 }
-                .buttonStyle(.bordered).controlSize(.small)
+                .buttonStyle(.plain)
+                .accessibilityLabel("Cancel")
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if !hasSearched {
-            ContentUnavailableView("Pick Shifts to Trade", systemImage: "person.2.badge.gearshape",
-                description: Text("Tap the days you want to give away, then Find."))
+            // §3: the origami planes are the brand's empty/motion motif (same as Trades "all caught up"),
+            // not a generic people-with-gear glyph.
+            DXPlanesEmptyState(title: "Pick Shifts to Trade",
+                               subtitle: "Tap the days you want to give away, then Find.")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if candidates.isEmpty && packages.isEmpty {
             ContentUnavailableView("No Matches", systemImage: "person.slash",
                 description: Text("No one is off, desk-qualified, and rested for these shifts. Try other days or What If? mode."))
@@ -326,6 +339,14 @@ struct FindCandidatesSection: View {
                 Text("Swap away all selected days — fewest people first, then most 🔥 and bookends.")
                     .font(.caption).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal)
+                // Appears only when some matches need a qual swap → hide them with one tap.
+                if hasQualSwapPackages {
+                    Toggle(isOn: $hideQualSwaps) {
+                        Label("No Qual Swap", systemImage: "q.square").font(.caption.weight(.semibold))
+                    }
+                    .toggleStyle(.button).controlSize(.small).tint(AppColor.pending)
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal).padding(.top, 4)
+                }
                 let shown = filteredPackages
                 if shown.isEmpty {
                     ContentUnavailableView("No matches for your filter", systemImage: "line.3.horizontal.decrease.circle",
@@ -335,7 +356,7 @@ struct FindCandidatesSection: View {
                     ForEach(shown) { pkg in
                         if pkg.usesCompactCard {   // B4-14: 2-person → compact ECB-style card
                             CompactSwapCard(package: pkg,
-                                            onPropose: { Task { await propose(pkg) } },
+                                            onPropose: { p in Task { await propose(p) } },
                                             onOpen: { detailPackage = pkg })
                         } else {
                             PackageCard(package: pkg,
@@ -424,6 +445,7 @@ struct FindCandidatesSection: View {
         let shifts = selectedShifts
         guard !shifts.isEmpty else { return }
         isSearching = true
+        withAnimation(.snappy) { calendarExpanded = false }   // collapse the day picker so the loader fills the screen
         selected = []
 
         let able = await TradeMatcher.candidatesForTrades(shifts: shifts, excluding: settings.username)
@@ -523,12 +545,17 @@ struct FindCandidatesSection: View {
         let myID = settings.username
         let now = Date(); let end = Calendar.current.date(byAdding: .month, value: 12, to: now) ?? now
         let entries = await RosterStore.shared.entries(from: now, to: end)
-        var seen = Set<String>(); var out: [(id: String, name: String)] = []
-        for e in entries where e.workerID != myID && seen.insert(e.workerID).inserted {
-            out.append((e.workerID, TradeNames.resolved(displayName: nil, rosterName: e.workerName, workerID: e.workerID)))
-        }
-        allDispatchers = out.sorted { $0.name < $1.name }
-        TradeFeedCache.shared.allDispatchers = allDispatchers
+        // Dedupe the (large) window into distinct dispatchers OFF the main thread so tapping into Trades
+        // never hitches — inputs/outputs are Sendable.
+        let out = await Task.detached(priority: .userInitiated) {
+            var seen = Set<String>(); var out: [(id: String, name: String)] = []
+            for e in entries where e.workerID != myID && seen.insert(e.workerID).inserted {
+                out.append((e.workerID, TradeNames.resolved(displayName: nil, rosterName: e.workerName, workerID: e.workerID)))
+            }
+            return out.sorted { $0.name < $1.name }
+        }.value
+        allDispatchers = out
+        TradeFeedCache.shared.allDispatchers = out
     }
 
     /// #7: email the selected give-days to the dispatch DL (Outlook draft) + Must-Be-Off blackout days.
@@ -543,15 +570,19 @@ struct FindCandidatesSection: View {
     /// Greedy package: send a cover request to each assigned dispatcher. A qual-swap package
     /// instead opens the blast picker so the user chooses which bridges to ask (Q1).
     private func propose(_ pkg: TradePackage) async {
-        if let leg = pkg.qualSwap { pkgSwap = PackageSwapContext(leg: leg); return }
+        // A qual-swap package carries its bridge candidates in `qualSwap` (chosen via the Q button in the
+        // package view). Sending attaches the leg → CloudKit blasts every candidate (they discover it via
+        // `candidateIDs`), the taker sees the contingent swap, and the bridge lifecycle takes over. (D5/Q3.)
         for a in pkg.assignments {
             await MessagingStore.shared.sendRequest(
                 to: a.workerID, toName: a.name, note: swapNote(a),
-                take: a.takeDayIDs, give: a.giveDayIDs, origin: .search)
+                take: a.takeDayIDs, give: a.giveDayIDs, qualSwap: pkg.qualSwap, origin: .search)
         }
         WidgetData.update()
         let n = pkg.assignments.count
-        packageSent = "Sent to \(n) dispatcher\(n == 1 ? "" : "s"). Track replies in your Inbox."
+        packageSent = pkg.qualSwap != nil
+            ? "Qual-swap request sent to \(pkg.assignments.first?.name ?? "the taker") + \(pkg.qualSwap?.candidates.count ?? 0) bridge\(pkg.qualSwap?.candidates.count == 1 ? "" : "s"). Track it in your Inbox."
+            : "Sent to \(n) dispatcher\(n == 1 ? "" : "s"). Track replies in your Inbox."
     }
 
     private func messageSelected() {
@@ -661,7 +692,7 @@ struct ECBTradesView: View {
 
     @ViewBuilder private var content: some View {
         if isSearching {
-            AnimatedLoader(name: "finding-matches", maxSize: 260)
+            AnimatedLoader(name: "finding-matches", contentMode: .fill).frame(maxHeight: 240).containerRelativeFrame(.horizontal) { w, _ in w * 0.85 }.clipped()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if !hasSearched {
             ContentUnavailableView("One-Way ECB Trades", systemImage: "star.circle",
@@ -848,6 +879,25 @@ struct PlanCandidateCell: View {
         selectedShifts.filter { candidate.bookendShiftIDs.contains($0.id) }
     }
 
+    /// True when covering any given shift would require THIS candidate to qual-swap onto a desk they
+    /// don't hold — surfaces a Q caution on the card BEFORE proposing (same gate as `sendTwoWay`).
+    private var needsQualSwap: Bool {
+        selectedShifts.contains { s in
+            !s.isOff && !s.desk.isEmpty && DeskRules.qualSwapNeeded(forDesk: s.desk, takerQuals: candidate.quals)
+        }
+    }
+
+    /// Amber "Q" = heads-up that trading with this person needs a qual swap (a working bridge must slide
+    /// onto your desk). Only shown when `needsQualSwap`.
+    @ViewBuilder private var qualCaution: some View {
+        if needsQualSwap {
+            Image(systemName: "q.square.fill")
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(AppColor.pending)
+                .accessibilityLabel("Requires a qual swap")
+        }
+    }
+
     /// Gold = has mutual two-way swaps, green = bookend match, else none.
     private var borderColor: Color {
         if candidate.twoWayCount > 0 { return seekingGold }
@@ -873,6 +923,9 @@ struct PlanCandidateCell: View {
     // iPhone: name on its own line; small 📖/🔥 icons beneath it. No mini, no "covers" line.
     private var compactRow: some View {
         HStack(spacing: 10) {
+            DXSeatTile(color: TradeColors.color(forParticipant: candidate.workerID,
+                                                myID: SettingsManager.shared.username,
+                                                orderedPeers: [candidate.workerID]))
             VStack(alignment: .leading, spacing: 3) {
                 Text(candidate.name + botSuffix(candidate.workerID)).font(.dsCardTitle).lineLimit(1)
                 HStack(spacing: 10) {
@@ -882,6 +935,7 @@ struct PlanCandidateCell: View {
                     }
                     smallBook
                     flameOrUnknown
+                    qualCaution
                 }
                 if let s = TradeProfileStore.shared.profile(forWorker: candidate.workerID)?.statusBroadcast,
                    !s.isEmpty {
@@ -916,6 +970,7 @@ struct PlanCandidateCell: View {
                 HStack(spacing: 4) {
                     Text(candidate.name + botSuffix(candidate.workerID)).font(.dsCardTitle).lineLimit(1)
                     flameOrUnknown
+                    qualCaution
                 }
                 Text(candidate.quals.joined(separator: " "))
                     .font(.caption).foregroundStyle(.secondary).lineLimit(1)
@@ -1025,6 +1080,8 @@ struct MatchDatesPopover: View {
 /// actively marked to trade away (mutual intent).
 struct TwoWaySheet: View {
     let candidate: PlanCandidate
+    var initialGive: Set<String> = []   // seed selection (from a tapped match card); else mutual-wanted default
+    var initialTake: Set<String> = []
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.horizontalSizeClass) private var hSize
@@ -1102,7 +1159,7 @@ struct TwoWaySheet: View {
         NavigationStack {
             Group {
                 if loading {
-                    AnimatedLoader(name: "finding-matches", maxSize: 260)
+                    AnimatedLoader(name: "finding-matches", contentMode: .fill).frame(maxHeight: 240).containerRelativeFrame(.horizontal) { w, _ in w * 0.85 }.clipped()
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if let full, (!full.iTake.isEmpty || !full.iGive.isEmpty) {
                     content
@@ -1115,7 +1172,7 @@ struct TwoWaySheet: View {
             }
             .navigationTitle("Swap with \(peerName)")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+            .toolbar { ToolbarItem(placement: .confirmationAction) { DXCloseButton { dismiss() } } }
             .task { await load() }
             .onChange(of: ignoreMyBlacklist) { _, _ in Task { await load() } }
             .alert("Request sent", isPresented: $sentConfirmation) {
@@ -1421,9 +1478,16 @@ struct TwoWaySheet: View {
             ignoreOwnBlacklist: ignoreMyBlacklist)
         myDays    = await TradeMatcher.dayLabels(forWorker: SettingsManager.shared.username)
         theirDays = await TradeMatcher.dayLabels(forWorker: candidate.workerID)
-        // Pre-select the mutually-wanted days as a sensible starting proposal.
-        selectedTake = Set(full?.iTake.filter(\.wanted).map(\.dayID) ?? [])
-        selectedGive = Set(full?.iGive.filter(\.wanted).map(\.dayID) ?? [])
+        // Seed the selection from the tapped match card (its specific swap), intersected with what's
+        // actually feasible; if nothing was passed (e.g. opened via dispatcher look-up), fall back to
+        // the mutually-wanted days as a sensible starting proposal.
+        if initialGive.isEmpty && initialTake.isEmpty {
+            selectedTake = Set(full?.iTake.filter(\.wanted).map(\.dayID) ?? [])
+            selectedGive = Set(full?.iGive.filter(\.wanted).map(\.dayID) ?? [])
+        } else {
+            selectedTake = initialTake.intersection(Set(full?.iTake.map(\.dayID) ?? []))
+            selectedGive = initialGive.intersection(Set(full?.iGive.map(\.dayID) ?? []))
+        }
         loading = false
     }
 
@@ -1499,19 +1563,45 @@ struct PackageSwapContext: Identifiable {
 /// Swipe between days; each lists the qual-swap options. You SELECT which dispatchers to ask
 /// (multi-select, all selected by default) then BATCH-broadcast them all at once — no per-row button.
 struct QualSwapDaysSheet: View {
-    let packages: [TradePackage]
-    var loading: Bool = false
-    var selectedShifts: [Shift] = []   // ALL the days you picked — so we can label qual vs normal
+    var selectedShifts: [Shift] = []   // ALL the days you picked — labels qual vs normal
+    var myID: String = ""
     let onBroadcast: ([TradePackage]) -> Void
     @Environment(\.dismiss) private var dismiss
+    @State private var packages: [TradePackage] = []   // SELF-LOADED (reactive) — fixes the first-open-empty bug
+    @State private var loading = true
     @State private var selected: Set<String> = []
+    @State private var qualFilter: Set<String> = []    // empty = show every qual
 
     private var byDay: [(day: String, pkgs: [TradePackage])] {
         let grouped = Dictionary(grouping: packages) { $0.qualSwap?.giveShiftDayID ?? "" }
         return grouped.keys.sorted().map { (day: $0, pkgs: grouped[$0] ?? []) }
     }
-    private var allIDs: [String] { packages.filter { $0.qualSwap != nil }.map(\.id) }
-    private var selectedPkgs: [TradePackage] { packages.filter { selected.contains($0.id) } }
+    private func key(_ day: String, _ wid: String) -> String { "\(day)|\(wid)" }
+    /// Quals actually present across the found bridges — the filter's options. Only populated quals appear
+    /// (e.g. no "O" unless a bridge frees an O desk).
+    private var availableQuals: [String] {
+        Array(Set(packages.flatMap { ($0.qualSwap?.candidates ?? []).map(\.qual) })).sorted()
+    }
+    /// A day's bridges after the qual filter (empty filter = all).
+    private func visibleCandidates(_ pkg: TradePackage) -> [QualSwapCandidate] {
+        let cands = pkg.qualSwap?.candidates ?? []
+        return qualFilter.isEmpty ? cands : cands.filter { qualFilter.contains($0.qual) }
+    }
+    /// Every VISIBLE bridge across all days, as "day|workerID" keys (drives Select All + the count).
+    private var allBridgeKeys: [String] {
+        packages.flatMap { pkg in visibleCandidates(pkg).map { key(pkg.qualSwap?.giveShiftDayID ?? "", $0.workerID) } }
+    }
+    /// One request per day, its bridges narrowed to the SELECTED ones — what Broadcast sends.
+    private func selectedPackages() -> [TradePackage] {
+        packages.compactMap { pkg -> TradePackage? in
+            guard let leg = pkg.qualSwap else { return nil }
+            let chosen = leg.candidates.filter { selected.contains(key(leg.giveShiftDayID, $0.workerID)) }
+            guard !chosen.isEmpty else { return nil }
+            var newLeg = leg; newLeg.candidates = chosen
+            return TradePackage(id: pkg.id, methodology: pkg.methodology, assignments: pkg.assignments,
+                                route: pkg.route, urgency: pkg.urgency, qualSwap: newLeg)
+        }
+    }
 
     // Multi-day breakdown of the selection (qual-only flow: domestic days stay in Find).
     private var workingShifts: [Shift] { selectedShifts.filter { !$0.isOff } }
@@ -1529,24 +1619,27 @@ struct QualSwapDaysSheet: View {
         NavigationStack {
             Group {
                 if loading {
-                    AnimatedLoader(name: "finding-matches", maxSize: 260)
+                    AnimatedLoader(name: "finding-matches", contentMode: .fill).frame(maxHeight: 240).containerRelativeFrame(.horizontal) { w, _ in w * 0.85 }.clipped()
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     VStack(spacing: 0) {
                         if !selectedShifts.isEmpty { summaryHeader }
                         if byDay.isEmpty {
                             ContentUnavailableView("No qual swaps found", systemImage: "arrow.triangle.swap",
-                                description: Text("No off dispatcher could take these international shifts with a desk swap. Try other days."))
+                                description: Text("No one working these days can qual-swap onto your international desk. Try other days."))
                                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                         } else {
+                            if availableQuals.count > 1 { qualFilterBar }
                             TabView {
                                 ForEach(byDay, id: \.day) { group in
                                     ScrollView {
                                         VStack(alignment: .leading, spacing: 10) {
                                             Text(SwapChips.chipDay(group.day)).font(.title3.bold()).padding(.horizontal)
-                                            Text("Select who to ask for this day, then broadcast. Each request only goes out for the day it covers.")
+                                            Text("Working dispatchers who can take this desk — favorable first; ⚠ = an unfavorable swap for them. Select who to ask, then broadcast.")
                                                 .font(.caption).foregroundStyle(.secondary).padding(.horizontal)
-                                            ForEach(group.pkgs) { pkg in selectableRow(pkg) }
+                                            ForEach(group.pkgs.flatMap { visibleCandidates($0) }) { c in
+                                                bridgeRow(day: group.day, c)
+                                            }
                                         }.padding(.vertical)
                                     }.tag(group.day)
                                 }
@@ -1557,19 +1650,24 @@ struct QualSwapDaysSheet: View {
                     }
                 }
             }
+            .task {
+                loading = true
+                packages = await TradeRouter.qualSwapOptions(forGiveShifts: selectedShifts, excluding: myID)
+                loading = false
+            }
             .navigationTitle("Qual Swaps")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } }
+                ToolbarItem(placement: .cancellationAction) { DXCloseButton { dismiss() } }
                 if !byDay.isEmpty {
                     ToolbarItem(placement: .confirmationAction) {
-                        Button(selected.count == allIDs.count ? "Deselect All" : "Select All") {
-                            selected = selected.count == allIDs.count ? [] : Set(allIDs)
+                        Button(selected.count == allBridgeKeys.count ? "Deselect All" : "Select All") {
+                            selected = selected.count == allBridgeKeys.count ? [] : Set(allBridgeKeys)
                         }
                     }
                 }
             }
-            .onAppear { if selected.isEmpty { selected = Set(allIDs) } }   // default: everyone selected
+            .onAppear { if selected.isEmpty { selected = Set(allBridgeKeys) } }   // default: everyone selected
         }
     }
 
@@ -1598,26 +1696,63 @@ struct QualSwapDaysSheet: View {
         .overlay(alignment: .bottom) { Divider() }
     }
 
-    private func selectableRow(_ pkg: TradePackage) -> some View {
-        let on = selected.contains(pkg.id)
+    /// Multi-select qual filter — only quals actually present in the found bridges. Empty = all.
+    private var qualFilterBar: some View {
+        HStack(spacing: 8) {
+            Text("Qual").font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+            ForEach(availableQuals, id: \.self) { q in
+                let on = qualFilter.contains(q)
+                Button {
+                    if on { qualFilter.remove(q) } else { qualFilter.insert(q) }
+                } label: {
+                    Text(q).font(.caption.weight(.bold))
+                        .padding(.horizontal, 10).padding(.vertical, 4)
+                        .background(on ? AppColor.primary.opacity(0.2) : Color(.tertiarySystemFill),
+                                    in: RoundedRectangle(cornerRadius: DS.controlRadius, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: DS.controlRadius).stroke(on ? AppColor.primary : .clear, lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+            }
+            Spacer()
+            if !qualFilter.isEmpty { Button("All") { qualFilter = [] }.font(.caption) }
+        }
+        .padding(.horizontal).padding(.vertical, 8)
+        .background(.bar)
+        .overlay(alignment: .bottom) { Divider() }
+    }
+
+    /// One selectable BRIDGE row — package-card styling: seat tile + name + a desk·qual chip + a
+    /// favorable (green) / unfavorable (amber ⚠) tag. No "frees desk …" prose.
+    private func bridgeRow(day: String, _ c: QualSwapCandidate) -> some View {
+        let k = key(day, c.workerID)
+        let on = selected.contains(k)
+        let peerColor = TradeColors.color(forParticipant: c.workerID, myID: myID, orderedPeers: [c.workerID])
         return Button {
-            if on { selected.remove(pkg.id) } else { selected.insert(pkg.id) }
+            if on { selected.remove(k) } else { selected.insert(k) }
         } label: {
             HStack(spacing: 10) {
                 Image(systemName: on ? "checkmark.circle.fill" : "circle")
-                    .font(.title3).foregroundStyle(on ? Color.accentColor : .secondary)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(pkg.assignments.first?.name ?? "Taker").font(.subheadline.bold())
-                    if let leg = pkg.qualSwap {
-                        Text("desk \(leg.giveDesk) (\(leg.giveQual)) · ^[\(leg.candidates.count) bridge](inflect: true)")
-                            .font(.caption2).foregroundStyle(.secondary)
+                    .font(.title3).foregroundStyle(on ? AppColor.primary : .secondary)
+                DXSeatTile(color: peerColor)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(c.name).font(.subheadline.weight(.semibold))
+                    HStack(spacing: 6) {
+                        DXDayChip(text: "\(c.desk) · \(c.qual)")
+                        if c.favorable {
+                            Label("favorable", systemImage: "checkmark.seal.fill")
+                                .font(.system(size: 9, weight: .bold)).foregroundStyle(AppColor.success).labelStyle(.titleAndIcon)
+                        } else {
+                            Label("unfavorable", systemImage: "exclamationmark.triangle.fill")
+                                .font(.system(size: 9, weight: .bold)).foregroundStyle(AppColor.pending).labelStyle(.titleAndIcon)
+                        }
                     }
                 }
                 Spacer()
             }
             .padding(10)
             .background(.bar, in: RoundedRectangle(cornerRadius: 10))
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(on ? Color.accentColor : .clear, lineWidth: 1.5))
+            .overlay(RoundedRectangle(cornerRadius: 10)
+                .stroke(on ? AppColor.primary : (c.favorable ? .clear : AppColor.pending.opacity(0.4)), lineWidth: 1.5))
             .padding(.horizontal)
             .contentShape(Rectangle())
         }
@@ -1628,7 +1763,7 @@ struct QualSwapDaysSheet: View {
         HStack {
             Text("\(selected.count) selected").font(.caption).foregroundStyle(.secondary)
             Spacer()
-            Button { onBroadcast(selectedPkgs) } label: {
+            Button { onBroadcast(selectedPackages()) } label: {
                 Label("Broadcast", systemImage: "megaphone.fill").font(.subheadline.weight(.bold))
             }
             .buttonStyle(.borderedProminent)
@@ -1666,14 +1801,22 @@ struct QualSwapPickerSheet: View {
                         .font(.footnote).foregroundStyle(.secondary)
                 }
                 Section("Who to ask (\(selected.count)/\(candidates.count))") {
-                    ForEach(candidates) { c in
+                    // Favorable bridges first; unfavorable (a stretch for them) sorted last + flagged ⚠.
+                    ForEach(candidates.sorted { ($0.favorable ? 0 : 1, $0.name) < ($1.favorable ? 0 : 1, $1.name) }) { c in
                         Button {
                             if selected.contains(c.workerID) { selected.remove(c.workerID) }
                             else { selected.insert(c.workerID) }
                         } label: {
                             HStack {
                                 VStack(alignment: .leading, spacing: 1) {
-                                    Text(c.name).font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
+                                    HStack(spacing: 6) {
+                                        Text(c.name).font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
+                                        if !c.favorable {
+                                            Label("unfavorable", systemImage: "exclamationmark.triangle.fill")
+                                                .font(.system(size: 9, weight: .bold)).foregroundStyle(AppColor.pending)
+                                                .labelStyle(.titleAndIcon)
+                                        }
+                                    }
                                     Text("frees desk \(c.desk) (\(c.qual))").font(.caption).foregroundStyle(.secondary)
                                 }
                                 Spacer()
@@ -1799,6 +1942,7 @@ struct MiniScheduleGrid: View {
         .frame(maxWidth: .infinity, minHeight: fill ? 30 : 50, maxHeight: fill ? .infinity : nil)
         .padding(.vertical, 2)
         .background(background(key: key, working: working), in: RoundedRectangle(cornerRadius: 7))
+        .dxGlaze(radius: 7)
         .overlay { border(key: key) }
         // Small intent dot (top-trailing) so the intent COLOR reads at a glance without cluttering the
         // cell; the named intent (Want to trade / Blackout / Want to work …) is in the tap popover.
@@ -1980,7 +2124,16 @@ struct ECBAccountingView: View {
     var body: some View {
         NavigationStack {
             List {
-                Section { balanceHeader }
+                Section {
+                    balanceHeader
+                    // §9 cosmetic mosaic accent under the balance stats.
+                    Image("mosaicBand")
+                        .resizable().scaledToFill()
+                        .frame(height: 8)
+                        .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                        .opacity(0.85)
+                        .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 6, trailing: 16))
+                }
                 if !store.pendingConfirmations.isEmpty {
                     Section {
                         Label("^[\(store.pendingConfirmations.count) shared trade](inflect: true) awaiting confirmation — respond in your Inbox.",
@@ -2027,7 +2180,7 @@ struct ECBAccountingView: View {
             .task { await store.syncOnLaunch() }
             .refreshable { await store.syncOnLaunch() }
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } }
+                ToolbarItem(placement: .cancellationAction) { DXCloseButton { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button { showAdd = true } label: { Image(systemName: "plus") }
                         .accessibilityLabel("Add line item")
@@ -2108,10 +2261,14 @@ struct ECBAccountingView: View {
     @ViewBuilder private func row(_ e: ECBEntry) -> some View {
         let signed = ECBAccounting.signedAmount(for: myID, e)
         let pending = e.isShared && e.state != .confirmed
+        // §9: leading tinted icon TILE — primary (trade) / danger (withdrawal) / success (credit).
+        let tint: Color = e.isShared ? AppColor.primary : (signed < 0 ? AppColor.danger : AppColor.success)
         HStack(spacing: 10) {
             Image(systemName: e.category.symbol)
-                .foregroundStyle(signed < 0 ? AppColor.danger : AppColor.success)
-                .frame(width: 22)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(tint)
+                .frame(width: 26, height: 26)
+                .background(tint.opacity(0.15), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             VStack(alignment: .leading, spacing: 1) {
                 Text(e.isShared ? "Trade · \(e.counterpartyName(myID: myID) ?? "dispatcher")" : e.category.label)
                     .font(.subheadline.weight(.semibold)).lineLimit(1)
@@ -2178,9 +2335,8 @@ struct ECBAddSheet: View {
         NavigationStack {
             Form {
                 if editing == nil {
-                    Picker("Type", selection: $mode) {
-                        ForEach(Mode.allCases) { Text($0.rawValue).tag($0) }
-                    }.pickerStyle(.segmented)
+                    DXSegmented(selection: $mode, options: Mode.allCases.map { .init($0, $0.rawValue) })
+                        .listRowInsets(EdgeInsets()).listRowBackground(Color.clear)
                 }
                 switch mode {
                 case .add:
@@ -2209,10 +2365,8 @@ struct ECBAddSheet: View {
                         Text("Select…").tag("")
                         ForEach(dispatchers, id: \.id) { Text($0.name).tag($0.id) }
                     }
-                    Picker("Direction", selection: $iPaid) {
-                        Text("I paid them").tag(true)
-                        Text("They paid me").tag(false)
-                    }.pickerStyle(.segmented)
+                    DXSegmented(selection: $iPaid, options: [.init(true, "I paid them"), .init(false, "They paid me")])
+                        .listRowInsets(EdgeInsets()).listRowBackground(Color.clear)
                     amountStepper
                     DatePicker("Arrives / pay date", selection: $payDate, displayedComponents: .date)
                     memoField

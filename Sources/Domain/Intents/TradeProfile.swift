@@ -165,6 +165,26 @@ struct TradeProfile: Sendable, Hashable, Codable, Identifiable {
                      seekingDayIDs: [], updatedAt: Date(timeIntervalSince1970: 0))
     }
 
+    /// A copy of this profile with a one-time OPENNESS override (used by the "I'm Feeling Lucky" openness
+    /// dropdown). Drops the per-day availability pills + bookend-day list so the chosen level governs purely
+    /// (`.all` = any eligible off day, `.bookends` = bookend days only). Blacklist and protective intents
+    /// (Must-Be-Off / Keep) are PRESERVED — openness ≠ blacklist. Mercenary is cleared so the level wins.
+    func withOpenness(_ level: TradeOpenness) -> TradeProfile {
+        var p = TradeProfile(workerID: workerID, displayName: displayName, openness: level.rawValue,
+                             blacklistedWeekdays: blacklistedWeekdays, blacklistedDesks: blacklistedDesks,
+                             blacklistedShiftTypes: blacklistedShiftTypes, blacklistedRegions: blacklistedRegions,
+                             seekingDayIDs: seekingDayIDs, updatedAt: updatedAt,
+                             personalEmail: personalEmail, aaEmail: aaEmail, phone: phone,
+                             statusBroadcast: statusBroadcast, isMercenaryMode: nil,
+                             availabilitySlots: nil, bookendDays: nil,
+                             mustBeOffDayIDs: mustBeOffDayIDs, keepDayIDs: keepDayIDs, wantToWorkDayIDs: wantToWorkDayIDs)
+        p.accountClaimed = accountClaimed
+        p.qualValues = qualValues
+        p.qualSwapBlacklistDesks = qualSwapBlacklistDesks
+        p.reliefThrough = reliefThrough
+        return p
+    }
+
     var id: String { workerID }
     var bookendDaySet: Set<String> { Set(bookendDays ?? []) }
     var bestEmail: String? {

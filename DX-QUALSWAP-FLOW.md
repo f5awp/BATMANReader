@@ -21,15 +21,16 @@ Coverage + start times stay whole. The bridge is an *enabling leg*, **not** coun
 
 ---
 
-## 1. The model: a one-way FINDER that LINKS into a normal trade
+## 1. The model: TWO complementary paths
 
-Qual swaps are **not** baked into the Trade Solutions feed. There is one coherent flow:
+**A. Inline feed tier** — Trade Solutions actively offers qual-swap **solution cards** (amber **Q**
+caution, ranked below clean trades). Tapping opens the package view where the **Q button** picks the bridge.
+The reciprocal trade + the bridge leg are one package. (`packages()` step 1b.)
 
-1. **Find + request** the qual swap with the standalone one-way finder (the green ⇄ button).
-2. **Link** it into a normal reciprocal trade in the inbox via `TradeMerge` (the "Merge with base trade"
-   button) once a bridge finalizes.
+**B. Standalone one-way finder** (green ⇄ button) — pre-arrange a qual swap for a give-day, then **link** it
+into a normal trade in the inbox via `TradeMerge` ("Merge with base trade") once a bridge finalizes.
 
-This keeps the bridge separate from the trade until it's actually secured.
+Both are supported; A is the discovery path in the feed, B is the manual/pre-arrange path.
 
 ---
 
@@ -89,6 +90,50 @@ The readable twin-calendar view (`MiniScheduleGrid`) is where a normal trade is 
 - **"Sent"** state: `MessagingStore.alreadyProposed` greys the Propose button (anti-spam, same peer+day).
 
 ---
+
+## Build spec — favorability + two-flow rework (2026-07-13) — IMPLEMENTED
+
+Status: shipped. Engine gate green incl. new S-ENG-4 (favorable+unfavorable bridges) + Q2 (freed-desk qual
++ favorability) checks. Fail-safe verified: `favorable` defaults `true`, so old records/other call sites are
+unchanged.
+
+### Assumptions ledger (decisions; revise here first if wrong)
+1. **Bridges are not always domestic.** A bridge C may sit on a Euro/Pacific desk; what matters is whether
+   the taker B can hold C's freed desk's qual. The taker-qual check stays for the *trade-first* path (a real
+   B exists); the *bridge-first* green button has no B yet, so it skips it.
+2. **Favorability is soft, blacklist is hard.** A bridge is DROPPED only if the give-desk (or its qual) is
+   blacklisted for them. If they simply prefer their current desk's qual over the give-desk's, they're
+   INCLUDED but flagged **unfavorable** (a stretch ask). `qualValue(give) ≥ qualValue(current)` ⇒ favorable.
+3. **`QualSwapCandidate.favorable: Bool`** (default `true`, Codable-safe) rides on each bridge; UI sorts
+   favorable-first and warns on unfavorable. Old records decode as favorable.
+4. **Bridge-first request (green):** one request per selected day, `toID = self`, `qualSwap` leg with
+   `takerID = ""` (unbound) + `candidates =` the selected bridges. `candidateIDs` lets bridges discover +
+   accept. It's a standing "bridge found/requested" record in my Misc inbox.
+5. **Linking:** `TradeMerge` fuses a bridge-first request into an A→B base trade on the same give-day; the
+   base supplies B. `mergeBase` gate relaxed from `.finalized` to **≥1 acceptance** so a confirmed bridge can
+   link before the (future) taker finalizes. The package view / card offers **"Use found bridge"** which
+   merges at propose-time instead of forcing an inline pick.
+6. Trade-first (Q caution) is unchanged in shape (A+B+C in one request); it only gains favorability
+   ranking + warnings in the picker.
+
+### Code map (verified 2026-07-13; re-grep before editing)
+| Symbol | Loc | Change |
+|---|---|---|
+| `DeskRules.acceptsQualSwap` | TradeMatcher.swift:152 | split → `qualSwapHardOK` (blacklist) + `qualSwapFavorable` (pref ≥); `acceptsQualSwap` = both |
+| `QualSwapCandidate` | Messaging.swift:315 | add `var favorable: Bool = true` |
+| `QualSwap.bridges` | TradeMatcher.swift:209 | `takerQuals: [String]?` (nil ⇒ bridge-first, skip taker check); return `[QualSwapCandidate]` with `favorable` |
+| `QualSwap.candidate(from:)` | TradeMatcher.swift:226 | fold into `bridges` |
+| `TradeMatcher.qualSwapBridges` | TradeMatcher.swift:759 | `takerQuals: [String]?`; pass through |
+| `TradeRouter.qualSwapOptions` | TradeRouter.swift:1084 | list BRIDGES (favorability-ranked), not takers |
+| `QualSwapDaysSheet` / `QualSwapPickerSheet` | AvailabilityView.swift | sort favorable-first + warn unfavorable |
+| `MessagingStore.mergeBase` | Messaging.swift:931 | gate `.finalized` → `.finalized || acceptances ≥ 1` |
+| `PackageDetailView` Q button | TradeIntentsFeed.swift | offer "Use found bridge" when a matching bridge-first request exists |
+
+### Fail-safes
+- Each step: `BuildProject` clean + `EngineTests.runAll()` == 0 failures.
+- Favorability + bridge changes are pure/nonisolated → EngineTests cover them (add favorability checks).
+- `favorable` defaults true so any un-annotated candidate (old data / other call sites) behaves as before.
+- No change to the inbox lifecycle roles; bridge-first reuses `candidateIDs` discovery + accept + TradeMerge.
 
 ## Code map
 

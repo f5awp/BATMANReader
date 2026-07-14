@@ -20,9 +20,7 @@ struct SettingsView: View {
     @State private var showDebugPrompt = false
     @State private var debugPwDraft = ""
     @State private var checkingCloudKit = false
-    @State private var showHelp = false
-    @State private var showTesterGuide = false
-    @State private var showWelcome = false
+    @AppStorage("hasOnboarded") private var hasOnboarded = false   // first-run walkthrough gate
     @State private var rosterProbe: String?   // dev: roster date-span + last-60d readout
     @State private var showImporter = false   // dev: manual master schedule CSV import (moved off Home)
     @State private var importResult: String?
@@ -30,48 +28,58 @@ struct SettingsView: View {
     private var dev = DevAccess.shared
     @Environment(\.dismiss) private var dismiss
 
+    /// Trailing affordance for tappable (non-navigation) DXIconRow rows.
+    private var settingsChevron: some View {
+        Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
+    }
+
     var body: some View {
         NavigationStack {
             Form {
 
+                // ── Welcome / What's New (top: quick access to the toggle) ───
+                Section {
+                    DXIconRow(icon: "hand.wave", tint: AppColor.primary, title: "Show Welcome on launch") {
+                        Toggle("", isOn: $settings.showWelcomeOnLaunch).labelsHidden().tint(AppColor.success)
+                    }
+                } footer: {
+                    Text("When on, the first-run welcome tour appears on launch until you finish it. When off, it won't appear automatically — use “Replay tour” below to see it again.")
+                }
+
                 // ── App info: installed version + last schedule sync (moved off the Home page) ───
                 Section {
-                    LabeledContent {
+                    DXIconRow(icon: "info.circle", tint: AppColor.neutral, title: "Version") {
                         Text("\(AppInfo.version) (\(AppInfo.build))").foregroundStyle(.secondary)
-                    } label: {
-                        Label("Version", systemImage: "info.circle")
                     }
-                    LabeledContent {
+                    DXIconRow(icon: "arrow.triangle.2.circlepath", tint: AppColor.neutral, title: "Schedule synced") {
                         Text(Self.syncedText).foregroundStyle(.secondary)
-                    } label: {
-                        Label("Schedule synced", systemImage: "arrow.triangle.2.circlepath")
                     }
                 }
 
                 // ── Help ─────────────────────────────────────────────
                 Section {
-                    Button { showWelcome = true } label: {
-                        Label("Welcome & how it works", systemImage: "sparkles")
-                    }
-                    Button { showHelp = true } label: {
-                        Label("How to use \(AppGuide.appName)", systemImage: "questionmark.circle")
-                    }
-                    Button { showTesterGuide = true } label: {
-                        Label("Tester guide", systemImage: "checklist")
-                    }
+                    // Re-arm the first-run guided tour. Force the launch toggle on so it can't be suppressed,
+                    // then close Settings so the full-screen walkthrough appears.
+                    Button {
+                        settings.showWelcomeOnLaunch = true
+                        hasOnboarded = false
+                        dismiss()
+                    } label: {
+                        DXIconRow(icon: "play.circle", tint: AppColor.primary, title: "Replay tour") { settingsChevron }
+                    }.buttonStyle(.plain)
                     NavigationLink {
                         VersionHistoryView()
                     } label: {
-                        Label("Update history", systemImage: "clock.arrow.circlepath")
+                        DXIconRow(icon: "clock.arrow.circlepath", tint: AppColor.neutral, title: "Update history") { EmptyView() }
                     }
                 }
 
                 // ── Appearance ───────────────────────────────────────
                 Section {
-                    Picker(selection: $settings.appearance) {
-                        ForEach(AppAppearance.allCases) { a in Text(a.label).tag(a.rawValue) }
-                    } label: {
-                        Label("Theme", systemImage: "circle.lefthalf.filled")
+                    DXIconRow(icon: "circle.lefthalf.filled", tint: AppColor.special, title: "Theme") {
+                        Picker("", selection: $settings.appearance) {
+                            ForEach(AppAppearance.allCases) { a in Text(a.label).tag(a.rawValue) }
+                        }.labelsHidden()
                     }
                 } footer: {
                     Text("“Automatic” follows your device's light/dark (day-night) setting.")
@@ -79,26 +87,17 @@ struct SettingsView: View {
 
                 // ── Accessibility ────────────────────────────────────
                 Section {
-                    Toggle(isOn: $settings.magnifierEnabled) {
-                        Label("Screen magnifier", systemImage: "plus.magnifyingglass")
+                    DXIconRow(icon: "plus.magnifyingglass", tint: AppColor.special, title: "Screen magnifier") {
+                        Toggle("", isOn: $settings.magnifierEnabled).labelsHidden().tint(AppColor.success)
                     }
                 } footer: {
                     Text("Shows a floating magnifier button (drag it anywhere). Tap it, then pinch with two fingers to zoom and drag with two fingers to pan — one finger still taps and scrolls normally.")
                 }
 
-                // ── Welcome / What's New ─────────────────────────────
-                Section {
-                    Toggle(isOn: $settings.showWelcomeOnLaunch) {
-                        Label("Show Welcome on every launch", systemImage: "hand.wave")
-                    }
-                } footer: {
-                    Text("When off, the Welcome / What's New screen only appears after an app update.")
-                }
-
                 // ── Daily summary ────────────────────────────────────
                 Section {
-                    Toggle(isOn: $settings.dailyDigestEnabled) {
-                        Label("Daily summary notification", systemImage: "bell.badge")
+                    DXIconRow(icon: "bell.badge", tint: AppColor.heat, title: "Daily summary notification") {
+                        Toggle("", isOn: $settings.dailyDigestEnabled).labelsHidden().tint(AppColor.success)
                     }
                     if settings.dailyDigestEnabled {
                         Picker(selection: $settings.dailyDigestHour) {
@@ -115,29 +114,18 @@ struct SettingsView: View {
 
                 // ── Account ──────────────────────────────────────────
                 Section {
-                    HStack {
-                        Label("Employee ID", systemImage: "person.fill")
-                        Spacer()
-                        Text(settings.username.isEmpty ? "—" : settings.username)
-                            .foregroundStyle(.secondary)
+                    DXIconRow(icon: "person.fill", tint: AppColor.primary, title: "Employee ID") {
+                        Text(settings.username.isEmpty ? "—" : settings.username).foregroundStyle(.secondary)
                     }
-                    HStack {
-                        Label("First Name", systemImage: "person.text.rectangle")
-                        Spacer()
+                    DXIconRow(icon: "person.text.rectangle", tint: AppColor.primary, title: "First Name") {
                         TextField("First", text: $settings.firstName)
-                            .multilineTextAlignment(.trailing)
-                            .autocorrectionDisabled()
+                            .multilineTextAlignment(.trailing).autocorrectionDisabled()
                     }
-                    HStack {
-                        Label("Last Name", systemImage: "person.text.rectangle")
-                        Spacer()
+                    DXIconRow(icon: "person.text.rectangle", tint: AppColor.primary, title: "Last Name") {
                         TextField("Last", text: $settings.lastName)
-                            .multilineTextAlignment(.trailing)
-                            .autocorrectionDisabled()
+                            .multilineTextAlignment(.trailing).autocorrectionDisabled()
                     }
-                    HStack {
-                        Label("Account", systemImage: "applelogo")
-                        Spacer()
+                    DXIconRow(icon: "applelogo", tint: AppColor.primary, title: "Account") {
                         if settings.appleUserID.isEmpty {
                             Text("Not signed in").foregroundStyle(.secondary)
                         } else {
@@ -153,26 +141,19 @@ struct SettingsView: View {
 
                 // ── Contact (optional, on-device) ────────────────────
                 Section {
-                    HStack {
-                        Label("Personal Email", systemImage: "envelope")
-                        Spacer()
+                    DXIconRow(icon: "envelope", tint: AppColor.primary, title: "Personal Email") {
                         TextField("optional", text: $settings.personalEmail)
                             .multilineTextAlignment(.trailing)
                             .keyboardType(.emailAddress).textInputAutocapitalization(.never).autocorrectionDisabled()
                     }
-                    HStack {
-                        Label("AA Email", systemImage: "envelope.badge")
-                        Spacer()
+                    DXIconRow(icon: "envelope.badge", tint: AppColor.primary, title: "AA Email") {
                         TextField("optional", text: $settings.aaEmail)
                             .multilineTextAlignment(.trailing)
                             .keyboardType(.emailAddress).textInputAutocapitalization(.never).autocorrectionDisabled()
                     }
-                    HStack {
-                        Label("Phone", systemImage: "phone")
-                        Spacer()
+                    DXIconRow(icon: "phone", tint: AppColor.primary, title: "Phone") {
                         TextField("optional", text: $settings.phone)
-                            .multilineTextAlignment(.trailing)
-                            .keyboardType(.phonePad)
+                            .multilineTextAlignment(.trailing).keyboardType(.phonePad)
                     }
                 } header: {
                     Text("Contact")
@@ -180,21 +161,22 @@ struct SettingsView: View {
                     Text("Saved on your device for future email/text trade alerts. Not shared with others yet.")
                 }
 
-                // ── Notifications ────────────────────────────────────
+                // ── iCloud trade sync ────────────────────────────────
                 Section {
-                    Stepper(
-                        "Lead time: \(settings.notificationLeadHours)h before shift",
-                        value: $settings.notificationLeadHours,
-                        in: 1...12
-                    )
+                    Toggle("Sync trades via iCloud", isOn: Binding(
+                        get: { settings.useCloudKit },
+                        set: { on in
+                            settings.useCloudKit = on
+                            Task {
+                                await TradeProfileStore.shared.setCloudKit(on)
+                                await MessagingStore.shared.setCloudKit(on)
+                            }
+                        }
+                    ))
                 } header: {
-                    Text("Notifications")
+                    Text("iCloud Trade Sync")
                 } footer: {
-                    Text("A notification fires this many hours before each shift starts. Alarms are set separately via Shortcuts.")
-                }
-                .onChange(of: settings.notificationLeadHours) { _, _ in
-                    Task { await NotificationManager.shared.scheduleAll(for: ShiftStore.shared.shifts) }
-                    publishPrefs()
+                    Text("When on, your trade willingness (openness, blacklist, days you want to trade away) is shared with other dispatchers via iCloud so matches are real cross-user. Requires being signed into iCloud. Off = local only.")
                 }
 
                 // ── Personal calendar ────────────────────────────────
@@ -241,22 +223,21 @@ struct SettingsView: View {
                     }
                 }
 
-                // ── iCloud trade sync ────────────────────────────────
+                // ── Notifications ────────────────────────────────────
                 Section {
-                    Toggle("Sync trades via iCloud", isOn: Binding(
-                        get: { settings.useCloudKit },
-                        set: { on in
-                            settings.useCloudKit = on
-                            Task {
-                                await TradeProfileStore.shared.setCloudKit(on)
-                                await MessagingStore.shared.setCloudKit(on)
-                            }
-                        }
-                    ))
+                    Stepper(
+                        "Lead time: \(settings.notificationLeadHours)h before shift",
+                        value: $settings.notificationLeadHours,
+                        in: 1...12
+                    )
                 } header: {
-                    Text("iCloud Trade Sync")
+                    Text("Notifications")
                 } footer: {
-                    Text("When on, your trade willingness (openness, blacklist, days you want to trade away) is shared with other dispatchers via iCloud so matches are real cross-user. Requires being signed into iCloud. Off = local only.")
+                    Text("A notification fires this many hours before each shift starts. Alarms are set separately via Shortcuts.")
+                }
+                .onChange(of: settings.notificationLeadHours) { _, _ in
+                    Task { await NotificationManager.shared.scheduleAll(for: ShiftStore.shared.shifts) }
+                    publishPrefs()
                 }
 
                 // ── Schedule data ────────────────────────────────────
@@ -436,12 +417,28 @@ struct SettingsView: View {
                     .padding(.vertical, 8)
                     .listRowBackground(Color.clear)
                 }
+
+                // ── Terms record (bottom) ────────────────────────────
+                if let accepted = settings.consentAcceptedAt {
+                    Section {
+                        VStack(spacing: 2) {
+                            Text("Terms accepted \(accepted.formatted(date: .abbreviated, time: .shortened))")
+                                .font(.caption).foregroundStyle(.tertiary)
+                            if !settings.consentVersion.isEmpty {
+                                Text("Version \(settings.consentVersion)")
+                                    .font(.caption2).foregroundStyle(.tertiary)
+                            }
+                        }
+                        .frame(maxWidth: .infinity)
+                        .listRowBackground(Color.clear)
+                    }
+                }
             }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
+                    DXCloseButton { dismiss() }
                 }
             }
             .alert("Roster probe", isPresented: Binding(get: { rosterProbe != nil }, set: { if !$0 { rosterProbe = nil } })) {
@@ -458,9 +455,6 @@ struct SettingsView: View {
                 get: { importResult != nil }, set: { if !$0 { importResult = nil } })) {
                 Button("OK", role: .cancel) {}
             } message: { Text(importResult ?? "") }
-            .sheet(isPresented: $showWelcome) { WelcomeView() }
-            .sheet(isPresented: $showHelp) { HelpView() }
-            .sheet(isPresented: $showTesterGuide) { TesterGuideView() }
             .alert("Password saved", isPresented: $showPasswordSaved) {
                 Button("OK", role: .cancel) {}
             }

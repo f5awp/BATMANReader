@@ -22,13 +22,15 @@ struct DebugWebView: UIViewRepresentable {
 struct ContentView: View {
 
     @State private var selectedTab = 0
+    @State private var tradesLoaded = false   // §7: create TradesView lazily on first visit (no launch cost)
     @State private var showInbox = false
     @State private var showChannel = false
     @State private var showTradeSettings = false  // settings (moved into the dock, on every tab)
     @State private var showAppSettings = false
     @State private var showDashboard = false       // trade-status dashboard (from the top-bar status strip)
     @State private var showECB = false             // ECB Accounting ledger (⋯ menu)
-    @State private var showChangelog = false   // Z2: startup "What's New"
+    @State private var showChangelog = false   // Z2: "What's New" — now only from Settings, not on launch
+    @AppStorage("hasOnboarded") private var hasOnboarded = false   // first-run WelcomeWalkthrough gate
     @State private var launchLoading = true     // spinner during the initial sync so it never looks frozen
     @Environment(\.scenePhase) private var scenePhase
     @State private var pendingTab: Int? = nil   // C1 phase-2: tab the user wants to leave Home for
@@ -55,24 +57,31 @@ struct ContentView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // One clean, shared top bar (identity + utilities) — replaces the old floating dock that
-            // overlapped the status header. Laid out above the tabs, so nothing overlaps.
+            // One clean, shared top bar (identity + utilities), laid out above the content.
             AppTopBar(showInbox: $showInbox, showChannel: $showChannel,
                       showTradeSettings: $showTradeSettings, showAppSettings: $showAppSettings,
                       showDashboard: $showDashboard, showECB: $showECB)
-            TabView(selection: tabSelection) {
+            // §7: content in a ZStack — BOTH tabs kept alive so state + the unsaved-intents leave guard
+            // survive a switch; only the selected one is shown/hittable. Trades is created lazily on first
+            // visit so its heavy feed never computes at launch.
+            ZStack {
                 HomeView()
-                    .tabItem { Label("Home", systemImage: "calendar") }
-                    .tag(0)
-
-                TradesView()
-                    .tabItem { Label("Trades", systemImage: "arrow.left.arrow.right") }
-                    .tag(1)
+                    .opacity(selectedTab == 0 ? 1 : 0)
+                    .allowsHitTesting(selectedTab == 0)
+                    .zIndex(selectedTab == 0 ? 1 : 0)
+                if tradesLoaded {
+                    TradesView()
+                        .opacity(selectedTab == 1 ? 1 : 0)
+                        .allowsHitTesting(selectedTab == 1)
+                        .zIndex(selectedTab == 1 ? 1 : 0)
+                }
             }
-            // Stats strip sits at the VERY bottom — BELOW the Home/Trades tab bar, centered — so it never
-            // covers in-tab controls like the ECB "Send to Selected" button (B6-STATS).
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // Quiet full-width stats row, then the FLAT tab bar flush at the bottom (§7) — nothing floats.
             TradeStatsBar()
+            AppTabBar(current: selectedTab, selection: tabSelection)
         }
+        .onChange(of: selectedTab) { _, t in if t == 1 { tradesLoaded = true } }
         // Developer mode: a thick red border so it's obvious you have moderation powers.
         .overlay {
             if dev.unlocked {
@@ -128,32 +137,85 @@ struct ContentView: View {
         )) {
             OnboardingView()
         }
+        // First-run guided tour — replaces the old launch welcome. Shown once, only AFTER identity is set
+        // (so it never stacks with OnboardingView). "Replay tour" in App Settings re-arms it.
+        .fullScreenCover(isPresented: Binding(
+            get: { !hasOnboarded
+                   && settings.showWelcomeOnLaunch   // the "Show Welcome on launch" toggle still skips it
+                   && !settings.appleUserID.isEmpty
+                   && !settings.username.trimmingCharacters(in: .whitespaces).isEmpty },
+            set: { _ in }
+        )) {
+            WelcomeWalkthrough { hasOnboarded = true }
+        }
         .preferredColorScheme(AppAppearance(rawValue: settings.appearance)?.scheme)
-        .loadingOverlay(launchLoading, label: "Loading…")   // spinner during the initial sync
+        // Loading animation (loading.json) over the initial cross-device sync.
+        .loadingOverlay(launchLoading, label: "Loading…")
         // Returning to the app (e.g. after tapping a trade-request / mention push) pulls the latest so both
         // devices show new inbox/channel items, trade status, ECB and prefs without a manual refresh.
         .onChange(of: scenePhase) { _, phase in
             if phase == .active, !launchLoading { Task { await foregroundRefresh() } }
         }
         .task {
-            defer { launchLoading = false }
-            await MessagingStore.shared.refresh()
-            _ = await RosterStore.shared.syncMasterIfNewer()   // pull the latest master roster
-            await PrivateStateStore.shared.syncOnLaunch()      // private notes across your devices (A3)
-            await TradeProfileStore.shared.syncMyStatus()      // public status across your devices (A3 #12)
-            await TradeProfileStore.shared.syncMyPreferences() // trade prefs across your devices — BEFORE publish
-            if !settings.username.trimmingCharacters(in: .whitespaces).isEmpty {
-                await TradeProfileStore.shared.publishMine()   // stamp our profile `accountClaimed` so peers see us as active
+            // Home already renders from the locally-persisted schedule/intents (hydrated synchronously at
+            // store init), so the loader only covers the cross-device SYNC + the mutual precompute. A hard
+            // safety timeout guarantees a slow/hung CloudKit call can never trap the user on "Loading…".
+            Task { try? await Task.sleep(for: .seconds(10)); launchLoading = false }
+            let hasUser = !settings.username.trimmingCharacters(in: .whitespaces).isEmpty
+
+            // PHASE 1 — the independent launch reads run CONCURRENTLY (was a strictly serial chain of
+            // ~8 CloudKit round-trips, each blocking the next). None depend on another; overlapping their
+            // network waits is where the loader time is won.
+            async let messagingRefresh: Void = MessagingStore.shared.refresh()
+            async let rosterRows: Int         = RosterStore.shared.syncMasterIfNewer()   // latest master
+            async let privateState: Void      = PrivateStateStore.shared.syncOnLaunch()  // private notes (A3)
+            async let myStatus: Void          = TradeProfileStore.shared.syncMyStatus()  // public status (A3 #12)
+            async let ecb: Void               = ECBAccountingStore.shared.syncOnLaunch() // B6-ECB
+            async let history: Void           = TradeHistoryStore.shared.syncOnLaunch()  // status board / history
+            // ESSENTIALS ONLY gate the loader. Home renders from the LOCAL schedule/intents, and Welcome's
+            // trade-prefs region gating needs the roster + my prefs — so await just those, then drop the
+            // loader. Don't hold it hostage to the slowest of six concurrent CloudKit calls (that was the
+            // "launch sits for a few seconds" lag). Prefs land before publish so we never republish stale.
+            await TradeProfileStore.shared.syncMyPreferences()
+            _ = await rosterRows                               // roster must be imported before Welcome/qual cache
+
+            if hasUser {
+                // Warm the qual cache from the now-synced roster BEFORE Welcome appears — its trade-prefs
+                // region gating reads `cachedQuals` reactively.
+                let q = await RosterStore.shared.schedule(forWorker: settings.username).first?.quals ?? []
+                if !q.isEmpty { settings.cachedQuals = q }
+                await TradeProfileStore.shared.publishMine()   // stamp `accountClaimed` so peers see us as active
             }
-            await ECBAccountingStore.shared.syncOnLaunch()     // B6-ECB: shared lines + personal blob
-            await TradeHistoryStore.shared.syncOnLaunch()      // status board / history across your devices
-            // If the master import flipped my schedule to match a pending trade, auto-complete it (B6-AUTOCOMPLETE).
+            // Essential data is in → Home renders locally, the app is usable. Drop the loader NOW.
+            launchLoading = false
+            // The first-run welcome is now the WelcomeWalkthrough (full-screen cover, gated by
+            // `hasOnboarded`). WelcomeView stays reachable from App Settings as the "How it works" reference.
+
+            // PHASE 2 — background housekeeping; none of it gates first paint or Welcome. The remaining
+            // cross-device reads (started concurrently above) are awaited HERE, so the loader wasn't held on
+            // them; the work that DEPENDS on them follows.
+            _ = await (messagingRefresh, privateState, myStatus, ecb, history)
+            // Master import flipped my schedule to match a pending trade → auto-complete it. Needs the
+            // refreshed inbox, so it runs after the messaging await. (B6-AUTOCOMPLETE.)
             if let diff = ShiftStore.shared.lastDiff, diff.hasChanges {
                 await MessagingStore.shared.autoCompleteProvenTrades(diff: diff)
             }
+            // Warm the "look up a dispatcher" list (12-month distinct roster) NOW, in the background, so the
+            // FIRST tap into Trades isn't gated on that fetch (the reported first-time-slow). No-op if cached.
+            if hasUser, TradeFeedCache.shared.allDispatchers.isEmpty {
+                let now = Date(); let end = Calendar.current.date(byAdding: .month, value: 12, to: now) ?? now
+                let entries = await RosterStore.shared.entries(from: now, to: end)
+                let myID = settings.username
+                TradeFeedCache.shared.allDispatchers = await Task.detached(priority: .utility) {
+                    var seen = Set<String>(); var out: [(id: String, name: String)] = []
+                    for e in entries where e.workerID != myID && seen.insert(e.workerID).inserted {
+                        out.append((e.workerID, TradeNames.resolved(displayName: nil, rosterName: e.workerName, workerID: e.workerID)))
+                    }
+                    return out.sorted { $0.name < $1.name }
+                }.value
+            }
             await CloudPush.setup()                            // register push subscriptions
             WidgetData.update()
-            // Refresh the once-a-day summary notification with the latest counts (default ON).
             let c = DashboardCounts.from(requests: messaging.requests, responses: messaging.responses,
                                          unread: messaging.pendingIncoming.count,
                                          pendingLedger: TradeHistoryStore.shared.pendingCount)
@@ -161,17 +223,28 @@ struct ContentView: View {
                 enabled: settings.dailyDigestEnabled, hour: settings.dailyDigestHour,
                 pending: c.pending, unread: c.unread)
             NotificationManager.shared.scheduleDigestRefresh()   // live digest: refresh counts in the background
-            // Show "What's New" on launch (not over onboarding). If the user turned OFF "show on every
-            // launch," it only appears after an app update — a build they haven't seen yet.
-            let isNewBuild = settings.lastSeenChangelogBuild != AppInfo.build
-            if !settings.username.trimmingCharacters(in: .whitespaces).isEmpty,
-               settings.showWelcomeOnLaunch || isNewBuild {
-                showChangelog = true
-                // Populate the Intents tab badge (mutual-match count) in the background — fire-and-forget
-                // so it never delays launch. Cheap fast pass; the engine yields cooperatively.
-                Task {
-                    let matches = await TradeRouter.intentSolutions(excluding: settings.username, mutualOnly: true)
-                    TradeFeedCache.shared.intentMatchCount = matches.count
+
+            // Mutual-intent precompute — DEFERRED off the launch path. Runs only AFTER the UI is up and
+            // interactive, at low priority, yielding per candidate (inside `intentSolutions`) so the Intents
+            // badge fills in without freezing the app. The Trade Solutions / Intents feed still recompute on
+            // demand (with their own loader) if a user opens them before this finishes.
+            if hasUser {
+                Task(priority: .utility) {
+                    // Let the first interactive screen (incl. the Welcome sheet) settle before the heavy
+                    // mutual precompute. `MatchContext.derive` runs at `.userInitiated` — firing it the
+                    // instant Welcome appears starved the main thread and made Welcome feel frozen. Yield
+                    // that window to the UI first; the Intents badge filling in a moment later is invisible.
+                    try? await Task.sleep(for: .seconds(3))
+                    guard TradeFeedCache.shared.snapshot("intents")?.signature != TradeFeedCache.signature(whatIf: false) else { return }
+                    let mutual = await TradeRouter.intentSolutions(
+                        excluding: settings.username,
+                        generation: SearchFilter(engine: .both, maxPeople: settings.normalMaxPeople),
+                        lucky: false, mutualOnly: true)
+                    TradeFeedCache.shared.intentMatchCount = mutual.count
+                    TradeFeedCache.shared.save("intents", TradeFeedCache.Snapshot(
+                        signature: TradeFeedCache.signature(whatIf: false),
+                        packages: [], mutualPackages: mutual, allLoaded: false,
+                        rosterPeople: [], hasSearched: true))
                 }
             }
         }
@@ -197,51 +270,43 @@ struct ContentView: View {
     }
 }
 
-// MARK: - App top bar (shared identity + utilities, replaces the floating dock)
+// MARK: - App top bar
+// `AppTopBar` now lives in `DXMosaicIntegration.swift` (the mosaic drop-in: glazed avatar tile +
+// identity + the palette-stripe signature rule). The former plain-row version was removed here to
+// avoid a duplicate declaration.
 
-/// The single header bar at the very top of the app, on every tab. Left: the signed-in
-/// dispatcher's avatar + name (and their live status, only if they've set one — no "set a
-/// status" nudge). Right: just three controls — Inbox · Channel · ⋯ (overflow: Trade status,
-/// Colors & legend, Trade/App Settings). One row, laid out (not floating), never overlapping.
-struct AppTopBar: View {
-    @Binding var showInbox: Bool
-    @Binding var showChannel: Bool
-    @Binding var showTradeSettings: Bool
-    @Binding var showAppSettings: Bool
-    @Binding var showDashboard: Bool
-    @Binding var showECB: Bool
-    private var settings = SettingsManager.shared
+// MARK: - Flat bottom tab bar (§7)
 
-    init(showInbox: Binding<Bool>, showChannel: Binding<Bool>,
-         showTradeSettings: Binding<Bool>, showAppSettings: Binding<Bool>,
-         showDashboard: Binding<Bool>, showECB: Binding<Bool>) {
-        _showInbox = showInbox; _showChannel = showChannel
-        _showTradeSettings = showTradeSettings; _showAppSettings = showAppSettings
-        _showDashboard = showDashboard; _showECB = showECB
-    }
+/// A flat, native-style Home / Trades tab bar flush at the bottom — replaces iOS 26's floating capsule so
+/// nothing overlaps the calendar. Drives the guarded `tabSelection` binding (unsaved-intents leave guard
+/// still fires); `current` highlights the active tab in the accent.
+struct AppTabBar: View {
+    let current: Int
+    let selection: Binding<Int>
 
     var body: some View {
-        let name = settings.displayName.isEmpty ? settings.username : settings.displayName
-        let status = settings.statusBroadcast.trimmingCharacters(in: .whitespaces)
-        // ONE clean row: identity on the left, three controls on the right (Inbox · Channel · ⋯).
-        // The old second status row is gone — its "needs you" signal is the Inbox badge, and the full
-        // Accepted/Pending/Denied breakdown lives in the dashboard (⋯ → Trade status).
-        HStack(spacing: 10) {
-            Avatar(name: name, id: settings.username, size: 30)
-            VStack(alignment: .leading, spacing: 0) {
-                Text(name).font(.subheadline.weight(.semibold)).lineLimit(1)
-                if !status.isEmpty {
-                    Text(status).font(.caption2).italic().foregroundStyle(.secondary).lineLimit(1)
-                }
-            }
-            Spacer(minLength: 8)
-            MessagingDock(showInbox: $showInbox, showChannel: $showChannel,
-                          showTradeSettings: $showTradeSettings, showAppSettings: $showAppSettings,
-                          showDashboard: $showDashboard, showECB: $showECB)
+        HStack(spacing: 0) {
+            item(0, "Home", "calendar")
+            item(1, "Trades", "arrow.left.arrow.right")
         }
-        .padding(.horizontal, 14).padding(.vertical, 8)
-        .background(.bar)
-        .overlay(alignment: .bottom) { Divider() }
+        .padding(.top, 8).padding(.bottom, 4)
+        .frame(maxWidth: .infinity)
+        .background(Color(.systemBackground))   // §11: no top hairline on the tab bar
+    }
+
+    private func item(_ i: Int, _ title: String, _ icon: String) -> some View {
+        Button { selection.wrappedValue = i } label: {
+            VStack(spacing: 3) {
+                Image(systemName: icon).font(.system(size: 20, weight: .regular))
+                Text(title).font(.system(size: 11, weight: .semibold))
+            }
+            .foregroundStyle(current == i ? AppColor.primary : Color.secondary)
+            .frame(maxWidth: .infinity)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(title)
+        .accessibilityAddTraits(current == i ? .isSelected : [])
     }
 }
 
@@ -277,8 +342,7 @@ struct TradeStatsBar: View {
             .lineLimit(1)
             .padding(.horizontal, 16).padding(.vertical, 6)
             .frame(maxWidth: .infinity)   // centered content, full-width strip
-            .background(.bar)
-            .overlay(alignment: .top) { Divider() }
+            .background(Color(.systemBackground))   // §11: no hairline above the stats strip
         }
         .buttonStyle(.plain)
         .onLongPressGesture { if dev.unlocked { TradeHistoryStore.shared.resetMetrics() } }   // admin reset
@@ -331,10 +395,14 @@ struct MagnifierHost<Content: View>: View {
                     ZoomGestureCatcher(
                         onPinch: { scale, began in
                             if began { baseZoom = zoom }
-                            zoom = min(max(1, baseZoom * scale), maxZoom)
-                            pan = clampPan(pan, zoom: zoom, in: geo.size)
+                            let z = min(max(1, baseZoom * scale), maxZoom)
+                            // Snap fully back to 1× and clear pan when pinched almost all the way out, so
+                            // zooming out never leaves the content slightly scaled/offset (the cut-off edge bug).
+                            if z <= 1.02 { zoom = 1; pan = .zero }
+                            else { zoom = z; pan = clampPan(pan, zoom: z, in: geo.size) }
                         },
                         onPan: { t, began in
+                            guard zoom > 1 else { pan = .zero; return }   // nothing to pan at 1×
                             if began { basePan = pan }
                             pan = clampPan(CGSize(width: basePan.width + t.width, height: basePan.height + t.height),
                                            zoom: zoom, in: geo.size)

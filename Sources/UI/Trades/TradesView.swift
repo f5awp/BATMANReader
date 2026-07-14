@@ -21,7 +21,11 @@ struct TradesView: View {
             VStack(spacing: 0) {
                 // The trade-status counters now live in the shared top bar (AppTopBar) on every tab.
                 // Badge = number of MUTUAL intent matches (not your raw intent count).
-                TradesSegmentBar(segment: $segment, intentCount: feedCache.intentMatchCount)
+                DXSegmented(selection: $segment, options: [
+                    .init(0, feedCache.intentMatchCount > 0 ? "Intents (\(feedCache.intentMatchCount))" : "Intents"),
+                    .init(1, "Trade Solutions"),
+                    .init(2, "ECB"),
+                ], color: { v in [0: AppColor.heat, 1: AppColor.primary, 2: AppColor.success][v] })
                     .padding(.horizontal).padding(.top, 6).padding(.bottom, 8)   // cushion below the top bar
 
                 if segment == 0 {
@@ -104,23 +108,25 @@ struct IntentTallyBar: View {
         // All four marked intents, color-matched to the calendar legend: the two MATCHING factors
         // (Want to Trade / Want to Work) plus the two PROTECTIVE ones (Keep working shift = green;
         // Blackout off day = slate). Zero-count categories drop out.
+        // §6: same quiet dot-led style as the month header — lowercase labels, small squared colored dots.
         let items: [(label: String, color: Color, count: Int)] = [
-            ("Want to Trade", WorkingIntentState.dontWantToWork.brickColor, wc[.dontWantToWork] ?? 0),
-            ("Want to Work",  OffIntentState.wantToWork.brickColor,         oc[.wantToWork] ?? 0),
-            ("Keep",          WorkingIntentState.mustWork.brickColor,       wc[.mustWork] ?? 0),
-            ("Blackout",      OffIntentState.mustBeOff.brickColor,          oc[.mustBeOff] ?? 0),
+            ("trade",    WorkingIntentState.dontWantToWork.brickColor, wc[.dontWantToWork] ?? 0),
+            ("work",     OffIntentState.wantToWork.brickColor,         oc[.wantToWork] ?? 0),
+            ("keep",     WorkingIntentState.mustWork.brickColor,       wc[.mustWork] ?? 0),
+            ("blackout", OffIntentState.mustBeOff.brickColor,          oc[.mustBeOff] ?? 0),
         ].filter { $0.count > 0 }
         if !items.isEmpty {
             HStack(spacing: 10) {
                 ForEach(items, id: \.label) { it in
-                    HStack(spacing: 4) {
-                        Circle().fill(it.color).frame(width: 7, height: 7)
-                        Text("\(it.count)").font(.caption2.weight(.bold)).monospacedDigit()
-                        Text(it.label).font(.caption2).foregroundStyle(.secondary)
+                    HStack(spacing: 5) {
+                        RoundedRectangle(cornerRadius: 2, style: .continuous).fill(it.color).frame(width: 8, height: 8)
+                        Text("\(it.count) \(it.label)")
                     }
                 }
                 if !centered { Spacer() }   // left-aligned by default; centered when requested
             }
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity, alignment: centered ? .center : .leading)
             .padding(.horizontal).padding(.bottom, 4)
         }
@@ -136,13 +142,20 @@ struct TradeDashboardSheet: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                Picker("", selection: $tab) {
-                    Text("Accepted").tag(0)
-                    Text("Pending").tag(1)
-                    Text("Denied").tag(2)
-                    Text("History").tag(3)
-                }
-                .pickerStyle(.segmented).padding()
+                DXSegmented(selection: $tab, options: [
+                    .init(0, "Accepted"), .init(1, "Pending"),
+                    .init(2, "Denied"), .init(3, "History"),
+                ], color: { t in
+                    switch t {
+                    case 0:  return AppColor.success
+                    case 1:  return AppColor.pending
+                    case 2:  return AppColor.danger
+                    default: return nil        // History = neutral glazed tile
+                    }
+                })
+                .padding()
+
+                DXPaletteStripe(height: 4).padding(.horizontal)
 
                 switch tab {
                 case 0: AcceptedZone()
@@ -154,7 +167,7 @@ struct TradeDashboardSheet: View {
             }
             .navigationTitle("Trade Status")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+            .toolbar { ToolbarItem(placement: .confirmationAction) { DXCloseButton { dismiss() } } }
             // Pull the latest trade state + your cross-device history when the board opens (and on pull).
             .task { await MessagingStore.shared.refresh(); await TradeHistoryStore.shared.syncOnLaunch() }
             .refreshable { await MessagingStore.shared.refresh(); await TradeHistoryStore.shared.syncOnLaunch() }

@@ -395,9 +395,9 @@ enum TradeRouter {
             guard !cover.isEmpty, ps.givesBack.count >= cover.count else { continue }
             let a = [PackageAssignment(workerID: ps.id, name: ps.name,
                                        giveDayIDs: cover, takeDayIDs: Array(ps.givesBack.prefix(cover.count)),
-                                       // Single give-day → surface every eligible give-back (ranked) so the
-                                       // card can offer alternatives (e.g. Jul 15 under the top pick).
-                                       takeOptions: cover.count == 1 ? ps.givesBack : [])]
+                                       // Surface EVERY eligible give-back (ranked) so the package view can offer
+                                       // alternates — for a give-N trade you still receive N, but may choose WHICH.
+                                       takeOptions: ps.givesBack)]
             guard contiguityOK(asOpt(a)) else { continue }
             let fullCover = Set(cover).isSuperset(of: giveDayIDs)
             result.append(TradePackage(id: "two-\(ps.id)", methodology: .greedy, assignments: a,
@@ -852,7 +852,7 @@ enum TradeRouter {
                 // Set-contiguity for bookend parties.
                 if profile.opennessLevel == .bookends, !anchoredSet(deal.gives, maps[cand.workerID] ?? [:]) { continue }
                 if myProfile.opennessLevel == .bookends, !anchoredSet(deal.takes, maps[selfID] ?? [:]) { continue }
-                let takeOpts = deal.gives.count == 1 ? theirTakeable.map(\.dayID) : []
+                let takeOpts = theirTakeable.map(\.dayID)   // full ranked alternates (give-N ⇒ choose which N to receive)
                 let a = [PackageAssignment(workerID: cand.workerID, name: cand.name,
                                            giveDayIDs: deal.gives, takeDayIDs: deal.takes, takeOptions: takeOpts)]
                 var pkg = TradePackage(id: "intent-\(cand.workerID)", methodology: .greedy, assignments: a,

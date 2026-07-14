@@ -72,7 +72,7 @@ enum ShiftAvailabilityType: String, Codable, CaseIterable, Hashable, AppEnum {
     }
 
     /// Infer availability type from a shift's start hour.
-    static func infer(fromStartHour hour: Int) -> ShiftAvailabilityType {
+    nonisolated static func infer(fromStartHour hour: Int) -> ShiftAvailabilityType {
         switch hour {
         case 0..<10:  return .am
         case 10..<18: return .pm

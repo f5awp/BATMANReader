@@ -13,21 +13,32 @@ import Lottie
 /// overlay and the "Searching for trades" indicator. Falls back to a spinner if a file is missing.
 struct AnimatedLoader: View {
     @Environment(\.colorScheme) private var scheme
-    /// Base animation name; "-light"/"-dark" is appended by color scheme. "dx-loading" = app loading,
-    /// "finding-matches" = trade search.
-    var name: String = "dx-loading"
+    /// Base animation name. A single universal file (`<name>.json`) is preferred; if only per-scheme
+    /// files exist we fall back to `<name>-light` / `<name>-dark`. "loading" = app loading,
+    /// "finding-matches" = trade search (both universal — one JSON for light + dark).
+    var name: String = "loading"
     /// Optional square cap. nil = fill the container; otherwise scales to fit within maxSize.
     var maxSize: CGFloat? = nil
+    /// `.fit` (default) sizes by whichever container dimension is smaller — for a PORTRAIT animation that
+    /// means container HEIGHT, so the size varies per screen area. `.fill` covers the frame (width-driven in
+    /// a wide/short frame) → clip it to a band for a size that's consistent across pages + scales by width.
+    var contentMode: SwiftUI.ContentMode = .fit
     var body: some View {
-        let full = "\(name)-\(scheme == .dark ? "dark" : "light")"
+        // Prefer the universal file; fall back to the per-scheme variant if that's all that's bundled.
+        let variant = "\(name)-\(scheme == .dark ? "dark" : "light")"
+        let animation = LottieAnimation.named(name) ?? LottieAnimation.named(variant)
+        // The animation's OWN aspect ratio (canvas w/h). A resizable Lottie reports no intrinsic ratio, so
+        // `.aspectRatio(.fit)` with no argument collapses it to a sliver — we MUST pass the real ratio so it
+        // scales up to fill the space at the correct proportions (works from iPhone up to iPad).
+        let ratio: CGFloat? = (animation?.size.height ?? 0) > 0 ? animation!.size.width / animation!.size.height : nil
         Group {
-            if LottieAnimation.named(full) != nil {
-                LottieView(animation: .named(full)).looping()
+            if let animation {
+                LottieView(animation: animation).resizable().looping()
             } else {
                 ProgressView().controlSize(.large)   // graceful fallback if the JSON isn't bundled
             }
         }
-        .aspectRatio(contentMode: .fit)                 // scale to fit the area it's placed in
+        .aspectRatio(ratio, contentMode: contentMode)   // real ratio → scales to fill, no sliver
         .frame(maxWidth: maxSize, maxHeight: maxSize)
     }
 }
@@ -148,7 +159,14 @@ struct SlackMessageRow<Actions: View>: View {
                     actions()
                 }
                 if !message.isEmpty {
+                    // Mosaic: the message body sits on a glazed tile "bubble" so chat + channel read as
+                    // ceramic surfaces (shared by ThreadView chat, channel posts, and replies).
                     mdText(message).font(.subheadline).textSelection(.enabled)
+                        .padding(.horizontal, 10).padding(.vertical, 7)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color(.secondarySystemBackground),
+                                    in: RoundedRectangle(cornerRadius: DS.rowRadius, style: .continuous))
+                        .dxGlaze(radius: DS.rowRadius)
                 }
             }
         }
@@ -232,12 +250,18 @@ struct LoadingOverlay: ViewModifier {
     func body(content: Content) -> some View {
         content.overlay {
             if active {
-                ZStack {
-                    Color(.systemBackground).opacity(0.35).ignoresSafeArea()
-                    // No card, no text — the dx-loading animation already reads "loading". ~3× larger
-                    // than before, capped so it stays reasonable (and scales down) on iPad.
-                    AnimatedLoader(name: "dx-loading", maxSize: 288)
+                GeometryReader { geo in
+                    ZStack {
+                        Color(.systemBackground).opacity(0.35).ignoresSafeArea()
+                        // loading is TALL (340×720). Frame to nearly the full screen and scale-to-FIT
+                        // (never crop) so it fills as much as possible at its real aspect — no squeeze,
+                        // no clipped text. maxSize omitted so the square cap doesn't shrink a tall animation.
+                        AnimatedLoader(name: "loading")
+                            .frame(maxWidth: geo.size.width * 0.98, maxHeight: geo.size.height * 0.94)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
+                .ignoresSafeArea()
                 .transition(.opacity)
                 .accessibilityElement()
                 .accessibilityLabel(label)
@@ -251,6 +275,50 @@ extension View {
     /// Show a spinner card over this view while `active` (e.g. startup / match search / tab-load).
     func loadingOverlay(_ active: Bool, label: String = "Loading…") -> some View {
         modifier(LoadingOverlay(active: active, label: label))
+    }
+}
+
+// MARK: - Launch splash (DX-LAUNCH-SPEC.md, "option 1c" — Route B in-app splash)
+
+/// The branded splash shown over the app during the initial cold-start sync. A dark `LaunchBG` field,
+/// the centered DX planes mark + "DX TRADER" wordmark, and a thin mosaic photo band pinned near the
+/// bottom. The planes drift gently so the splash itself reads as "loading" (the spec's planes-as-
+/// loading motif) — no separate spinner. Cold-start (pre-process) launch stays the OS launch screen;
+/// this covers the gap until the first sync settles.
+struct DXLaunchView: View {
+    @Environment(\.horizontalSizeClass) private var hSize
+    @State private var drift = false
+
+    private var isPad: Bool { hSize == .regular }
+    private let ink = Color(red: 0.96, green: 0.95, blue: 0.93)   // off-white #F5F3EE wordmark
+
+    var body: some View {
+        ZStack {
+            Color("LaunchBG").ignoresSafeArea()
+
+            VStack(spacing: 16) {
+                Image("dxPlanes")
+                    .resizable().scaledToFit()
+                    .frame(width: isPad ? 150 : 108)
+                    .shadow(color: .black.opacity(0.55), radius: 12, y: 5)
+                    .offset(y: drift ? -6 : 6)
+                    .animation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true), value: drift)
+                Text("DX TRADER")
+                    .font(.system(size: isPad ? 19 : 15, weight: .heavy))
+                    .tracking(6)
+                    .foregroundStyle(ink)
+            }
+
+            VStack {
+                Spacer()
+                Image("mosaicBand")
+                    .resizable().scaledToFill()
+                    .frame(width: isPad ? 360 : 260, height: 13)
+                    .clipped()
+                    .padding(.bottom, 40)
+            }
+        }
+        .onAppear { drift = true }
     }
 }
 
@@ -336,6 +404,7 @@ struct SlackComposer: View {
     var canSendWhenEmpty = false   // allow send with no text (e.g. an image is attached)
     /// When non-empty, an "@" button appears that opens a mention picker (channel use). id + name.
     var mentionPeople: [(id: String, name: String)] = []
+    var sendTint: Color = AppColor.primary   // §5: Channel passes AppColor.heat; chat uses primary
     let onSend: () -> Void
 
     @State private var showMentions = false
@@ -357,7 +426,7 @@ struct SlackComposer: View {
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(isEmpty ? Color.secondary : .white)
                         .frame(width: DS.controlSize, height: DS.controlSize)
-                        .background(isEmpty ? Color(.tertiarySystemFill) : Color.accentColor,
+                        .background(isEmpty ? Color(.tertiarySystemFill) : sendTint,
                                     in: RoundedRectangle(cornerRadius: DS.controlRadius, style: .continuous))
                 }
                 .buttonStyle(.plain)

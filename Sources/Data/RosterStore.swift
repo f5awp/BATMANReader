@@ -109,6 +109,16 @@ final class RosterStore {
         set { UserDefaults.standard.set(newValue, forKey: "batman.rosterMasterVersion") }
     }
 
+    /// Bump whenever `ScheduleParser`'s day-resolution logic changes (e.g. the two-line vacation /
+    /// traded-in-pickup fix). When the stored value is older, we force a ONE-TIME re-ingest of the
+    /// current master even if its version is unchanged — so parser fixes reach schedules that were
+    /// already ingested by an older build (otherwise stale `isVacation` days persist forever).
+    private static let parserVersion = 2
+    private var lastParserVersion: Int {
+        get { UserDefaults.standard.integer(forKey: "batman.rosterParserVersion") }
+        set { UserDefaults.standard.set(newValue, forKey: "batman.rosterParserVersion") }
+    }
+
     /// The one generation readers see. The atomic commit of an import is a single write to this pointer:
     /// before it, queries return the complete OLD generation; after it, the complete NEW one — no reader
     /// ever sees a half-written roster. Defaults to `.distantPast`, matching the value migration assigns to
@@ -185,7 +195,16 @@ final class RosterStore {
         isSyncingMaster = true
         defer { isSyncingMaster = false }
 
-        guard let pkg = await cloud.fetchIfNewer(localVersion: localMasterVersion) else { return 0 }
+        // Parser logic changed since our last ingest → drop the version stamp so `fetchIfNewer` returns
+        // the current master and we re-parse it once with the fixed resolution (heals stale vacation days).
+        let forceReparse = lastParserVersion != Self.parserVersion
+        if forceReparse { localMasterVersion = nil }
+
+        guard let pkg = await cloud.fetchIfNewer(localVersion: localMasterVersion) else {
+            // Nothing newer to fetch, but we still owe a parser-version bump so we don't retry every launch.
+            if forceReparse { lastParserVersion = Self.parserVersion }
+            return 0
+        }
         let csv = pkg.csv
         guard let workers = try? await Task.detached(priority: .utility, operation: {
             try ScheduleParser().parseAllWorkers(csv: csv)
@@ -202,6 +221,7 @@ final class RosterStore {
         let rows = await importRoster(workers, version: pkg.version)
         guard rows > 0 else { return 0 }   // insert failed → don't advance version, keep old generation live
         localMasterVersion = pkg.version
+        lastParserVersion = Self.parserVersion   // this generation was ingested by the current parser
 
         // Derive THIS user's personal schedule from the master (their row), so a
         // new user just sets their employee ID and gets their schedule + alerts
@@ -209,6 +229,9 @@ final class RosterStore {
         let myID = SettingsManager.shared.username
         if !myID.isEmpty, let mine = workers.first(where: { $0.id == myID }) {
             _ = await ShiftStore.shared.save(mine.shifts)
+            // Cache my quals at import time so Trade Settings shows them instantly on first open — no
+            // dependence on the schedule(forWorker:) fetch racing the roster load.
+            if !mine.quals.isEmpty { SettingsManager.shared.cachedQuals = mine.quals }
             await AvailabilityManager.shared.buildFromSchedule()
             await NotificationManager.shared.scheduleAll(for: mine.shifts)
         } else if !myID.isEmpty {

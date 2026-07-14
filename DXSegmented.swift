@@ -56,7 +56,7 @@ struct DXSegmented<T: Hashable>: View {
                     // the label's compact frame — it can't expand to eat the whole screen.
                     Text(opt.label)
                         .font(.subheadline.weight(active ? .bold : .semibold))
-                        .foregroundStyle(active ? (tint == nil ? Color.primary : Color.white) : .secondary)
+                        .foregroundStyle(active ? .white : .secondary)
                         .lineLimit(1).minimumScaleFactor(0.8)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 8)
@@ -78,25 +78,12 @@ struct DXSegmented<T: Hashable>: View {
 
     @ViewBuilder
     private func activeBackground(tint: Color?) -> some View {
+        // One look everywhere: a solid colored pill. Semantic strips pass `tint`; everything else uses the
+        // app accent. NO underline, NO border on the active tile. (§4, round 2.)
         let shape = RoundedRectangle(cornerRadius: 8, style: .continuous)
-        ZStack(alignment: .bottom) {
-            if let tint {
-                shape.fill(LinearGradient(colors: [tint.opacity(0.92), tint],
-                                          startPoint: .top, endPoint: .bottom))
-                    .overlay(shape.fill(LinearGradient(colors: [.white.opacity(0.28), .clear],
-                                                       startPoint: .top, endPoint: .bottom)))
-            } else {
-                shape.fill(Color(.secondarySystemBackground))
-                    .overlay(shape.strokeBorder(.white.opacity(0.10), lineWidth: 0.5))
-                // palette-accent underline (brand signature) for the neutral variant
-                LinearGradient(colors: [AppColor.primary, AppColor.success, AppColor.pending,
-                                        AppColor.heat, AppColor.special],
-                               startPoint: .leading, endPoint: .trailing)
-                    .frame(height: 3)
-                    .clipShape(Capsule())
-                    .padding(.horizontal, 14)
-                    .padding(.bottom, 3)
-            }
-        }
+        let fill = tint ?? AppColor.primary
+        shape.fill(LinearGradient(colors: [fill.opacity(0.92), fill], startPoint: .top, endPoint: .bottom))
+            .overlay(shape.fill(LinearGradient(colors: [.white.opacity(0.28), .clear],
+                                               startPoint: .top, endPoint: .bottom)))
     }
 }

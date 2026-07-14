@@ -1134,15 +1134,28 @@ struct PackageDetailView: View {
     // GIVE-BACK CHOICE (2-person): the peer's ranked alternate days I could receive. The "You get" chips
     // become a single-select radio over these; the chosen day is what Propose sends + what the calendar
     // highlights. (B6-GIVEBACK — moved off the card into this view.)
-    @State private var chosenTake: String?
+    // GIVE-BACK CHOICE: the day(s) I've chosen to receive. A give-N trade stays give N / get N, but I may
+    // pick WHICH N from the peer's ranked alternates. Single-day trades behave like a radio (pick 1).
+    @State private var chosenTakes: [String] = []
     // Off (default): tapping a day chip just FOCUSES it on the calendar (view). On: each tap includes/
     // excludes that day from the proposal. Keeps "look at a day" distinct from "pick which days to trade."
     @State private var selectMode = false
     private var takeOpts: [String] {
         (package.assignments.count == 1 && !isCircular) ? (package.assignments.first?.takeOptions ?? []) : []
     }
-    private var hasTakeChoice: Bool { takeOpts.count > 1 }
-    private var effectiveTakeDay: String? { chosenTake ?? package.assignments.first?.takeDayIDs.first }
+    /// How many days I must receive back — balanced to what I give this peer (give N ⇒ get N).
+    private var takeTargetCount: Int { max(1, package.assignments.first?.giveDayIDs.count ?? 1) }
+    /// There's a give-back CHOICE only when the peer offers more eligible days than I need (alternates exist).
+    private var hasTakeChoice: Bool { takeOpts.count > takeTargetCount }
+    /// The peer's default (best) N give-back days — the seed + the "no custom choice" baseline.
+    private var defaultTakes: [String] { package.assignments.first?.takeDayIDs ?? [] }
+    /// Rolling multi-select: single-day acts as a radio; give-N caps at N, newest swaps the oldest out.
+    private func toggleTake(_ d: String) {
+        if takeTargetCount == 1 { chosenTakes = [d]; return }
+        if let i = chosenTakes.firstIndex(of: d) { chosenTakes.remove(at: i); return }
+        chosenTakes.append(d)
+        if chosenTakes.count > takeTargetCount { chosenTakes.removeFirst() }
+    }
 
     /// One tappable step per handoff. Circular = the loop legs; reciprocal = legs
     /// synthesized from each assignment (you→them for your gives, them→you for theirs).
@@ -1158,8 +1171,8 @@ struct PackageDetailView: View {
         var out: [Step] = []
         for a in package.assignments {
             for d in a.giveDayIDs { out.append(Step(id: "\(myID)>\(a.workerID)@\(d)", fromID: myID, toID: a.workerID, dayID: d)) }
-            // With a give-back choice, the take step follows the CHOSEN day so the calendars track the pick.
-            let takeDays = hasTakeChoice ? [effectiveTakeDay].compactMap { $0 } : a.takeDayIDs
+            // With a give-back choice, the take steps follow the CHOSEN days so the calendars track the picks.
+            let takeDays = hasTakeChoice ? chosenTakes : a.takeDayIDs
             for d in takeDays { out.append(Step(id: "\(a.workerID)>\(myID)@\(d)", fromID: a.workerID, toID: myID, dayID: d)) }
         }
         return out
@@ -1295,14 +1308,21 @@ struct PackageDetailView: View {
                 }
                 .buttonStyle(.bordered).tint(AppColor.pending).padding(.horizontal)
             }
-            // Only meaningful when there's more than one day to narrow. Off = tap-to-view; on = tap-to-pick.
-            if allDays.count > 1 {
+            // Give-subset (narrow which of my days to trade). Hidden while a give-back CHOICE is active —
+            // there you're picking which days to RECEIVE, and your gives stay whole. Off = tap-to-view.
+            if allDays.count > 1 && !hasTakeChoice {
                 Toggle(isOn: $selectMode) {
                     Label("Select specific days", systemImage: "checklist")
                         .font(.footnote.weight(.semibold))
                 }
                 .toggleStyle(.button).tint(AppColor.special).controlSize(.small)
                 .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal)
+            }
+            // With a give-back choice you must pick exactly N days to receive before proposing.
+            if hasTakeChoice && chosenTakes.count != takeTargetCount {
+                Text("Pick \(takeTargetCount) day\(takeTargetCount == 1 ? "" : "s") to receive (\(chosenTakes.count)/\(takeTargetCount))")
+                    .font(.caption).foregroundStyle(AppColor.pending)
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal)
             }
             Button { onPropose(subsetPackage()); dismiss() } label: {
                 Label(alreadySent ? "Sent" : (isSubset ? "Propose selection" : "Propose"),
@@ -1311,7 +1331,9 @@ struct PackageDetailView: View {
             }
             .buttonStyle(.borderedProminent)
             .tint(alreadySent ? AppColor.success : (isSubset ? AppColor.special : AppColor.primary))   // accent = custom subset
-            .disabled((selectMode && selectedDays.isEmpty) || alreadySent)
+            .disabled((selectMode && selectedDays.isEmpty)
+                      || (hasTakeChoice && chosenTakes.count != takeTargetCount)
+                      || alreadySent)
             .padding(.horizontal).padding(.bottom, 8)
         }
     }
@@ -1327,10 +1349,12 @@ struct PackageDetailView: View {
     private func subsetPackage(bridgeChosen: Set<String>? = nil) -> TradePackage {
         let sel = proposalDays
         let assigns = package.assignments.map { a in
-            // With a give-back choice, the take is the single CHOSEN day; otherwise it's the selected subset.
-            let take = hasTakeChoice ? [effectiveTakeDay].compactMap { $0 } : a.takeDayIDs.filter(sel.contains)
+            // Give-back CHOICE: keep all my gives, receive the days I chose. Otherwise the give-subset
+            // toggle narrows both sides by the selected days.
+            let take = hasTakeChoice ? chosenTakes : a.takeDayIDs.filter(sel.contains)
+            let give = hasTakeChoice ? a.giveDayIDs : a.giveDayIDs.filter(sel.contains)
             return PackageAssignment(workerID: a.workerID, name: a.name,
-                                     giveDayIDs: a.giveDayIDs.filter(sel.contains),
+                                     giveDayIDs: give,
                                      takeDayIDs: take, takeOptions: a.takeOptions)
         }.filter { !$0.giveDayIDs.isEmpty || !$0.takeDayIDs.isEmpty }
         var swap = package.qualSwap
@@ -1380,13 +1404,14 @@ struct PackageDetailView: View {
 
     private var peerID: String { package.assignments.first?.workerID ?? "" }
 
-    /// "You get" as a single-select radio over the peer's ranked alternate give-back days (bookend-first).
-    /// The chosen day is what Propose sends and what the calendars highlight.
+    /// "You get" as a multi-select over the peer's ranked alternate give-back days. You pick exactly N
+    /// (= what you give); single-day trades behave like a radio. The chosen days are what Propose sends
+    /// and what the calendars highlight.
     private var takeOptionRow: some View {
         HStack(alignment: .center, spacing: 6) {
             VStack(alignment: .leading, spacing: 0) {
                 Text("You get").font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
-                Text("pick 1").font(.system(size: 8, weight: .semibold)).foregroundStyle(AppColor.pending)
+                Text("pick \(takeTargetCount)").font(.system(size: 8, weight: .semibold)).foregroundStyle(AppColor.pending)
             }
             .frame(width: 52, alignment: .leading)
             ScrollView(.horizontal, showsIndicators: false) {
@@ -1398,14 +1423,15 @@ struct PackageDetailView: View {
     }
 
     private func takeOptChip(_ d: String, isTop: Bool) -> some View {
-        let on = effectiveTakeDay == d
+        let on = chosenTakes.contains(d)
         let c = colorFor(peerID)
         return Button {
-            withAnimation(.snappy) { chosenTake = d }
+            withAnimation(.snappy) { toggleTake(d) }
             monthIndex = monthOffset(for: d)
         } label: {
             HStack(spacing: 4) {
-                Image(systemName: on ? "largecircle.fill.circle" : "circle")
+                Image(systemName: on ? (takeTargetCount > 1 ? "checkmark.circle.fill" : "largecircle.fill.circle")
+                                     : (takeTargetCount > 1 ? "circle" : "circle"))
                     .font(.system(size: 9, weight: .bold)).foregroundStyle(on ? c : .secondary)
                 Text(SwapChips.chipDay(d)).font(.caption2.weight(.semibold))
                 // Only the top-ranked pick is tagged "best"; the rest are unlabeled alternates.
@@ -1552,6 +1578,8 @@ struct PackageDetailView: View {
         for id in participants where schedules[id] == nil {
             schedules[id] = await TradeMatcher.dayLabels(forWorker: id)
         }
+        // Seed the give-back choice to the peer's default (best) N days before deriving steps.
+        if chosenTakes.isEmpty { chosenTakes = defaultTakes }
         // Default selection = every day the package contains (subset-editable when `selectable`).
         if !selectionSeeded {
             selectedDays = Set(steps.map(\.dayID))

@@ -8,10 +8,27 @@
 
 /* Begin PBXBuildFile section */
 		911DBA013001B70D003A03FD /* Lottie in Frameworks */ = {isa = PBXBuildFile; productRef = 911DBA003001B70D003A03FD /* Lottie */; };
+		911DBA2A3002BEBE003A03FD /* DXType.swift in Sources */ = {isa = PBXBuildFile; fileRef = 911DBA283002BEBE003A03FD /* DXType.swift */; };
+		911DBA2B3002BEBE003A03FD /* DXMessagingDock.swift in Sources */ = {isa = PBXBuildFile; fileRef = 911DBA253002BEBE003A03FD /* DXMessagingDock.swift */; };
+		911DBABC3002CCF0003A03FD /* Archivo-ExtraBold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 911DBA8D3002CCF0003A03FD /* Archivo-ExtraBold.ttf */; };
+		911DBAC23002CCF0003A03FD /* Archivo-Black.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 911DBA893002CCF0003A03FD /* Archivo-Black.ttf */; };
+		911DBADC3002CCF0003A03FD /* Archivo-Bold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 911DBA8B3002CCF0003A03FD /* Archivo-Bold.ttf */; };
+		911DBB1230030610003A03FD /* Archivo-SemiBold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 911DBB1130030610003A03FD /* Archivo-SemiBold.ttf */; };
+		91C3EA913003A1D000F144B8 /* mockup-reference.html in Resources */ = {isa = PBXBuildFile; fileRef = 91C3EA903003A1D000F144B8 /* mockup-reference.html */; };
+		91C3EAA43003CCD900F144B8 /* blackout-options.png in Resources */ = {isa = PBXBuildFile; fileRef = 91C3EAA33003CCD900F144B8 /* blackout-options.png */; };
+		91C3EAA63003CCE300F144B8 /* MOCKUP-PARITY.md in Resources */ = {isa = PBXBuildFile; fileRef = 91C3EAA53003CCE300F144B8 /* MOCKUP-PARITY.md */; };
+		91C3EAA93003CDAA00F144B8 /* IMG_4168.PNG in Resources */ = {isa = PBXBuildFile; fileRef = 91C3EAA73003CDAA00F144B8 /* IMG_4168.PNG */; };
+		91C3EAAA3003CDAA00F144B8 /* IMG_4171.PNG in Resources */ = {isa = PBXBuildFile; fileRef = 91C3EAA83003CDAA00F144B8 /* IMG_4171.PNG */; };
+		91C3EAAC3003CDFB00F144B8 /* app-vs-mockup.png in Resources */ = {isa = PBXBuildFile; fileRef = 91C3EAAB3003CDFB00F144B8 /* app-vs-mockup.png */; };
+		91C3EAB030041B6F00F144B8 /* DX-LAUNCH-SPEC.md in Resources */ = {isa = PBXBuildFile; fileRef = 91C3EAAF30041B6F00F144B8 /* DX-LAUNCH-SPEC.md */; };
+		91C3EAB33004279A00F144B8 /* DXSegmented.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91C3EAB23004279A00F144B8 /* DXSegmented.swift */; };
+		91C3EAB43004279A00F144B8 /* DXMosaicIntegration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91C3EAB13004279A00F144B8 /* DXMosaicIntegration.swift */; };
+		91C3EAB6300427CB00F144B8 /* PARITY-v2-style 2.md in Resources */ = {isa = PBXBuildFile; fileRef = 91C3EAB5300427CB00F144B8 /* PARITY-v2-style 2.md */; };
 		91D1B8AF2FDA65050049CAF7 /* Documentation/README_ShortcutsSetup.md in Resources */ = {isa = PBXBuildFile; fileRef = 91D1B8922FDA65050049CAF7 /* Documentation/README_ShortcutsSetup.md */; };
 		91D1B8CB2FDC65470049CAF7 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 91D1B8CA2FDC65470049CAF7 /* WidgetKit.framework */; };
 		91D1B8CD2FDC65470049CAF7 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 91D1B8CC2FDC65470049CAF7 /* SwiftUI.framework */; };
 		91D1B8DE2FDC65490049CAF7 /* BATMANWidgetsExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 91D1B8C82FDC65470049CAF7 /* BATMANWidgetsExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		91F4D30C30062B00004A2AFE /* README 2.md in Resources */ = {isa = PBXBuildFile; fileRef = 91F4D30A30062B00004A2AFE /* README 2.md */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -37,11 +54,28 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		911DBA253002BEBE003A03FD /* DXMessagingDock.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DXMessagingDock.swift; sourceTree = "<group>"; };
+		911DBA283002BEBE003A03FD /* DXType.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DXType.swift; sourceTree = "<group>"; };
+		911DBA893002CCF0003A03FD /* Archivo-Black.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "Archivo-Black.ttf"; sourceTree = "<group>"; };
+		911DBA8B3002CCF0003A03FD /* Archivo-Bold.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "Archivo-Bold.ttf"; sourceTree = "<group>"; };
+		911DBA8D3002CCF0003A03FD /* Archivo-ExtraBold.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "Archivo-ExtraBold.ttf"; sourceTree = "<group>"; };
+		911DBB1130030610003A03FD /* Archivo-SemiBold.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "Archivo-SemiBold.ttf"; sourceTree = "<group>"; };
 		91B5643C2FDA47E400D38BBE /* BATMANReader.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = BATMANReader.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		91C3EA903003A1D000F144B8 /* mockup-reference.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = "mockup-reference.html"; sourceTree = "<group>"; };
+		91C3EAA33003CCD900F144B8 /* blackout-options.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "blackout-options.png"; sourceTree = "<group>"; };
+		91C3EAA53003CCE300F144B8 /* MOCKUP-PARITY.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "MOCKUP-PARITY.md"; sourceTree = "<group>"; };
+		91C3EAA73003CDAA00F144B8 /* IMG_4168.PNG */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = IMG_4168.PNG; sourceTree = "<group>"; };
+		91C3EAA83003CDAA00F144B8 /* IMG_4171.PNG */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = IMG_4171.PNG; sourceTree = "<group>"; };
+		91C3EAAB3003CDFB00F144B8 /* app-vs-mockup.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "app-vs-mockup.png"; sourceTree = "<group>"; };
+		91C3EAAF30041B6F00F144B8 /* DX-LAUNCH-SPEC.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "DX-LAUNCH-SPEC.md"; sourceTree = "<group>"; };
+		91C3EAB13004279A00F144B8 /* DXMosaicIntegration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DXMosaicIntegration.swift; sourceTree = "<group>"; };
+		91C3EAB23004279A00F144B8 /* DXSegmented.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DXSegmented.swift; sourceTree = "<group>"; };
+		91C3EAB5300427CB00F144B8 /* PARITY-v2-style 2.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "PARITY-v2-style 2.md"; sourceTree = "<group>"; };
 		91D1B8922FDA65050049CAF7 /* Documentation/README_ShortcutsSetup.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = Documentation/README_ShortcutsSetup.md; sourceTree = "<group>"; };
 		91D1B8C82FDC65470049CAF7 /* BATMANWidgetsExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = BATMANWidgetsExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		91D1B8CA2FDC65470049CAF7 /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
 		91D1B8CC2FDC65470049CAF7 /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
+		91F4D30A30062B00004A2AFE /* README 2.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "README 2.md"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -80,12 +114,22 @@
 			path = BATMANReader;
 			sourceTree = "<group>";
 		};
+		91C3EAA23003A1EB00F144B8 /* Comparison */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Comparison;
+			sourceTree = "<group>";
+		};
 		91D1B8CE2FDC65470049CAF7 /* BATMANWidgets */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
 				91D1B8E22FDC65490049CAF7 /* Exceptions for "BATMANWidgets" folder in "BATMANWidgetsExtension" target */,
 			);
 			path = BATMANWidgets;
+			sourceTree = "<group>";
+		};
+		91F4D2FB30061A60004A2AFE /* _drop-ins */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = "_drop-ins";
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -107,9 +151,28 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		911DBAA03002CCF0003A03FD /* Archivo */ = {
+			isa = PBXGroup;
+			children = (
+				911DBA893002CCF0003A03FD /* Archivo-Black.ttf */,
+				911DBA8B3002CCF0003A03FD /* Archivo-Bold.ttf */,
+				911DBB1130030610003A03FD /* Archivo-SemiBold.ttf */,
+				911DBA8D3002CCF0003A03FD /* Archivo-ExtraBold.ttf */,
+			);
+			path = Archivo;
+			sourceTree = "<group>";
+		};
 		91B564332FDA47E400D38BBE = {
 			isa = PBXGroup;
 			children = (
+				91F4D30A30062B00004A2AFE /* README 2.md */,
+				91F4D2FB30061A60004A2AFE /* _drop-ins */,
+				91C3EAAF30041B6F00F144B8 /* DX-LAUNCH-SPEC.md */,
+				91C3EAB13004279A00F144B8 /* DXMosaicIntegration.swift */,
+				91C3EAB23004279A00F144B8 /* DXSegmented.swift */,
+				91C3EA903003A1D000F144B8 /* mockup-reference.html */,
+				91C3EAA23003A1EB00F144B8 /* Comparison */,
+				911DBAA03002CCF0003A03FD /* Archivo */,
 				911DB9F93001B40F003A03FD /* Animations */,
 				91B5643E2FDA47E400D38BBE /* BATMANReader */,
 				91D1B8CE2FDC65470049CAF7 /* BATMANWidgets */,
@@ -117,6 +180,14 @@
 				91B5643D2FDA47E400D38BBE /* Products */,
 				91D1B8922FDA65050049CAF7 /* Documentation/README_ShortcutsSetup.md */,
 				9138AF2A2FE4F021002E98F1 /* Sources */,
+				911DBA253002BEBE003A03FD /* DXMessagingDock.swift */,
+				911DBA283002BEBE003A03FD /* DXType.swift */,
+				91C3EAA33003CCD900F144B8 /* blackout-options.png */,
+				91C3EAA53003CCE300F144B8 /* MOCKUP-PARITY.md */,
+				91C3EAA73003CDAA00F144B8 /* IMG_4168.PNG */,
+				91C3EAA83003CDAA00F144B8 /* IMG_4171.PNG */,
+				91C3EAAB3003CDFB00F144B8 /* app-vs-mockup.png */,
+				91C3EAB5300427CB00F144B8 /* PARITY-v2-style 2.md */,
 			);
 			sourceTree = "<group>";
 		};
@@ -160,6 +231,8 @@
 				911DB9F93001B40F003A03FD /* Animations */,
 				9138AF2A2FE4F021002E98F1 /* Sources */,
 				91B5643E2FDA47E400D38BBE /* BATMANReader */,
+				91C3EAA23003A1EB00F144B8 /* Comparison */,
+				91F4D2FB30061A60004A2AFE /* _drop-ins */,
 			);
 			name = BATMANReader;
 			packageProductDependencies = (
@@ -233,12 +306,25 @@
 		91B5643A2FDA47E400D38BBE /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			files = (
+				911DBB1230030610003A03FD /* Archivo-SemiBold.ttf in Resources */,
+				911DBABC3002CCF0003A03FD /* Archivo-ExtraBold.ttf in Resources */,
+				91F4D30C30062B00004A2AFE /* README 2.md in Resources */,
+				911DBAC23002CCF0003A03FD /* Archivo-Black.ttf in Resources */,
+				91C3EAAC3003CDFB00F144B8 /* app-vs-mockup.png in Resources */,
+				911DBADC3002CCF0003A03FD /* Archivo-Bold.ttf in Resources */,
+				91C3EAA63003CCE300F144B8 /* MOCKUP-PARITY.md in Resources */,
+				91C3EAA93003CDAA00F144B8 /* IMG_4168.PNG in Resources */,
+				91C3EAAA3003CDAA00F144B8 /* IMG_4171.PNG in Resources */,
+				91C3EAA43003CCD900F144B8 /* blackout-options.png in Resources */,
+				91C3EAB030041B6F00F144B8 /* DX-LAUNCH-SPEC.md in Resources */,
 				91D1B8AF2FDA65050049CAF7 /* Documentation/README_ShortcutsSetup.md in Resources */,
+				91C3EA913003A1D000F144B8 /* mockup-reference.html in Resources */,
 			);
 		};
 		91D1B8C62FDC65470049CAF7 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			files = (
+				91C3EAB6300427CB00F144B8 /* PARITY-v2-style 2.md in Resources */,
 			);
 		};
 /* End PBXResourcesBuildPhase section */
@@ -247,6 +333,10 @@
 		91B564382FDA47E400D38BBE /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			files = (
+				91C3EAB33004279A00F144B8 /* DXSegmented.swift in Sources */,
+				91C3EAB43004279A00F144B8 /* DXMosaicIntegration.swift in Sources */,
+				911DBA2A3002BEBE003A03FD /* DXType.swift in Sources */,
+				911DBA2B3002BEBE003A03FD /* DXMessagingDock.swift in Sources */,
 			);
 		};
 		91D1B8C42FDC65470049CAF7 /* Sources */ = {

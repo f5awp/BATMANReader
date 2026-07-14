@@ -205,3 +205,142 @@ cell and so the radar reads as a deliberate, manually-refreshed mode rather than
 - No card pinning.
 - No CloudKit schema changes / cross-device sync of flags or unseen state.
 - No circular / N-way trades on the calendar (they stay in Trades › Intents).
+
+---
+
+## 10. Verified code map (anchors — **verified 2026-07-12**, re-grep before use)
+
+Every symbol this feature builds on, confirmed present at the line noted. These are load-bearing; if a
+re-grep before a step shows a signature has drifted, STOP and update this map — do not code to memory.
+
+| Symbol | Location | Signature / shape (as verified) |
+|---|---|---|
+| `TradeRouter.intentSolutions` | TradeRouter.swift:623 | `(excluding:generation:lucky:mutualOnly:) async -> [TradePackage]` — the OPTIMIZER (do not reuse for radar) |
+| `TradeRouter.assembleIntentDeal` | TradeRouter.swift:575 | `(_ p: IntentPairing) -> (gives:[String], takes:[String], mutualMarked:Int)?` |
+| `TradeRouter.IntentPairing` | TradeRouter.swift:562 | struct: `myGiveMarked/myGivePref/theirGiveMarked/theirGivePref: [String]` |
+| `TradeMatcher.twoWayExplore` | TradeMatcher.swift:476 | `(withWorker:name:windowStart:windowEnd:mySeeking:theirSeeking:myProfile:theirProfile:myID:ignoreOwnBlacklist:preloadedMine:preloadedPeer:) async -> TwoWayPlan` |
+| `MatchContext.build` | called TradeRouter.swift:625 | `(selfID:) async` → `ctx.{maps, rosterMeta, profilesByID, universe, mineEntries, priors, start, end, profile(for:name:)}` |
+| **Local closures in `intentSolutions`** | TradeRouter.swift:634–670 | `wouldTake`, `schedulesCross`, `anchoredSet`, `dayUrgency`, `urgency` — **NOT reusable** (see §11 step 1 decision) |
+| `TradeProfileStore.refreshOthers` | TradeProfile.swift:427 | `() async` — pulls all peer profiles (CloudKit `fetchAll`) |
+| `TradeProfileStore.fetchProfile(forWorker:)` | TradeProfile.swift:549 | `async -> TradeProfile?` — single-peer network fetch (propose re-validate) |
+| `TradeProfileStore.profile(forWorker:)` | TradeProfile.swift:510 | `-> TradeProfile?` — sync, from local `others` |
+| `TradeProfile.seekingDayIDs / wantToWorkDayIDs / opennessLevel` | TradeProfile.swift ~79/102 | `Set<String>` / `Set<String>?` / enum |
+| `DayIntentStore.seekingDayIDs / wantToWorkDayIDs / intentsRevision` | DayIntentStore.swift | derived `Set<String>` / revision Int |
+| `MessagingStore.sendRequest` | Messaging.swift:823 | `(to:toName:note:take:give:origin:) async` |
+| `MessagingStore.requests` / `status(of:)` | Messaging.swift:530 / :1001 | `[TradeRequest]` / `-> TradeRequestStatus` |
+| `propose(_ pkg:)` | TradeIntentsFeed.swift:378 | fires `sendRequest` per assignment |
+| `CompactSwapCard` | TradeIntentsFeed.swift | has `onPropose: (TradePackage)->Void` |
+| `TradeFeedCache.intentMatchCount` | TradeIntentsFeed.swift:36 | drives the Intents badge |
+| Global stats bar `TradeStatsBar` | ContentView.swift:287 (rendered :80) | where the ONE new counter goes |
+| `LayerVisibility` | HomeView.swift:29 | fields: `notes, intentOverlays, availability, shiftType, deskAssignments` → **ADD `matches`** |
+| Home cell markers (§10) | HomeCalendar.swift | `noteDot`, `NoteMarker`, `EventMarker`, `numberColor`, `borderColor` |
+| Calendar tap | HomeView.swift:266–299 | `onTap(dayID,isOff)` → `handleTap` → `DayEditTarget` sheet |
+| New-master hook | ContentView.swift:186 + `foregroundRefresh` `rosterRows > 0` | where `.full` recompute attaches |
+| Launch precompute slot | ContentView.swift:192–203 | where the radar seed runs under the loader |
+| Existing engine tests | EngineTests.swift | **must stay green after any engine touch** |
+
+### Assumptions ledger (each must hold; re-check if a step fails)
+1. The mutual candidate set is small enough to run **uncapped** (engine comment says active+schedule-crossing is "already small"). — *Risk if wrong:* refresh latency. *Mitigation:* keep the 300 safety backstop; `log()` if it bites; measure in step 1.
+2. `twoWayExplore` + `assembleIntentDeal` are **deterministic** for fixed inputs. — *Risk:* flapping unseen. *Mitigation:* step-1 determinism test (run 2× → identical).
+3. `TwoWayPlan` exposes `iGive`/`iTake` legs with `.dayID`/`.wanted`/`.bookend` (as used at TradeRouter.swift:723–729). — *Verify by reading the block before mirroring it.*
+4. `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` still holds → matcher is main-actor; radar recompute needs the same `Task.yield()` cadence to avoid freezes.
+
+---
+
+## 11. Per-step fail-safes
+
+Each step: **Preconditions** (re-grep/read before touching) → **Guardrails** (constraints while editing)
+→ **Gate** (must pass to proceed) → **Rollback**. A step is not "done" until its Gate passes.
+
+**Step 1 — `TradeRouter.radarMatches` + tests**
+- *Precondition:* re-read `intentSolutions` lines 623–758 and `TwoWayPlan` leg fields; confirm §10 anchors.
+- *Decision (document in code):* the helper closures are local. Choose **duplicate the minimal 2-way body
+  into `radarMatches`** (lower blast radius) over refactoring `intentSolutions` (touches a tested hot path).
+  If duplication would drift, extract a `private static` helper used by *both* — but only if EngineTests
+  stay green.
+- *Guardrails:* additive only — **do not edit `intentSolutions`, `finalize`, or `TradePackage`**. New type
+  `RadarMatch` is new, `Sendable`, no engine mutation.
+- *Gate:* `BuildProject` clean **AND** the **existing EngineTests pass unchanged** **AND** two new tests
+  pass: (a) *determinism* — `radarMatches` twice → identical; (b) *completeness* — a fixture where a real
+  mutual match sits below `floorNormalProb` is **absent from `intentSolutions` but present in `radarMatches`**.
+- *Rollback:* delete the new function + tests; nothing else references it yet.
+
+**Step 2 — `MatchStore`**
+- *Precondition:* confirm `@Observable`/`@MainActor` store pattern from `DayIntentStore` / `TradeFeedCache`.
+- *Guardrails:* new file only; local persistence via the same mechanism `DayIntentStore` uses; **no CloudKit**.
+  Pure indexing; the unseen rule is "distinct-peer set grew," nothing else.
+- *Gate:* build clean; a store unit test — seed A→{p1}; recompute A→{p1,p2} ⇒ A ∈ unseen; `markSeen(A)` ⇒
+  A ∉ unseen; recompute A→{p1,p2} again (no growth) ⇒ A stays seen.
+- *Rollback:* delete file; not yet referenced by any view.
+
+**Step 3 — Calendar markers behind the `matches` layer**
+- *Precondition:* re-read the §10 cell body (badge slot, `noteDot`, `numberColor`, `borderColor`).
+- *Guardrails:* **gated by `layers.matches` (default on)**; when off, cell renders exactly as today. Do not
+  touch tile color / number legibility rules / today ring / §10 dots except to move the note dot to
+  top-leading *only when a badge is present*. §8 floating magnifier: DO NOT TOUCH.
+- *Gate:* build clean; visual check **light + dark**; with `matches` OFF the cell is pixel-identical to
+  pre-change; badge legible on navy / gold / teal / graphite tiles.
+- *Rollback:* the layer flag makes this instantly reversible (toggle default off / remove overlay).
+
+**Step 4 — Day-detail Matches tab**
+- *Precondition:* read `handleTap`/`DayEditTarget` + `CompactSwapCard`/ECB card `onPropose`.
+- *Guardrails:* add a `DXSegmented` [Info | Matches]; **Info tab must be the untouched existing editor**.
+  Reuse the existing card; no new proposal path yet (Propose wired in step 5).
+- *Gate:* build clean; opening Info shows the identical current editor; Matches lists the store's cards;
+  `markSeen` fires on Matches appear (store test hook).
+- *Rollback:* remove the segmented wrapper → editor returns to its current single view.
+
+**Step 5 — Propose re-validation + status**
+- *Precondition:* confirm `fetchProfile(forWorker:)` (:549), `sendRequest` (:823), `status(of:)` (:1001).
+- *Guardrails:* on Propose, re-fetch that ONE peer, rebuild the 2-way deal, send only if still valid; else
+  block + toast. Cross-ref `MessagingStore.requests` → show Pending. **No change to `sendRequest` itself.**
+- *Gate:* build clean; manual: propose a valid match sends; a day with an existing request shows Pending
+  (no duplicate send path reachable).
+- *Rollback:* revert the card's action closure; matching/markers unaffected.
+
+**Step 6 — Explicit refresh control + new-master `.full`**
+- *Precondition:* read `foregroundRefresh` + ContentView:186/192–203.
+- *Guardrails:* **do NOT add recompute to the plain foreground path** (locked). Button → `.intentsOnly`;
+  new-master branch → `.full`. Show spinner + "as of HH:MM". Keep `Task.yield()` cadence.
+- *Gate:* build clean; foreground with no new master triggers NO recompute (add a debug counter / log to
+  prove it); button and new-master both recompute; UI never blocks (spinner shows).
+- *Rollback:* remove the button + the one `.full` call; auto behavior returns to today's.
+
+**Step 7 — Stats (global counter + Home chips + list + tap-to-scroll)**
+- *Precondition:* read `TradeStatsBar` (:287) + `IntentTallyBar` style + calendar scroll/anchor model.
+- *Guardrails:* ONE global counter; three Home chips read from the store (derived, no new state); list
+  reuses cards; tap-to-scroll uses the existing month-anchor mechanism.
+- *Gate:* build clean; counts equal `matchesByDay` cardinality; tapping a date scrolls the calendar to it.
+- *Rollback:* additive views; remove to revert.
+
+---
+
+## 12. Systemic anti-hallucination / anti-regression protocol
+
+Applies to **every** step, in addition to its own Gate.
+
+1. **Grep-before-use.** Never write a call to an API from memory. Before referencing any symbol, confirm
+   it via grep/read against §10; if it moved or changed, update §10 first. New APIs I "expect" to exist →
+   verify with `DocumentationSearch` (esp. any SwiftUI/Liquid Glass/Observation surface), never assume.
+2. **Build gate.** `BuildProject` must return clean after each step; run `XcodeRefreshCodeIssuesInFile` on
+   every touched file before declaring the step done. No "should compile."
+3. **Regression gate.** After any change under `Sources/Domain/TradeEngine/`, the **existing EngineTests
+   run unchanged and stay green**. If a test needs editing to pass, that's a red flag — stop and explain,
+   don't "fix" the test to match new behavior.
+4. **Blast-radius control.** Each step edits only its declared files (§11). No opportunistic refactors, no
+   drive-by reformatting, no touching §8 magnifier or §9-ECB. If a step tempts an out-of-scope edit, note
+   it and defer.
+5. **Dark-by-default.** The feature is inert until wired: the engine query has no callers until step 2;
+   the UI is behind `layers.matches`. At every step the app with the layer OFF must behave exactly as it
+   does today — that's the guarantee nothing pre-existing regresses.
+6. **Determinism as a test, not a hope.** Anything feeding the unseen badge is covered by a
+   run-twice-identical assertion (step 1 + step 2 gates).
+7. **No silent truncation.** Any cap/prune the radar applies (e.g. the 300 backstop) must `log()` when it
+   bites — a silently-capped list reads as "complete" when it isn't.
+8. **Honest reporting.** Compile-verified ≠ runtime-verified. Each step states exactly what was checked
+   (built / unit-tested / seen light+dark on sim) and what wasn't. No claiming a visual/behavioral result
+   that hasn't been observed running.
+9. **One step, one pause.** Implement a step, pass its Gate, STOP for review before the next — matching the
+   PARITY workflow. No batching steps.
+10. **Spec is the contract.** If implementation forces a deviation from this doc, update the doc first and
+    surface the change; the doc never silently diverges from the code.

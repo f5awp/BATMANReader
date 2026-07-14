@@ -19,25 +19,26 @@ enum DayFmt {
     }
 }
 
+extension MessagingStore {
+    /// Maps a trade's status to a (label, color) for `DXStatusBadge`. Kept here (not in the design-kit
+    /// file) so re-importing `DXMosaicIntegration.swift` can't drop it. `.message` isn't a decision state.
+    static func dxBadge(_ s: TradeRequestStatus) -> (String, Color) {
+        switch s {
+        case .accepted:             return ("Accepted", AppColor.success)
+        case .pending:              return ("Pending",  AppColor.pending)
+        case .countered:            return ("Replied",  AppColor.primary)
+        case .declined, .cancelled: return ("Declined", AppColor.danger)
+        case .message:              return ("", AppColor.neutral)
+        }
+    }
+}
+
 struct StatusBadge: View {
     let status: TradeRequestStatus
     var body: some View {
-        Text(status.label)
-            .font(.caption2.bold())
-            .padding(.horizontal, 7).padding(.vertical, 3)
-            .background(color.opacity(0.18))
-            .foregroundStyle(color)
-            .clipShape(Capsule())
-    }
-    private var color: Color {
-        switch status {
-        case .pending:   return AppColor.pending
-        case .accepted:  return AppColor.success
-        case .declined:  return AppColor.danger
-        case .countered: return AppColor.primary
-        case .cancelled: return AppColor.neutral
-        case .message:   return .secondary
-        }
+        // Mosaic glazed badge (one place → every Inbox / Trade-Status / thread call site).
+        let (text, color) = MessagingStore.dxBadge(status)
+        DXStatusBadge(text: text.isEmpty ? status.label : text, color: color)
     }
 }
 
@@ -197,6 +198,7 @@ struct InboxView: View {
     /// neither sender nor recipient (a qual-swap bridge blast) always lands in Misc.
     private func tabIndex(for r: TradeRequest) -> Int {
         if r.isECB { return 2 }
+        if r.qualSwap != nil { return 3 }   // qual swaps (taker, giver, AND bridge) all file under Misc/Other
         guard r.fromID == myID || r.toID == myID else { return 3 }   // bridge / not a core party
         switch r.inboxOrigin {
         case .intents: return 0
@@ -210,19 +212,19 @@ struct InboxView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                Picker("", selection: $filter) {
-                    Text("Intents").tag(0)
-                    Text("Search").tag(1)
-                    Text("ECB (\(ecbRequests.count))").tag(2)
-                    Text("Misc").tag(3)
-                }
-                .pickerStyle(.segmented).padding()
+                DXSegmented(selection: $filter, options: [
+                    .init(0, "Intents"), .init(1, "Search"),
+                    .init(2, "ECB (\(ecbRequests.count))"), .init(3, "Misc"),
+                ], color: { v in [0: AppColor.heat, 1: AppColor.primary, 2: AppColor.success, 3: AppColor.special][v] })
+                .padding()
+
+                DXPaletteStripe(height: 4).padding(.horizontal)
 
                 if filter == 2 { ecbTab } else { requestList }
             }
             .navigationTitle("Trade Inbox")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+            .toolbar { ToolbarItem(placement: .confirmationAction) { DXCloseButton { dismiss() } } }
             .task { await store.refresh(); await TradeProfileStore.shared.refreshOthers(); await ecb.syncOnLaunch() }   // load peers so status renders (A7/B8 / audit #7) + ECB confirmations
             .refreshable { await store.refresh(); await TradeProfileStore.shared.refreshOthers(); await ecb.syncOnLaunch() }
         }
@@ -507,7 +509,7 @@ struct RequestRow: View {
         let otherName = mine ? request.toName : request.fromName
         let otherID   = mine ? request.toID : request.fromID
         return HStack(alignment: .top, spacing: 12) {
-            Avatar(name: otherName, id: otherID, size: 40)
+            DXSeatTile(color: TradeColors.color(forParticipant: otherID, myID: myID, orderedPeers: [otherID]), size: 40)
             VStack(alignment: .leading, spacing: 3) {
                 HStack(alignment: .top) {
                     NameWithStatus(id: otherID, name: otherName)
@@ -562,6 +564,7 @@ struct ThreadView: View {
     @State private var replyNote = ""
     @State private var chatDraft = ""
     @State private var ecbSelectedDays: Set<String> = []
+    @State private var acceptDays: Set<String> = []   // D7: which offered days I'll accept (partial accept)
     @State private var staleDays: Set<String> = []
     @State private var otherProfile: TradeProfile?
     @State private var editingMessage: TradeResponse?
@@ -619,6 +622,63 @@ struct ThreadView: View {
         }
         return r
     }
+    // D7: all day-IDs in the offer (both sides) — the pool you can partially accept.
+    private var allTradeDays: Set<String> { Set(request.giveDayIDs + request.takeDayIDs) }
+    private var sortedTradeDays: [String] { allTradeDays.sorted() }
+
+    /// Reskin helper: a List section rendered as ONE app-style card (`.dxCard()`) on a clear row — so the
+    /// detail reads as the app's cards rather than a grouped iOS Form. (D7-SKIN.)
+    @ViewBuilder private func cardSection<Content: View>(_ header: String? = nil, @ViewBuilder _ content: () -> Content) -> some View {
+        Section {
+            VStack(alignment: .leading, spacing: 12) {
+                if let header { Text(header).font(.subheadline.weight(.semibold)) }
+                content()
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .dxCard()
+            .listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
+            .listRowBackground(Color.clear)
+            .listRowSeparator(.hidden)
+        }
+    }
+
+    /// The incoming-pending action card: pick days (partial accept), note, Accept/Counter/Decline.
+    @ViewBuilder private var respondCard: some View {
+        if allTradeDays.count > 1 {
+            Text("Days to accept").font(.subheadline.weight(.semibold))
+            ForEach(sortedTradeDays, id: \.self) { d in
+                Button {
+                    if acceptDays.contains(d) { acceptDays.remove(d) } else { acceptDays.insert(d) }
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: acceptDays.contains(d) ? "checkmark.circle.fill" : "circle")
+                            .foregroundStyle(acceptDays.contains(d) ? AppColor.success : .secondary)
+                        Text(DayFmt.nice(d)).foregroundStyle(.primary)
+                        Spacer()
+                        Text(request.giveDayIDs.contains(d) ? "you get" : "you give")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                .buttonStyle(.plain)
+            }
+            Divider()
+        }
+        TextField("Optional note…", text: $replyNote, axis: .vertical).textFieldStyle(.roundedBorder)
+        let acceptingAll = acceptDays == allTradeDays || allTradeDays.count <= 1
+        Button { acceptingAll ? respond(.accepted) : counter(acceptDays) } label: {
+            Label(acceptingAll ? "Accept" : "Counter with \(acceptDays.count) day\(acceptDays.count == 1 ? "" : "s")",
+                  systemImage: acceptingAll ? "checkmark.circle.fill" : "arrow.uturn.left.circle")
+                .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.borderedProminent).tint(AppColor.success)
+        .disabled(!staleDays.isEmpty || acceptDays.isEmpty)
+        HStack {
+            Button { respond(.countered) } label: { Label("Message", systemImage: "bubble.left").frame(maxWidth: .infinity) }
+                .buttonStyle(.bordered)
+            Button(role: .destructive) { respond(.declined) } label: { Label("Decline", systemImage: "xmark.circle").frame(maxWidth: .infinity) }
+                .buttonStyle(.bordered).tint(AppColor.danger)
+        }
+    }
 
     var body: some View {
         List {
@@ -633,9 +693,8 @@ struct ThreadView: View {
             // The trade as a card — same language as the feed's package card.
             Section {
                 tradeCard
-                    .padding(DS.cardPadding)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(.bar, in: RoundedRectangle(cornerRadius: DS.cardRadius))
+                    .dxCard()
                     .listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
                     .listRowBackground(Color.clear)
                     .contentShape(Rectangle())
@@ -643,23 +702,24 @@ struct ThreadView: View {
             }
             .sheet(isPresented: $showCalendars) {
                 if let chain = request.chain, !chain.isEmpty {
-                    PackageDetailView(package: PackageDetailView.fromChain(chain), onPropose: {}, onExecute: {}, readOnly: true)
+                    PackageDetailView(package: PackageDetailView.fromChain(chain), onPropose: { _ in }, onExecute: {}, readOnly: true)
                         .magnifiable()
                 }
             }
 
             qualSwapSection
 
-            Section {
+            cardSection {
                 Button { openDispatchDraft(subject: "", body: "") } label: {
-                    Label("New email to dispatch DL", systemImage: "envelope")
+                    Label("New email to dispatch DL", systemImage: "envelope").frame(maxWidth: .infinity, alignment: .leading)
                 }
-            } footer: {
-                Text("Opens a blank new message in Outlook addressed to \(SettingsManager.shared.tradeEmailDL).")
+                .buttonStyle(.plain).foregroundStyle(AppColor.primary)
+                Text("Opens a blank message in Outlook to \(SettingsManager.shared.tradeEmailDL).")
+                    .font(.caption).foregroundStyle(.secondary)
             }
 
             if let p = otherProfile, (p.phone != nil || p.bestEmail != nil) {
-                Section("Contact \(isIncoming ? request.fromName : request.toName)") {
+                cardSection("Contact \(isIncoming ? request.fromName : request.toName)") {
                     ContactButtons(profile: p)
                 }
             }
@@ -670,31 +730,26 @@ struct ThreadView: View {
                          note: request.note)
                 ForEach(store.responses(for: request.id).sorted { $0.createdAt < $1.createdAt }) { r in
                     if r.statusValue == .message {
-                        // Free-form chat — render as a message, not an audit event.
-                        VStack(alignment: .leading, spacing: 4) {
-                            SlackMessageRow(name: r.responderID == myID ? "You" : r.responderName,
-                                            authorID: r.responderID, timestamp: r.createdAt,
-                                            message: r.isDeleted ? "[Deleted]" : r.note,
-                                            meta: r.editedAt != nil ? ("edited", .secondary) : nil,
-                                            avatarSize: 26) {
-                                if !r.isDeleted && r.responderID == myID {
-                                    Button { editingMessage = r; editMsgDraft = r.note } label: {
-                                        Image(systemName: "pencil").font(.caption2)
-                                    }.buttonStyle(.borderless)
-                                    Button(role: .destructive) { Task { await store.softDeleteMessage(r) } } label: {
-                                        Image(systemName: "trash").font(.caption2)
-                                    }.buttonStyle(.borderless)
+                        // Free-form chat → iMessage-style bubble (§4): mine trailing/blue, theirs leading.
+                        let mine = r.responderID == myID
+                        VStack(alignment: mine ? .trailing : .leading, spacing: 4) {
+                            DXChatBubble(text: r.isDeleted ? "[Deleted]" : r.note, mine: mine)
+                                .contextMenu {
+                                    if !r.isDeleted && mine {
+                                        Button { editingMessage = r; editMsgDraft = r.note } label: { Label("Edit", systemImage: "pencil") }
+                                        Button(role: .destructive) { Task { await store.softDeleteMessage(r) } } label: { Label("Delete", systemImage: "trash") }
+                                    }
                                 }
-                            }
                             if !r.isDeleted, let b64 = r.imageBase64, let ui = PostImage.decode(b64) {
-                                ExpandableImage(image: ui, maxHeight: 180)   // B4-11: tap to zoom
-                                    .padding(.leading, 34)
+                                ExpandableImage(image: ui, maxHeight: 180).frame(maxWidth: 240)   // B4-11: tap to zoom
                             }
                             if !r.isDeleted {
                                 ReactionChips(reactions: r.reactions ?? []) { e in Task { await store.react(to: r, emoji: e) } }
-                                    .padding(.leading, 34)
                             }
+                            if r.editedAt != nil { Text("edited").font(.caption2).foregroundStyle(.secondary) }
                         }
+                        .frame(maxWidth: .infinity, alignment: mine ? .trailing : .leading)
+                        .listRowSeparator(.hidden)
                     } else {
                         auditRow(icon: r.statusValue.icon, tint: r.statusValue.tint,
                                  who: r.responderID == myID ? "You" : r.responderName,
@@ -704,7 +759,7 @@ struct ThreadView: View {
             }
 
             if isIncoming && status != .pending {
-                Section {
+                cardSection {
                     Label("You replied: \(status.label)", systemImage: "checkmark.seal.fill")
                         .font(.subheadline.bold())
                         .foregroundStyle(status == .declined ? AppColor.danger : AppColor.success)
@@ -761,22 +816,18 @@ struct ThreadView: View {
                     Button(role: .destructive) { respond(.declined) } label: { Label("Decline all", systemImage: "xmark.circle") }
                 }
             } else if isIncoming && status == .pending {
-                Section("Respond") {
-                    TextField("Optional note…", text: $replyNote, axis: .vertical)
-                    Button { respond(.accepted) } label: { Label("Accept", systemImage: "checkmark.circle.fill") }
-                        .tint(AppColor.success)
-                        .disabled(!staleDays.isEmpty)   // can't accept an invalid swap
-                    Button { respond(.countered) } label: { Label("Counter", systemImage: "arrow.uturn.left.circle") }
-                    Button(role: .destructive) { respond(.declined) } label: { Label("Decline", systemImage: "xmark.circle") }
-                }
+                cardSection { respondCard }
             } else if !isIncoming && status == .pending {
-                Section {
+                cardSection {
                     Button(role: .destructive) {
                         Task { await store.cancelRequest(request.id); dismiss() }
-                    } label: { Label("Cancel request", systemImage: "trash") }
+                    } label: { Label("Cancel request", systemImage: "trash").frame(maxWidth: .infinity) }
+                        .buttonStyle(.bordered).tint(AppColor.danger)
                 }
             }
         }
+        .scrollContentBackground(.hidden)   // drop the grouped-grey chrome; cards float on the app background
+        .background(Color(.systemGroupedBackground))
         .navigationTitle("Swap with \(isIncoming ? request.fromName : request.toName)")
         .navigationBarTitleDisplayMode(.inline)
         .alert("Edit message", isPresented: Binding(get: { editingMessage != nil }, set: { if !$0 { editingMessage = nil } })) {
@@ -818,6 +869,7 @@ struct ThreadView: View {
             }
         }
         .task {
+            if acceptDays.isEmpty { acceptDays = allTradeDays }   // D7: default = accept every offered day
             staleDays = await TradeMatcher.staleDays(
                 fromID: request.fromID, toID: request.toID,
                 giveDayIDs: request.giveDayIDs, takeDayIDs: request.takeDayIDs)
@@ -988,6 +1040,16 @@ struct ThreadView: View {
             // Stay on the thread so your reply (and its status) is visible.
         }
     }
+
+    /// D7 partial accept — counter back to the sender with only the selected days.
+    private func counter(_ days: Set<String>) {
+        Task {
+            await store.counterWithSubset(request, keepDays: days)
+            replyNote = ""
+            WidgetData.update()
+            dismiss()   // the trimmed counter is now in the sender's inbox
+        }
+    }
 }
 
 // MARK: - Broadcast Channel
@@ -1037,18 +1099,11 @@ struct ChannelView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                Picker("Channel", selection: $channel) {
-                    Text("# general").tag("general")
-                    Text("# trades").tag("trades")
-                    Text("# feedback").tag("feedback")
-                }
-                .pickerStyle(.segmented).padding(.horizontal).padding(.top, 6)
-                // Slim one-line description (the "# name" is already in the picker above — no redundant header).
-                Text(channelMeta.subtitle)
-                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 16).padding(.top, 3).padding(.bottom, 7)
-                    .onAppear { store.markBroadcastsSeen() }   // clears the unread badge (A2)
+                DXSegmented(selection: $channel, options: [
+                    .init("general", "# general"), .init("trades", "# trades"), .init("feedback", "# feedback"),
+                ], color: { v in ["general": AppColor.primary, "trades": AppColor.special, "feedback": AppColor.pending][v] })
+                .padding(.horizontal).padding(.top, 6).padding(.bottom, 7)
+                .onAppear { store.markBroadcastsSeen() }   // clears the unread badge (A2)
                 Divider()
                 if posts.isEmpty {
                     ContentUnavailableView(channelMeta.emptyTitle, systemImage: channelMeta.icon,
@@ -1089,7 +1144,7 @@ struct ChannelView: View {
                     }
                     .padding(.horizontal, 12).padding(.top, 6)
                     SlackComposer(placeholder: "Message #\(channel)", text: $draft,
-                                  mentionPeople: mentionPeople) {
+                                  mentionPeople: mentionPeople, sendTint: AppColor.heat) {   // §5: channel accent
                         let text = draft; draft = ""
                         let img = pendingImage; pendingImage = nil; pickerItem = nil
                         Task {
@@ -1108,7 +1163,7 @@ struct ChannelView: View {
             }
             .navigationTitle(channelMeta.title)
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+            .toolbar { ToolbarItem(placement: .confirmationAction) { DXCloseButton { dismiss() } } }
             .task { await store.refresh(); await TradeProfileStore.shared.refreshOthers() }   // E2: load peers so statuses render
             .sheet(item: $editingPost) { post in EditPostSheet(post: post) }
             .alert("Edit reply", isPresented: Binding(get: { editingReply != nil }, set: { if !$0 { editingReply = nil } })) {
@@ -1365,11 +1420,8 @@ struct BroadcastReplyComposer: View {
                 .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
                 .lineLimit(1...4)
             HStack(spacing: 12) {
-                Picker("", selection: $isPublic) {
-                    Label("Public", systemImage: "globe").tag(true)
-                    Label("Private", systemImage: "lock.fill").tag(false)
-                }
-                .pickerStyle(.segmented).fixedSize()
+                DXSegmented(selection: $isPublic, options: [.init(true, "Public"), .init(false, "Private")])
+                    .fixedSize()
                 FormatBar(text: $draft)
                 Button { showPicker = true } label: {
                     Image(systemName: "photo").font(.subheadline).foregroundStyle(.secondary)
@@ -1382,7 +1434,7 @@ struct BroadcastReplyComposer: View {
                     onSend(t, isPublic, img.flatMap { PostImage.encode($0) })
                 } label: {
                     Image(systemName: "paperplane.circle.fill").font(.title2)
-                        .foregroundStyle(canSend ? Color.accentColor : .secondary)
+                        .foregroundStyle(canSend ? AppColor.heat : .secondary)   // §5 channel accent
                 }
                 .buttonStyle(.plain)
                 .disabled(!canSend)
@@ -1440,79 +1492,6 @@ struct EditPostSheet: View {
     }
 }
 
-// MARK: - Side dock (floating, on every page)
-
-struct MessagingDock: View {
-    @Binding var showInbox: Bool
-    @Binding var showChannel: Bool
-    @Binding var showTradeSettings: Bool
-    @Binding var showAppSettings: Bool
-    @Binding var showDashboard: Bool         // trade-status breakdown (now its own top-header button)
-    @Binding var showECB: Bool               // ECB Accounting ledger (⋯ menu)
-    private var store = MessagingStore.shared
-    private var history = TradeHistoryStore.shared
-
-    init(showInbox: Binding<Bool>, showChannel: Binding<Bool>,
-         showTradeSettings: Binding<Bool>, showAppSettings: Binding<Bool>,
-         showDashboard: Binding<Bool>, showECB: Binding<Bool>) {
-        _showInbox = showInbox; _showChannel = showChannel
-        _showTradeSettings = showTradeSettings; _showAppSettings = showAppSettings
-        _showDashboard = showDashboard; _showECB = showECB
-    }
-
-    /// Trade-status "something new" badge: in-flight trades needing your attention — agreed-in-app
-    /// (accepted, awaiting you to mark official) + still-negotiating (pending). Live (@Observable stores).
-    private var tradeStatusBadge: Int {
-        let c = DashboardCounts.from(requests: store.requests, responses: store.responses,
-                                     unread: store.pendingIncoming.count, pendingLedger: history.pendingCount)
-        return c.accepted + c.pending
-    }
-
-    var body: some View {
-        // Four controls: Inbox · Channel · Trade status · ⋯ (settings). Each primary destination carries its
-        // own "needs you" badge; the ⋯ overflow is settings only now.
-        HStack(spacing: 8) {
-            iconButton("tray.full.fill", label: "Inbox",
-                       badge: store.pendingIncoming.count + ECBAccountingStore.shared.pendingConfirmations.count,
-                       badgeColor: AppColor.danger) { showInbox = true }
-            iconButton("megaphone.fill", label: "Channel",
-                       badge: store.unreadBroadcastCount, badgeColor: AppColor.primary) { showChannel = true }
-            iconButton("checklist", label: "Trade status",
-                       badge: tradeStatusBadge, badgeColor: AppColor.pending) { showDashboard = true }
-            Menu {
-                Button { showECB = true } label: { Label("ECB Accounting", systemImage: "banknote") }
-                Divider()
-                Button { showTradeSettings = true } label: { Label("Trade Settings", systemImage: "arrow.left.arrow.right") }
-                Button { showAppSettings = true } label: { Label("App Settings", systemImage: "gearshape") }
-            } label: { iconLabel("ellipsis") }
-            .buttonStyle(.plain)
-            .accessibilityLabel("More")
-        }
-    }
-
-    /// One uniform rounded-rect icon button (the app's single control shape), with an optional count badge.
-    private func iconButton(_ icon: String, label: String, badge: Int = 0,
-                            badgeColor: Color = .clear, action: @escaping () -> Void) -> some View {
-        Button(action: action) { iconLabel(icon, badge: badge, badgeColor: badgeColor) }
-            .buttonStyle(.plain)
-            .accessibilityLabel(badge > 0 ? "\(label), \(badge)" : label)
-    }
-
-    private func iconLabel(_ icon: String, badge: Int = 0, badgeColor: Color = .clear) -> some View {
-        Image(systemName: icon)
-            .font(.system(size: 15, weight: .semibold))
-            .frame(width: DS.controlSize, height: DS.controlSize)
-            .background(Color(.tertiarySystemFill), in: RoundedRectangle(cornerRadius: DS.controlRadius, style: .continuous))
-            .foregroundStyle(.primary)
-            .overlay(alignment: .topTrailing) {
-                if badge > 0 {
-                    Text("\(min(badge, 99))")
-                        .font(.system(size: 10, weight: .bold)).foregroundStyle(.white)
-                        .padding(.horizontal, 4).padding(.vertical, 1)
-                        .background(badgeColor, in: Capsule())
-                        .overlay(Capsule().stroke(Color(.systemBackground), lineWidth: 1.5))
-                        .offset(x: 5, y: -5)
-                }
-            }
-    }
-}
+// MARK: - Side dock
+// `MessagingDock` now lives in `DXMessagingDock.swift` (glazed `.dxControlTile()` buttons).
+// The former flat-tile version was removed here to avoid a duplicate declaration.
