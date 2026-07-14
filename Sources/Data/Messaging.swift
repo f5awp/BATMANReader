@@ -193,9 +193,15 @@ struct TradeRequest: Sendable, Codable, Identifiable, Hashable {
     var qualSwap: QualSwapLegData? = nil // embedded qual-swap leg (Q3/Q5/Q6). Optional ⇒ old records decode.
     var perfectMatch: Bool? = nil        // computed sender-side: hits the recipient's own intents (U6 push).
     var origin: TradeOrigin? = nil       // inbox filing (intents/search/ecb/manual). Optional ⇒ old records → Misc.
+    var loopID: String? = nil            // shared across the N per-participant requests of ONE circular-loop send;
+                                         // nil for a plain 2-way/single request. Set post-construction (frozen init).
 
     /// Where this request files in the inbox. ECB always wins; otherwise the stored origin, else Misc.
     var inboxOrigin: TradeOrigin { isECB ? .ecb : (origin ?? .manual) }
+
+    /// Grouping key: a circular loop's N per-participant requests share one `loopID` and collapse to a
+    /// single inbox card / merged thread; a plain (2-way / single) request groups on its own id.
+    var groupKey: String { loopID ?? id }
 
     // EXPLICIT init — REPLACES the synthesized memberwise init and FREEZES the construction
     // signature, so adding a NEW optional field above won't churn the init symbol (the
@@ -827,7 +833,7 @@ final class MessagingStore {
                      take: [String], give: [String], daysValid: Int = 21,
                      ecb: Int? = nil, ecbValue: Double? = nil, offerID: String? = nil,
                      chain: [TradeLeg]? = nil, qualSwap: QualSwapLegData? = nil,
-                     origin: TradeOrigin = .manual) async {
+                     origin: TradeOrigin = .manual, loopID: String? = nil) async {
         let now = Date()
         // Sender-side "Perfect Match": does this hit the recipient's published intents? (U6 push)
         let recipient = TradeProfileStore.shared.profile(forWorker: toID)
@@ -851,6 +857,7 @@ final class MessagingStore {
             ecb: ecb, ecbValue: ecbValue, offerID: offerID, chain: chain, qualSwap: qualSwap,
             perfectMatch: perfect ? true : nil)
         req.origin = isECB ? .ecb : origin   // ECB always files under ECB; else the caller's origin
+        req.loopID = loopID                   // set for circular-loop legs so the N requests group as one
         await service.sendRequest(req)
         MetricsStore.shared.log(.proposed)   // H1 #18 global tally
         requests = ([req] + requests.filter { $0.id != req.id })

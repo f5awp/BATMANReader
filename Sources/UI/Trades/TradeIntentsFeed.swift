@@ -1649,10 +1649,11 @@ struct ExecutionConfirmationView: View {
             TradeLeg(fromID: $0.fromID, fromName: participantName($0.fromID),
                      toID: $0.toID, toName: participantName($0.toID), dayID: $0.dayID, desk: $0.desk)
         }
+        let loopID = UUID().uuidString   // one shared id: the N per-participant requests group into one loop card/thread
         for pid in route.participants where pid != myID {
             await messaging.sendRequest(to: pid, toName: participantName(pid),
                                         note: "",   // #7: the card shows the trade visually; no redundant text
-                                        take: [], give: [], chain: legs, origin: origin)
+                                        take: [], give: [], chain: legs, origin: origin, loopID: loopID)
         }
         sending = false
         sent = true

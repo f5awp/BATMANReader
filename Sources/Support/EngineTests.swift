@@ -531,6 +531,27 @@ enum TradeEngineTests {
                   "OPS-QUAL: IROPS ('I') counts as a coordinator qual")
         }
 
+        // MARK: INBOX-CODEC — loopID + origin survive the CloudKit JSON payload round-trip (TRADE-INBOX Stage 1).
+        // The whole TradeRequest is JSON-encoded into the `payload` field, so any Codable stored property rides
+        // along. This proves the "3-way landed in Misc" bug was NOT a codec drop (it was a legacy nil-origin record).
+        do {
+            func mkReq(_ id: String) -> TradeRequest {
+                TradeRequest(id: id, fromID: "a", fromName: "A", toID: "b", toName: "B", note: "",
+                             takeDayIDs: [], giveDayIDs: [], createdAt: Date(timeIntervalSince1970: 1),
+                             expiresAt: Date(timeIntervalSince1970: 100))
+            }
+            var r = mkReq("req1"); r.origin = .search; r.loopID = "loop-xyz"
+            if let data = try? JSONEncoder().encode(r),
+               let back = try? JSONDecoder().decode(TradeRequest.self, from: data) {
+                check(back.origin == .search, "INBOX-CODEC: origin survives the JSON payload round-trip")
+                check(back.loopID == "loop-xyz", "INBOX-CODEC: loopID survives the JSON payload round-trip")
+                check(back.groupKey == "loop-xyz", "INBOX-CODEC: groupKey == loopID when set")
+            } else {
+                check(false, "INBOX-CODEC: TradeRequest failed to round-trip through JSON")
+            }
+            check(mkReq("solo").groupKey == "solo", "INBOX-CODEC: groupKey falls back to id when loopID is nil")
+        }
+
         // MARK: B6-BLACKOUT — a blacked-out weekday blocks a pickup (arbitrary days, not just weekends).
         do {
             let prof = TradeProfile(workerID: "z", displayName: "Z", openness: "all",
