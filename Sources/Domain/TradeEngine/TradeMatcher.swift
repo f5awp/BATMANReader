@@ -86,7 +86,8 @@ nonisolated enum DeskRules {
         }
         if d.hasPrefix("RC") { return nil }                 // route check
         if d.hasPrefix("A")  { return "A" }                 // ATC coordinator
-        if d.hasPrefix("C") || d.hasPrefix("I") { return "O" } // ops coordinator
+        if d.hasPrefix("I")  { return "I" }                 // IROPS — special ops-coordinator selection
+        if d.hasPrefix("C")  { return "O" }                 // ops coordinator
         if d.hasPrefix("R")  { return "R" }                 // regional coordinator
         if d.hasPrefix("S")  { return "S" }                 // chief dispatcher
         return nil                                          // OJT, TR, etc.
@@ -107,7 +108,7 @@ nonisolated enum DeskRules {
         case .european:    return quals.contains("E")
         case .latin:       return quals.contains("L")
         case .pacific:     return quals.contains("P")
-        case .coordinator: return quals.contains { ["A", "O", "R", "S"].contains($0) }
+        case .coordinator: return quals.contains { ["A", "O", "R", "S", "I"].contains($0) }
         }
     }
 
@@ -179,14 +180,16 @@ nonisolated enum TradeTiming {
     static let validStartHours: Set<Int> = [5, 13, 21]
     static func isTradeable(startHour: Int) -> Bool { validStartHours.contains(startHour) }
 
-    /// A training slot (e.g. "TRN" / "TRNG"), NOT a real dispatch desk. Someone permanently
-    /// in a training shift is not doing coverable dispatch work.
+    /// A training slot, NOT a real dispatch desk — never coverable dispatch work. Covers "TR"/"TRN"/
+    /// "TRNG" and **"OJT"** (on-the-job training): per the user, OJT is only ever a training assignment,
+    /// never a desk someone is actually working, so it's irrelevant for trading.
     static func isTrainingDesk(_ desk: String) -> Bool {
-        desk.uppercased().trimmingCharacters(in: .whitespaces).hasPrefix("TRN")
+        let d = desk.uppercased().trimmingCharacters(in: .whitespaces)
+        return d.hasPrefix("TR") || d.hasPrefix("OJT")
     }
 
     /// A genuine, tradeable dispatch shift: a regular start hour (0500/1300/2100) on a real
-    /// dispatch desk — never a training (TRN) slot or an irregular start time. "Not a dispatch
+    /// dispatch desk — never a training (TR/TRN/OJT) slot or an irregular start time. "Not a dispatch
     /// shift" (e.g. a permanent trainee like a TRN-only roster) is never coverable/tradeable.
     static func isDispatchShift(desk: String, startHour: Int, isOff: Bool = false) -> Bool {
         !isOff && isTradeable(startHour: startHour) && !isTrainingDesk(desk)

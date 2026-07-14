@@ -798,12 +798,36 @@ struct ECBTradesView: View {
                 behaviorFiltered.append(c)
             }
         }
-        // People who actively marked WANT-TO-WORK (published availability) on these
-        // off days are looking for a shift — surface them first (🔥).
+        // Sort tiers (highest first). Want-to-work OVERRIDES bookend on/off and goes to the top; within
+        // every tier, people whose ADJACENT scheduled shift is the SAME type (A/P/M) as the give-away sort
+        // first ("give a PM → adjacent-PM folks first"). Same-shift is the tiebreaker for each tier:
+        //   2 = want-to-work · 1 = bookend · 0 = other  →  same-shift-type  →  bookendCount → matchCount → name
+        // Adjacency = a working (non-off) neighbor day (±1) of a covered give-day whose shift type matches.
+        var adjReq: [(day: String, type: ShiftAvailabilityType)] = []
+        for s in shifts {
+            let t = ShiftAvailabilityType.infer(fromStartHour: s.startHour)
+            let d = cal.startOfDay(for: s.date)
+            for delta in [-1, 1] {
+                guard let nd = cal.date(byAdding: .day, value: delta, to: d) else { continue }
+                adjReq.append((TradeMatcher.isoDay(nd), t))
+            }
+        }
+        func hasAdjacentSameType(_ c: PlanCandidate) -> Bool {
+            let map = maps[c.workerID] ?? [:]
+            return adjReq.contains { req in
+                guard let e = map[req.day], !e.isOff else { return false }
+                return ShiftAvailabilityType.infer(fromStartHour: e.startHour) == req.type
+            }
+        }
+        let wtw      = Dictionary(uniqueKeysWithValues: behaviorFiltered.map { ($0.workerID, wantsToWork($0)) })
+        let sameType = Dictionary(uniqueKeysWithValues: behaviorFiltered.map { ($0.workerID, hasAdjacentSameType($0)) })
+        func tier(_ c: PlanCandidate) -> Int { (wtw[c.workerID] ?? false) ? 2 : (c.bookendCount > 0 ? 1 : 0) }
         candidates = behaviorFiltered.sorted {
-            if $0.bookendCount != $1.bookendCount { return $0.bookendCount > $1.bookendCount }  // #6: bookends first
-            let aw = wantsToWork($0), bw = wantsToWork($1)
-            if aw != bw { return aw }
+            let ta = tier($0), tb = tier($1)
+            if ta != tb { return ta > tb }                                                     // WTW > bookend > other
+            let sa = sameType[$0.workerID] ?? false, sb = sameType[$1.workerID] ?? false
+            if sa != sb { return sa }                                                          // same shift type first
+            if $0.bookendCount != $1.bookendCount { return $0.bookendCount > $1.bookendCount }
             if $0.matchCount != $1.matchCount { return $0.matchCount > $1.matchCount }
             return $0.name < $1.name
         }

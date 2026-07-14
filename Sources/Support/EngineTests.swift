@@ -503,6 +503,34 @@ enum TradeEngineTests {
         check(!DeskRules.isQualified(quals: ["D", "E"], forRegion: .coordinator), "B6-QUAL: no coordinator qual → not qualified")
         check(DeskRules.isQualified(quals: ["D", "R"], forRegion: .coordinator), "B6-QUAL: a coordinator qual (R) → qualified")
 
+        // MARK: OPS-QUAL — master data spells the Ops-Coordinator qual "Ops"; the engine gates on "O".
+        // Canonicalizing at parse is what makes C-desk (Ops) shifts tradeable at all (the OC05 bug).
+        do {
+            // The exact master identity tails from the fixture.
+            check(ScheduleParser.canonicalizeQuals(["D", "E", "J", "L", "Ops"]) == ["D", "E", "J", "L", "O"],
+                  "OPS-QUAL: 'Ops' → 'O'; D/E/J/L kept")
+            check(ScheduleParser.canonicalizeQuals(["A", "D", "I", "MAXPAY", "Ops"]) == ["A", "D", "I", "O"],
+                  "OPS-QUAL: pay-status 'MAXPAY' dropped; 'I' (IROPS) + 'Ops'→'O' kept")
+            check(ScheduleParser.canonicalizeQuals(["NO", "QUALIFICATIONS"]).isEmpty,
+                  "OPS-QUAL: 'NO QUALIFICATIONS' legend → no quals")
+            check(ScheduleParser.canonicalizeQuals(["D", "Z", "MAX", "MAXX"]) == ["D"],
+                  "OPS-QUAL: retired 'Z' + pay 'MAX'/'MAXX' dropped, 'D' kept")
+            // Desk gates: C-desk needs O, I-desk (IROPS) needs I — a canonicalized Ops holder covers C, IROPS covers I.
+            check(DeskRules.requiredQual(forDesk: "C6") == "O", "OPS-QUAL: C-desk requires 'O'")
+            check(DeskRules.requiredQual(forDesk: "I1") == "I", "OPS-QUAL: I-desk (I1) requires 'I' (IROPS)")
+            check(DeskRules.requiredQual(forDesk: "I2") == "I", "OPS-QUAL: I-desk (I2) requires 'I' (IROPS)")
+            // A C-desk at 0500 IS a real dispatch shift (this is the OC05 case — timing was never the blocker).
+            check(TradeTiming.isDispatchShift(desk: "C6", startHour: 5), "OPS-QUAL: C6 @ 0500 is a tradeable dispatch shift")
+            // OJT / TR are training assignments, never coverable dispatch work → never tradeable.
+            check(!TradeTiming.isDispatchShift(desk: "OJT", startHour: 5), "OPS-QUAL: OJT is training — not a tradeable shift")
+            check(!TradeTiming.isDispatchShift(desk: "TR", startHour: 13), "OPS-QUAL: TR is training — not a tradeable shift")
+            let mitch = ScheduleParser.canonicalizeQuals(["D", "E", "J", "L", "Ops"])
+            check(DeskRules.qualified(quals: mitch, forDesk: "C6"),
+                  "OPS-QUAL: an Ops (→O) dispatcher is now qualified for a C-desk — OC05 is tradeable")
+            check(DeskRules.isQualified(quals: ["D", "I"], forRegion: .coordinator),
+                  "OPS-QUAL: IROPS ('I') counts as a coordinator qual")
+        }
+
         // MARK: B6-BLACKOUT — a blacked-out weekday blocks a pickup (arbitrary days, not just weekends).
         do {
             let prof = TradeProfile(workerID: "z", displayName: "Z", openness: "all",

@@ -342,17 +342,41 @@ final class ScheduleParser {
 
     /// Extracts `(id, name, quals)` from a name cell like `Lee, Ervin  (292216) D, L`.
     /// Returns nil for header / annotation / blank cells (no parenthesised ID).
+    /// Canonicalizes the raw qualification tokens from the master schedule into the codes the trade
+    /// engine actually gates on. The master spells some quals out ("Ops") and mixes in pay-status and
+    /// legend noise; the engine's desk rules key on single letters. This is the ONE place quals are
+    /// cleaned, so both the roster and the user's own `cachedQuals` see canonical codes.
+    ///   • Ops → O            (Ops Coordinator; the desk rule requires "O")
+    ///   • I → I              (IROPS — a special Ops-Coordinator selection; its own qual/desk gate)
+    ///   • D/E/L/P/A/R/S kept (region + coordinator quals used verbatim by the desk rules)
+    ///   • J (OJT Trainer), F (training-complete marker) kept — valid quals, gate no desk
+    ///   • MAX/MAXPAY/MAXX (pay status), NO/QUALIFICATIONS ("NO QUALIFICATIONS" legend), Z (retired
+    ///     Flight Keys SME) dropped — not real trading quals
+    ///   • anything unrecognized is kept verbatim, so a future qual is never silently lost
+    static func canonicalizeQuals(_ raw: [String]) -> [String] {
+        let drop: Set<String> = ["MAX", "MAXPAY", "MAXX", "NO", "QUALIFICATIONS", "Z"]
+        var out: [String] = []
+        var seen = Set<String>()
+        for token in raw {
+            let t = token.uppercased()
+            if drop.contains(t) { continue }
+            let canonical = (t == "OPS") ? "O" : t
+            if seen.insert(canonical).inserted { out.append(canonical) }
+        }
+        return out
+    }
+
     private static func workerIdentity(_ cell: String) -> (id: String, name: String, quals: [String])? {
         guard let open = cell.firstIndex(of: "("),
               let close = cell[cell.index(after: open)...].firstIndex(of: ")") else { return nil }
         let idStr = String(cell[cell.index(after: open)..<close])
         guard idStr.count >= 4, idStr.allSatisfy(\.isNumber) else { return nil }
         let name  = String(cell[..<open]).trimmingCharacters(in: .whitespaces)
-        let quals = String(cell[cell.index(after: close)...])
+        let rawQuals = String(cell[cell.index(after: close)...])
             .split { $0 == "," || $0 == " " }
             .map(String.init)
             .filter { !$0.isEmpty }
-        return (idStr, name, quals)
+        return (idStr, name, canonicalizeQuals(rawQuals))
     }
 
     /// Finds the year (nearest to `now`) in which `month/day` falls on `weekday`.
