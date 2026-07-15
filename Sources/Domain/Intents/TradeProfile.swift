@@ -113,6 +113,10 @@ struct TradeProfile: Sendable, Hashable, Codable, Identifiable {
     // Days the user flagged as CARRYOVER VACATION (not coded in the master, e.g. `L,S`). Published so
     // EVERY peer's matcher treats these as vacation/OFF — the person isn't working/available. Set post-init. (#4)
     var carryoverVacationDayIDs: Set<String>? = nil
+    // Match Radar: per-day trade kind (Day/ECB/Both) for want-to-trade days, and per-day acceptance scope
+    // for want-to-work / day-for-day returns. Published so peers' match resolution respects both sides. Set post-init.
+    var tradeKindByDay: [String: TradeKind]? = nil
+    var acceptScopeByDay: [String: AcceptScope]? = nil
     // Cross-device-only PREFERENCES (never used by peers' matchers) — carried on the profile purely so a
     // user's own devices converge. Set post-init; all optional so old records decode.
     var opennessOverrides: [OpennessOverride]? = nil   // date-range openness overrides
@@ -417,6 +421,10 @@ final class TradeProfileStore {
         p.reliefThrough = s.effectiveReliefThrough   // nil unless relief toggled ON + dated
         let carryover = DayIntentStore.shared.carryoverVacationDays   // #4: publish so peers see the vacation
         p.carryoverVacationDayIDs = carryover.isEmpty ? nil : carryover
+        let kinds = DayIntentStore.shared.tradeKindByDay              // Match Radar: publish trade kind + accept scope
+        p.tradeKindByDay = kinds.isEmpty ? nil : kinds
+        let scopes = DayIntentStore.shared.acceptScopeByDay
+        p.acceptScopeByDay = scopes.isEmpty ? nil : scopes
         // Cross-device-only prefs (carried so the user's own devices converge; peers ignore these).
         p.opennessOverrides    = s.opennessOverrides.isEmpty ? nil : s.opennessOverrides
         p.notificationLeadHours = s.notificationLeadHours

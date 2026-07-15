@@ -41,14 +41,17 @@ final class DayIntentStore {
         var wanted: [String: Set<ShiftAvailabilityType>]
         var manualOff: Set<String>
         var carryover: Set<String>
+        var tradeKind: [String: TradeKind]
+        var acceptScope: [String: AcceptScope]
         static let empty = Baseline(working: [:], off: [:], topologies: [:],
-                                    notes: [:], availability: [:], wanted: [:], manualOff: [], carryover: [])
+                                    notes: [:], availability: [:], wanted: [:], manualOff: [], carryover: [],
+                                    tradeKind: [:], acceptScope: [:])
     }
 
     private func captureBaseline() -> Baseline {
         Baseline(working: workingIntents, off: offIntents, topologies: topologies,
                  notes: notes, availability: offAvailability, wanted: offWanted, manualOff: manualOffDays,
-                 carryover: carryoverVacationDays)
+                 carryover: carryoverVacationDays, tradeKind: tradeKindByDay, acceptScope: acceptScopeByDay)
     }
 
     private func markDirty() { hasUnsavedChanges = true }
@@ -72,6 +75,8 @@ final class DayIntentStore {
         offWanted       = savedBaseline.wanted
         manualOffDays   = savedBaseline.manualOff
         carryoverVacationDays = savedBaseline.carryover
+        tradeKindByDay  = savedBaseline.tradeKind
+        acceptScopeByDay = savedBaseline.acceptScope
         hasUnsavedChanges = false
     }
 
@@ -120,6 +125,15 @@ final class DayIntentStore {
     /// into a vacation (OFF) day — locally AND published on the profile so peers stop matching you. (#4)
     private(set) var carryoverVacationDays: Set<String> {
         didSet { UserDefaults.standard.set(Array(carryoverVacationDays), forKey: Keys.carryover) }
+    }
+    /// Match Radar: per-day trade kind for a WANT-TO-TRADE day (Day / ECB / Both). Absent = `.both`.
+    private(set) var tradeKindByDay: [String: TradeKind] {
+        didSet { persist(tradeKindByDay, Keys.tradeKind) }
+    }
+    /// Match Radar: per-day acceptance scope (dates/range + quals + shift types) for a want-to-work
+    /// pickup OR a day-for-day return. Absent/open = defer to global trade prefs.
+    private(set) var acceptScopeByDay: [String: AcceptScope] {
+        didSet { persist(acceptScopeByDay, Keys.acceptScope) }
     }
     /// B4-2: last time the intents were SAVED locally — the LWW clock for cross-device sync.
     private(set) var intentsUpdatedAt: Date {
@@ -175,6 +189,8 @@ final class DayIntentStore {
         offWanted       = Self.load(Keys.wanted) ?? [:]
         manualOffDays   = Set(UserDefaults.standard.stringArray(forKey: Keys.manualOff) ?? [])
         carryoverVacationDays = Set(UserDefaults.standard.stringArray(forKey: Keys.carryover) ?? [])
+        tradeKindByDay  = Self.load(Keys.tradeKind) ?? [:]
+        acceptScopeByDay = Self.load(Keys.acceptScope) ?? [:]
         intentsUpdatedAt = (UserDefaults.standard.object(forKey: Keys.updatedAt) as? Date) ?? .distantPast
         migrateFromTradeIntentStoreIfNeeded()
         migrateAutoVacationBlackoutsIfNeeded()
@@ -475,13 +491,16 @@ final class DayIntentStore {
         var wanted: [String: Set<ShiftAvailabilityType>]?   // OPTIONAL → tolerant of older snapshots (no key)
         var manualOff: Set<String>
         var carryover: Set<String>?   // OPTIONAL → tolerant of older snapshots (no key)
+        var tradeKind: [String: TradeKind]?   // OPTIONAL → tolerant of older snapshots
+        var acceptScope: [String: AcceptScope]?   // OPTIONAL → tolerant of older snapshots
     }
 
     /// Current state as a JSON blob for publishing.
     func exportSnapshotJSON() -> String? {
         let snap = IntentSnapshot(working: workingIntents, off: offIntents, topologies: topologies,
                                   notes: notes, availability: offAvailability, wanted: offWanted,
-                                  manualOff: manualOffDays, carryover: carryoverVacationDays)
+                                  manualOff: manualOffDays, carryover: carryoverVacationDays,
+                                  tradeKind: tradeKindByDay, acceptScope: acceptScopeByDay)
         guard let data = try? JSONEncoder().encode(snap) else { return nil }
         return String(data: data, encoding: .utf8)
     }
@@ -503,6 +522,8 @@ final class DayIntentStore {
         offWanted       = snap.wanted ?? [:]
         manualOffDays   = snap.manualOff
         carryoverVacationDays = snap.carryover ?? []
+        tradeKindByDay  = snap.tradeKind ?? [:]
+        acceptScopeByDay = snap.acceptScope ?? [:]
         intentsUpdatedAt = at
         savedBaseline = captureBaseline()
         return true
@@ -519,6 +540,8 @@ final class DayIntentStore {
         static let wanted = "batman.v2.offWanted"
         static let manualOff = "batman.v2.manualOffDays"
         static let carryover = "batman.v2.carryoverVacationDays"
+        static let tradeKind = "batman.v2.tradeKindByDay"
+        static let acceptScope = "batman.v2.acceptScopeByDay"
         static let migrated = "batman.v2.intentMigrated"
         static let migratedAutoVacation = "batman.v2.migratedAutoVacation"
         static let updatedAt = "batman.v2.intentsUpdatedAt"

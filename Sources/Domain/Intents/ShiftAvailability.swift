@@ -81,6 +81,30 @@ enum ShiftAvailabilityType: String, Codable, CaseIterable, Hashable, AppEnum {
     }
 }
 
+// MARK: - Match Radar model (DX-MATCH-RADAR-SPEC v3.1)
+
+/// How a day is offered/accepted: a straight day-for-day swap, for ECB points, or either.
+/// A match is valid only when the two sides' kinds intersect; the match kind = that intersection.
+enum TradeKind: String, Codable, Sendable, CaseIterable, Hashable {
+    case day, ecb, both
+    /// The resolved kind when a giver of `self` meets a taker of `other` — nil if they can't transact.
+    func resolve(with other: TradeKind) -> TradeKind? {
+        if self == .both { return other }
+        if other == .both { return self }
+        return self == other ? self : nil
+    }
+}
+
+/// What a user will accept — for a want-to-work pickup OR a day-for-day return. All-empty/nil = OPEN
+/// (defer to the user's global trade prefs), so an unset day behaves exactly as today. (#Match-Radar §8)
+struct AcceptScope: Codable, Sendable, Hashable {
+    var dates: Set<String>? = nil                    // ISO days (or a range materialized to a set); nil = any date
+    var shiftTypes: Set<ShiftAvailabilityType> = []  // empty = any shift type
+    var quals: Set<String> = []                      // empty = any qual
+    var desks: Set<String>? = nil                    // nil = any desk
+    var isOpen: Bool { (dates?.isEmpty ?? true) && shiftTypes.isEmpty && quals.isEmpty && (desks?.isEmpty ?? true) }
+}
+
 // MARK: - Your availability entry for a single day
 
 struct DayAvailability: Codable, Identifiable, Hashable {

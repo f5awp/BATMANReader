@@ -645,6 +645,27 @@ enum TradeEngineTests {
             }
         }
 
+        // MARK: MATCH-MODEL — TradeKind resolution + AcceptScope/TradeKind survive the profile round-trip;
+        // an absent field decodes (back-compat), and an unset AcceptScope is OPEN. (Match Radar Stage 1)
+        do {
+            // Kind intersection: both=passthrough; equal=self; disjoint=nil.
+            check(TradeKind.both.resolve(with: .ecb) == .ecb, "MATCH-MODEL: both ∩ ecb → ecb")
+            check(TradeKind.day.resolve(with: .both) == .day, "MATCH-MODEL: day ∩ both → day")
+            check(TradeKind.day.resolve(with: .day) == .day, "MATCH-MODEL: day ∩ day → day")
+            check(TradeKind.day.resolve(with: .ecb) == nil, "MATCH-MODEL: day ∩ ecb → no match")
+            check(AcceptScope().isOpen, "MATCH-MODEL: default AcceptScope is open")
+            check(!AcceptScope(shiftTypes: [.pm]).isOpen, "MATCH-MODEL: a shift-type filter is not open")
+            var p = TradeProfile(workerID: "w", displayName: "W", openness: "all",
+                                 blacklistedWeekdays: [], blacklistedDesks: [], blacklistedShiftTypes: [],
+                                 blacklistedRegions: [], seekingDayIDs: [], updatedAt: Date(timeIntervalSince1970: 1))
+            p.tradeKindByDay = ["2026-08-07": .both]
+            p.acceptScopeByDay = ["2026-08-07": AcceptScope(shiftTypes: [.pm], quals: ["L"])]
+            if let d = try? JSONEncoder().encode(p), let back = try? JSONDecoder().decode(TradeProfile.self, from: d) {
+                check(back.tradeKindByDay?["2026-08-07"] == .both, "MATCH-MODEL: tradeKindByDay round-trips")
+                check(back.acceptScopeByDay?["2026-08-07"]?.shiftTypes == [.pm], "MATCH-MODEL: acceptScopeByDay round-trips")
+            } else { check(false, "MATCH-MODEL: TradeProfile with radar fields failed to round-trip") }
+        }
+
         // MARK: CARRYOVER-SNAPSHOT — carryover-vacation days survive the intent snapshot round-trip;
         // an older snapshot without the key still decodes (back-compat). (#4 Stage 1)
         do {
