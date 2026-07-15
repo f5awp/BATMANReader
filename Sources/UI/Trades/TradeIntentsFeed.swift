@@ -796,6 +796,11 @@ struct CompactSwapCard: View {
                 swapLine("Them", days: a?.giveDayIDs ?? [], color: peerColor)
                 Spacer(minLength: 0)
             }
+            if package.qualSwap != nil {
+                // Clear, always-visible notice (not just the small Q icon) that this match needs a qual swap.
+                Label("Qual swap needed — tap to choose a bridge", systemImage: "q.square.fill")
+                    .font(.caption2.weight(.semibold)).foregroundStyle(AppColor.pending)
+            }
             if DevAccess.shared.unlocked {
                 Text("Match strength \(TradeScore.matchStrength(package.acceptanceScore)) · \(TradeScore.strengthTier(package.acceptanceScore)) · cover \(package.coverageCount)")
                     .font(.dsBadge).foregroundStyle(AppColor.special)
