@@ -790,11 +790,13 @@ enum TradeMatcher {
         guard TradeTiming.isTradeable(startHour: giveStartHour),
               let date = dateFromISO(giveDayID) else { return [] }
         let working = await RosterStore.shared.dispatchersWorking(on: date)
-        let workers: [(QualSwapShift, TradeProfile)] = working.map { e in
-            let shift = QualSwapShift(workerID: e.workerID, name: e.workerName, desk: e.desk,
-                                      startHour: e.startHour, quals: e.quals)
+        let workers: [(QualSwapShift, TradeProfile)] = working.compactMap { e in
             let prof = TradeProfileStore.shared.profile(forWorker: e.workerID)
                 ?? TradeProfile.defaultForUnpublished(workerID: e.workerID, name: e.workerName)   // A8: missing → Bookends Only
+            // #4: someone on a self-declared carryover vacation isn't actually working — not a bridge.
+            if prof.isOnCarryoverVacation(giveDayID) { return nil }
+            let shift = QualSwapShift(workerID: e.workerID, name: e.workerName, desk: e.desk,
+                                      startHour: e.startHour, quals: e.quals)
             return (shift, prof)
         }
         var exclude = excludeIDs; if !takerID.isEmpty { exclude.insert(takerID) }
@@ -915,6 +917,8 @@ nonisolated enum TradeEligibility {
         // desk or an irregular start hour. This is a property of the shift itself, so it's checked
         // before any coverer property. Keeps permanent-TRN / off-hour rosters out of every path.
         guard TradeTiming.isDispatchShift(desk: desk, startHour: startHour) else { return .no }
+        // #4: a self-declared CARRYOVER VACATION day means they're on vacation — never offer them a pickup.
+        if coverProfile.isOnCarryoverVacation(coverDayID) { return .no }
         // Relief dispatcher: their schedule isn't real past the horizon, so they can't cover then.
         if coverProfile.scheduleUnknown(on: coverDay, cal: cal) { return .no }
         // Hard PHYSICAL gates (always): coverer is off that day, qualified for the desk, 8h-rested.

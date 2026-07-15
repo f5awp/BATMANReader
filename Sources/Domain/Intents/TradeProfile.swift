@@ -197,6 +197,10 @@ struct TradeProfile: Sendable, Hashable, Codable, Identifiable {
     }
     var opennessLevel: TradeOpenness { TradeOpenness(rawValue: openness) ?? .bookends }
 
+    /// #4: is this person on a self-declared CARRYOVER VACATION on `dayID`? Peers' matchers treat such a
+    /// day as vacation/OFF — the person is neither a coverable taker nor a working bridge that day.
+    func isOnCarryoverVacation(_ dayID: String) -> Bool { carryoverVacationDayIDs?.contains(dayID) == true }
+
     /// Whether this person would CONSIDER picking up a shift with these traits —
     /// i.e. they're accepting trades and it isn't on their blacklist. (Physical
     /// ability — off + qualified + rested — is checked separately by the matcher;

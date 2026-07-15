@@ -673,6 +673,19 @@ enum TradeEngineTests {
             } else { check(false, "CARRYOVER-PROFILE: TradeProfile failed to round-trip") }
         }
 
+        // MARK: CARRYOVER-PEER — a peer on carryover vacation is excluded as a coverer that day. (#4 Stage 4)
+        do {
+            var prof = TradeProfile(workerID: "p", displayName: "P", openness: "all",
+                                    blacklistedWeekdays: [], blacklistedDesks: [], blacklistedShiftTypes: [],
+                                    blacklistedRegions: [], seekingDayIDs: [], updatedAt: Date(timeIntervalSince1970: 1))
+            check(!prof.isOnCarryoverVacation("2026-08-07"), "CARRYOVER-PEER: not on carryover before flag")
+            prof.carryoverVacationDayIDs = ["2026-08-07"]
+            check(prof.isOnCarryoverVacation("2026-08-07"), "CARRYOVER-PEER: flagged day reads as carryover vacation")
+            check(!prof.isOnCarryoverVacation("2026-08-08"), "CARRYOVER-PEER: other days unaffected")
+            // The canCover guard uses exactly this predicate (a carryover day → .no), so a peer on carryover
+            // vacation is never offered a pickup that day.
+        }
+
         // MARK: B6-BLACKOUT — a blacked-out weekday blocks a pickup (arbitrary days, not just weekends).
         do {
             let prof = TradeProfile(workerID: "z", displayName: "Z", openness: "all",
