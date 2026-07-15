@@ -36,10 +36,10 @@ struct MessagingDock: View {
         _showDashboard = showDashboard; _showECB = showECB
     }
 
-    /// Trade-status "something new" badge: agreed-in-app (accepted, awaiting official) +
-    /// still-negotiating (pending). Live via @Observable stores. (Unchanged.)
-    private var tradeStatusBadge: Int {
-        let c = DashboardCounts.from(requests: store.requests, responses: store.responses,
+    /// Active-trades badge for the Inbox: agreed-in-app (accepted, awaiting the schedule) + still-negotiating
+    /// (pending). Loops are deduped so a circular trade counts ONCE. Live via @Observable stores.
+    private var activeTradesBadge: Int {
+        let c = DashboardCounts.from(requests: MessagingStore.dedupeLoops(store.requests), responses: store.responses,
                                      unread: store.pendingIncoming.count, pendingLedger: history.pendingCount)
         return c.accepted + c.pending
     }
@@ -49,7 +49,7 @@ struct MessagingDock: View {
         // ECB Accounting, Trade Settings, and App Settings. Active trades live in the Inbox.
         HStack(spacing: DS.s) {
             iconButton("tray.full.fill", label: "Inbox",
-                       badge: store.pendingIncoming.count + ECBAccountingStore.shared.pendingConfirmations.count,
+                       badge: activeTradesBadge + ECBAccountingStore.shared.pendingConfirmations.count,
                        badgeColor: AppColor.danger) { showInbox = true }
             iconButton("megaphone.fill", label: "Channel",
                        badge: store.unreadBroadcastCount, badgeColor: AppColor.primary) { showChannel = true }

@@ -30,7 +30,8 @@ import SwiftUI
 struct DXSegment<T: Hashable> {
     let value: T
     let label: String
-    init(_ value: T, _ label: String) { self.value = value; self.label = label }
+    let badge: Int      // optional count badge (0 = none) shown to the right of the label
+    init(_ value: T, _ label: String, badge: Int = 0) { self.value = value; self.label = label; self.badge = badge }
 }
 
 struct DXSegmented<T: Hashable>: View {
@@ -54,10 +55,19 @@ struct DXSegmented<T: Hashable>: View {
                     // The label defines the size. The active tile is the label's BACKGROUND
                     // (never a free-floating sibling), so the RoundedRectangle can only fill
                     // the label's compact frame — it can't expand to eat the whole screen.
-                    Text(opt.label)
-                        .font(.subheadline.weight(active ? .bold : .semibold))
-                        .foregroundStyle(active ? .white : .secondary)
-                        .lineLimit(1).minimumScaleFactor(0.8)
+                    HStack(spacing: 5) {
+                        Text(opt.label)
+                            .font(.subheadline.weight(active ? .bold : .semibold))
+                            .foregroundStyle(active ? .white : .secondary)
+                            .lineLimit(1).minimumScaleFactor(0.8)
+                        if opt.badge > 0 {
+                            Text("\(min(opt.badge, 99))")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundStyle(active ? (tint ?? AppColor.primary) : .white)
+                                .padding(.horizontal, 5).padding(.vertical, 1)
+                                .background(active ? Color.white.opacity(0.95) : (tint ?? AppColor.primary), in: Capsule())
+                        }
+                    }
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 8)
                         .background {

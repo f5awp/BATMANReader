@@ -199,12 +199,19 @@ struct InboxView: View {
     private func tabIndex(for r: TradeRequest) -> Int { TradeInboxTab.index(for: r, myID: myID) }
     private func inTab(_ r: TradeRequest) -> Bool { tabIndex(for: r) == filter }
 
+    /// Deduped active (non-archived) requests filing under `tab` — drives the per-tab count badge.
+    private func tabCount(_ tab: Int) -> Int {
+        let inThisTab = MessagingStore.active(store.requests, archived: store.archivedRequestIDs)
+            .filter { TradeInboxTab.index(for: $0, myID: myID) == tab }
+        return MessagingStore.dedupeLoops(inThisTab).count
+    }
+
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
                 DXSegmented(selection: $filter, options: [
-                    .init(0, "Intents"), .init(1, "Search"),
-                    .init(2, "ECB (\(ecbRequests.count))"), .init(3, "Qual Swap"),
+                    .init(0, "Intents", badge: tabCount(0)), .init(1, "Search", badge: tabCount(1)),
+                    .init(2, "ECB", badge: tabCount(2)), .init(3, "Qual Swap", badge: tabCount(3)),
                 ], color: { v in [0: AppColor.heat, 1: AppColor.primary, 2: AppColor.success, 3: AppColor.special][v] })
                 .padding()
 
@@ -508,6 +515,9 @@ struct RequestRow: View {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(alignment: .top) {
                     NameWithStatus(id: otherID, name: otherName)
+                    if store.loopHasNewActivity(request.groupKey) {   // new counter/message/accept from someone else
+                        Circle().fill(AppColor.primary).frame(width: 8, height: 8).accessibilityLabel("New activity")
+                    }
                     Spacer()
                     Text(request.createdAt, style: .relative).font(.caption2).foregroundStyle(.secondary)
                 }
@@ -864,6 +874,7 @@ struct ThreadView: View {
             }
         }
         .task {
+            store.markTradeSeen(request.groupKey)   // opening the thread clears its "new activity" dot
             if acceptDays.isEmpty { acceptDays = allTradeDays }   // D7: default = accept every offered day
             staleDays = await TradeMatcher.staleDays(
                 fromID: request.fromID, toID: request.toID,

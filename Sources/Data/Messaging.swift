@@ -583,6 +583,30 @@ final class MessagingStore {
     /// Call when the channel opens — clears the unread badge.
     func markBroadcastsSeen() { broadcastsLastSeen = Date() }
 
+    // MARK: Per-trade "new activity" tracking (TRADE-INBOX Stage 6)
+    /// When the user last OPENED each trade loop (keyed by `groupKey`). A counter/message/accept from
+    /// someone else after this marks the loop "new" until reopened. Local per-device.
+    private static let tradeSeenKey = "batman.msg.tradeLastSeen"
+    private(set) var tradeLastSeen: [String: Date] = {
+        (UserDefaults.standard.dictionary(forKey: tradeSeenKey) as? [String: Date]) ?? [:]
+    }()
+    /// Call when a trade thread opens — clears its "new" dot.
+    func markTradeSeen(_ groupKey: String) {
+        tradeLastSeen[groupKey] = Date()
+        UserDefaults.standard.set(tradeLastSeen, forKey: Self.tradeSeenKey)
+    }
+    /// PURE, testable: is there a response from SOMEONE ELSE newer than `since`?
+    static func hasNewActivity(responses: [TradeResponse], since: Date?, myID: String) -> Bool {
+        let cutoff = since ?? .distantPast
+        return responses.contains { $0.createdAt > cutoff && $0.responderID != myID && $0.statusValue != .cancelled }
+    }
+    /// Whether a loop (all legs sharing `groupKey`) has activity from others since it was last seen.
+    func loopHasNewActivity(_ groupKey: String) -> Bool {
+        let legIDs = Set(requests.filter { $0.groupKey == groupKey }.map(\.id))
+        let rs = responses.filter { legIDs.contains($0.requestID) }
+        return Self.hasNewActivity(responses: rs, since: tradeLastSeen[groupKey], myID: myID)
+    }
+
     /// Requests the user ARCHIVED (hidden from the active inbox, kept in an Archived
     /// section — distinct from delete which removes them forever). Local-only. B3.
     private static let archivedKey = "batman.msg.archivedRequests"

@@ -600,6 +600,23 @@ enum TradeEngineTests {
             check(MessagingStore.loopStatus([]) == .pending, "INBOX-LOOPSTATUS: empty → Pending")
         }
 
+        // MARK: INBOX-UNREAD — a loop shows "new" when someone else responds after last-seen (TRADE-INBOX Stage 6).
+        do {
+            func resp(_ id: String, who: String, at t: TimeInterval, status: String = "message") -> TradeResponse {
+                TradeResponse(id: id, requestID: "r", responderID: who, responderName: who, status: status,
+                              note: "hi", createdAt: Date(timeIntervalSince1970: t))
+            }
+            let rs = [resp("1", who: "them", at: 50), resp("2", who: "me", at: 60)]
+            check(MessagingStore.hasNewActivity(responses: rs, since: Date(timeIntervalSince1970: 40), myID: "me"),
+                  "INBOX-UNREAD: a newer response from someone else → new")
+            check(!MessagingStore.hasNewActivity(responses: rs, since: Date(timeIntervalSince1970: 55), myID: "me"),
+                  "INBOX-UNREAD: only my own response after last-seen → NOT new")
+            check(!MessagingStore.hasNewActivity(responses: [resp("3", who: "me", at: 90)], since: nil, myID: "me"),
+                  "INBOX-UNREAD: my own messages never mark unread")
+            check(MessagingStore.hasNewActivity(responses: [resp("4", who: "them", at: 90)], since: nil, myID: "me"),
+                  "INBOX-UNREAD: never-seen + other's response → new")
+        }
+
         // MARK: B6-BLACKOUT — a blacked-out weekday blocks a pickup (arbitrary days, not just weekends).
         do {
             let prof = TradeProfile(workerID: "z", displayName: "Z", openness: "all",
