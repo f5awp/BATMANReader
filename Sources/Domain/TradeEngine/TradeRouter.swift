@@ -1035,15 +1035,16 @@ enum TradeRouter {
                                             priors: [String: Double], start: Date, selfID: String,
                                             mySeeking: Set<String>, myWantToWork: Set<String>,
                                             profilesByID: [String: TradeProfile]) -> [TwoWayLeg] {
-        legs.map { leg -> (leg: TwoWayLeg, p: Double) in
-            let f = legFeatures(giverID: giverID, receiverID: receiverID, day: leg.dayID, desk: leg.desk,
-                                receiverQuals: quals[receiverID] ?? [], maps: maps, priors: priors,
-                                selfID: selfID, start: start,
-                                mySeeking: mySeeking, myWantToWork: myWantToWork, profilesByID: profilesByID)
-            return (leg, TradeScore.legProb(f))
+        // Order the give/receive days by the user's TIER model — intent-marked (want-to-work) → bookend →
+        // split — and, WITHIN a tier, SOONEST first. Recency is the tiebreak among equally-good days: two
+        // bookends are "just as good", so the EARLIER one wins (an equally-good earlier bookend is never
+        // buried under a later one by a marginal per-leg score, e.g. a small shift-time preference).
+        func tier(_ l: TwoWayLeg) -> Int { l.wanted ? 0 : (l.bookend ? 1 : 2) }
+        return legs.sorted { a, b in
+            let ta = tier(a), tb = tier(b)
+            if ta != tb { return ta < tb }
+            return a.dayID < b.dayID   // within a tier: soonest first
         }
-        .sorted { $0.p != $1.p ? $0.p > $1.p : $0.leg.dayID < $1.leg.dayID }
-        .map(\.leg)
     }
 
     /// How many of YOUR give-days this package covers (distinct days you hand off) — the PRIMARY ranking key.
