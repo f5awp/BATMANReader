@@ -645,6 +645,22 @@ enum TradeEngineTests {
             }
         }
 
+        // MARK: CARRYOVER-SNAPSHOT — carryover-vacation days survive the intent snapshot round-trip;
+        // an older snapshot without the key still decodes (back-compat). (#4 Stage 1)
+        do {
+            let snap = DayIntentStore.IntentSnapshot(working: [:], off: [:], topologies: [:], notes: [:],
+                                                     availability: [:], wanted: nil, manualOff: [],
+                                                     carryover: ["2026-08-07"])
+            if let data = try? JSONEncoder().encode(snap),
+               let back = try? JSONDecoder().decode(DayIntentStore.IntentSnapshot.self, from: data) {
+                check(back.carryover == ["2026-08-07"], "CARRYOVER-SNAPSHOT: carryover set round-trips")
+            } else { check(false, "CARRYOVER-SNAPSHOT: snapshot failed to round-trip") }
+            // Older JSON with no `carryover` key → decodes with nil (back-compat).
+            let legacy = "{\"working\":{},\"off\":{},\"topologies\":{},\"notes\":{},\"availability\":{},\"manualOff\":[]}"
+            let decoded = try? JSONDecoder().decode(DayIntentStore.IntentSnapshot.self, from: Data(legacy.utf8))
+            check(decoded != nil && decoded?.carryover == nil, "CARRYOVER-SNAPSHOT: legacy snapshot (no key) still decodes")
+        }
+
         // MARK: B6-BLACKOUT — a blacked-out weekday blocks a pickup (arbitrary days, not just weekends).
         do {
             let prof = TradeProfile(workerID: "z", displayName: "Z", openness: "all",

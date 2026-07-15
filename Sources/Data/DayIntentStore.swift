@@ -40,13 +40,15 @@ final class DayIntentStore {
         var availability: [String: Set<ShiftAvailabilityType>]
         var wanted: [String: Set<ShiftAvailabilityType>]
         var manualOff: Set<String>
+        var carryover: Set<String>
         static let empty = Baseline(working: [:], off: [:], topologies: [:],
-                                    notes: [:], availability: [:], wanted: [:], manualOff: [])
+                                    notes: [:], availability: [:], wanted: [:], manualOff: [], carryover: [])
     }
 
     private func captureBaseline() -> Baseline {
         Baseline(working: workingIntents, off: offIntents, topologies: topologies,
-                 notes: notes, availability: offAvailability, wanted: offWanted, manualOff: manualOffDays)
+                 notes: notes, availability: offAvailability, wanted: offWanted, manualOff: manualOffDays,
+                 carryover: carryoverVacationDays)
     }
 
     private func markDirty() { hasUnsavedChanges = true }
@@ -69,8 +71,17 @@ final class DayIntentStore {
         offAvailability = savedBaseline.availability
         offWanted       = savedBaseline.wanted
         manualOffDays   = savedBaseline.manualOff
+        carryoverVacationDays = savedBaseline.carryover
         hasUnsavedChanges = false
     }
+
+    /// Toggle a day's carryover-vacation flag (marks dirty so Save publishes it).
+    func toggleCarryoverVacation(_ dayID: String) {
+        if carryoverVacationDays.contains(dayID) { carryoverVacationDays.remove(dayID) }
+        else { carryoverVacationDays.insert(dayID) }
+        markDirty()
+    }
+    func isCarryoverVacation(_ dayID: String) -> Bool { carryoverVacationDays.contains(dayID) }
 
     // MARK: Stored state (the single source of truth)
 
@@ -104,6 +115,11 @@ final class DayIntentStore {
     /// Off days the user customized by hand — the openness shortcut won't overwrite these.
     private(set) var manualOffDays: Set<String> {
         didSet { UserDefaults.standard.set(Array(manualOffDays), forKey: Keys.manualOff) }
+    }
+    /// Days the user flagged as CARRYOVER VACATION (not coded in the master, e.g. `L,S`). Turns the day
+    /// into a vacation (OFF) day — locally AND published on the profile so peers stop matching you. (#4)
+    private(set) var carryoverVacationDays: Set<String> {
+        didSet { UserDefaults.standard.set(Array(carryoverVacationDays), forKey: Keys.carryover) }
     }
     /// B4-2: last time the intents were SAVED locally — the LWW clock for cross-device sync.
     private(set) var intentsUpdatedAt: Date {
@@ -158,6 +174,7 @@ final class DayIntentStore {
         offAvailability = Self.load(Keys.availability) ?? [:]
         offWanted       = Self.load(Keys.wanted) ?? [:]
         manualOffDays   = Set(UserDefaults.standard.stringArray(forKey: Keys.manualOff) ?? [])
+        carryoverVacationDays = Set(UserDefaults.standard.stringArray(forKey: Keys.carryover) ?? [])
         intentsUpdatedAt = (UserDefaults.standard.object(forKey: Keys.updatedAt) as? Date) ?? .distantPast
         migrateFromTradeIntentStoreIfNeeded()
         migrateAutoVacationBlackoutsIfNeeded()
@@ -457,13 +474,14 @@ final class DayIntentStore {
         var availability: [String: Set<ShiftAvailabilityType>]
         var wanted: [String: Set<ShiftAvailabilityType>]?   // OPTIONAL → tolerant of older snapshots (no key)
         var manualOff: Set<String>
+        var carryover: Set<String>?   // OPTIONAL → tolerant of older snapshots (no key)
     }
 
     /// Current state as a JSON blob for publishing.
     func exportSnapshotJSON() -> String? {
         let snap = IntentSnapshot(working: workingIntents, off: offIntents, topologies: topologies,
                                   notes: notes, availability: offAvailability, wanted: offWanted,
-                                  manualOff: manualOffDays)
+                                  manualOff: manualOffDays, carryover: carryoverVacationDays)
         guard let data = try? JSONEncoder().encode(snap) else { return nil }
         return String(data: data, encoding: .utf8)
     }
@@ -484,6 +502,7 @@ final class DayIntentStore {
         offAvailability = snap.availability
         offWanted       = snap.wanted ?? [:]
         manualOffDays   = snap.manualOff
+        carryoverVacationDays = snap.carryover ?? []
         intentsUpdatedAt = at
         savedBaseline = captureBaseline()
         return true
@@ -499,6 +518,7 @@ final class DayIntentStore {
         static let availability = "batman.v2.offAvailability"
         static let wanted = "batman.v2.offWanted"
         static let manualOff = "batman.v2.manualOffDays"
+        static let carryover = "batman.v2.carryoverVacationDays"
         static let migrated = "batman.v2.intentMigrated"
         static let migratedAutoVacation = "batman.v2.migratedAutoVacation"
         static let updatedAt = "batman.v2.intentsUpdatedAt"
