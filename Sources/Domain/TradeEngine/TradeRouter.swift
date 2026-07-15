@@ -414,7 +414,8 @@ enum TradeRouter {
         let tierCal = Calendar.current
         let intlGives = giveShifts.filter { !$0.isOff && DeskRules.hasQualGatedSelection(desks: [$0.desk]) }
         for s in intlGives where giveDayIDs.contains(s.id) {
-            let region  = DeskRules.region(forDesk: s.desk).rawValue
+            // NOTE: willingness is gated on the BRIDGE's freed desk below, so the give-desk's region is
+            // intentionally not used here (the taker never works the qual-gated give-desk).
             let type    = ShiftAvailabilityType.infer(fromStartHour: s.startHour).rawValue
             let weekday = tierCal.component(.weekday, from: s.date)
             for cand in universe.sorted(by: { $0.workerID < $1.workerID }) {
@@ -427,8 +428,6 @@ enum TradeRouter {
                 guard TradeMatcher.isRested(map: pMap, day: s.date, startHour: s.startHour, cal: tierCal) else { continue }
                 let profile = profileFor(cand.workerID, cand.name)
                 let isBookend = TradeMatcher.anchored(day: s.date, map: pMap, plan: [s.id], cal: tierCal)
-                guard profile.wouldPickUp(onDay: s.id, weekday: weekday, desk: s.desk,
-                                          shiftType: type, region: region, isBookend: isBookend) else { continue }
                 // Reciprocal give-back (their days I'd take), model-ranked (U-OBJ/P6(b)), inside the receive window.
                 let givesBack = TradeRouter.modelRankedLegs(
                     TradeRouter.cleanReceiveLegs((plansByPeer[cand.workerID]?.iTake ?? []).filter { wouldTake(myProfile, $0) },
@@ -442,6 +441,17 @@ enum TradeRouter {
                 guard let leg = await TradeMatcher.buildQualSwapLeg(
                     giveDayID: s.id, giveDesk: s.desk, giveStartHour: s.startHour,
                     giverID: selfID, takerID: cand.workerID, takerName: cand.name, takerQuals: peerQuals) else { continue }
+                // Willingness: the taker will work the BRIDGE'S FREED desk (a non-gated desk they're
+                // qualified for) — NEVER the qual-gated give-desk (they lack that qual; that's the whole
+                // premise). So gate their pickup willingness on a freed desk, not the give-desk's region
+                // (an off domestic taker shouldn't be dropped by a "would you take a LATIN shift?" check).
+                // Accept if they'd take ANY offered bridge's freed desk. Same start hour ⇒ same shift type.
+                let willingForBridge = leg.candidates.contains { b in
+                    profile.wouldPickUp(onDay: s.id, weekday: weekday, desk: b.desk,
+                                        shiftType: type, region: DeskRules.region(forDesk: b.desk).rawValue,
+                                        isBookend: isBookend)
+                }
+                guard willingForBridge else { continue }
                 let a = [PackageAssignment(workerID: cand.workerID, name: cand.name,
                                            giveDayIDs: [s.id], takeDayIDs: Array(givesBack.prefix(1)),
                                            takeOptions: givesBack)]
