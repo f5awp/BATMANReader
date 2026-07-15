@@ -759,9 +759,15 @@ struct ThreadView: View {
                         .frame(maxWidth: .infinity, alignment: mine ? .trailing : .leading)
                         .listRowSeparator(.hidden)
                     } else {
-                        auditRow(icon: r.statusValue.icon, tint: r.statusValue.tint,
-                                 who: r.responderID == myID ? "You" : r.responderName,
-                                 what: r.statusValue.label.lowercased(), when: r.createdAt, note: r.note)
+                        VStack(alignment: .leading, spacing: 6) {
+                            auditRow(icon: r.statusValue.icon, tint: r.statusValue.tint,
+                                     who: r.responderID == myID ? "You" : r.responderName,
+                                     what: r.statusValue.label.lowercased(), when: r.createdAt, note: r.note)
+                            // A counter carries a re-picked package → show it as a card, not just text (Stage 8).
+                            if r.statusValue == .countered, let days = r.acceptedDayIDs, !days.isEmpty {
+                                counterPackageCard(days: days)
+                            }
+                        }
                     }
                 }
             }
@@ -1002,6 +1008,22 @@ struct ThreadView: View {
             }
         }
         .padding(.vertical, 2)
+    }
+
+    /// A counter-offer's re-picked package, rendered as a card in the thread (Stage 8).
+    private func counterPackageCard(days: [String]) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "arrow.uturn.left.circle.fill").foregroundStyle(AppColor.primary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Counter package").font(.caption.weight(.bold)).foregroundStyle(AppColor.primary)
+                Text(DayFmt.list(days)).font(.caption).foregroundStyle(.primary)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 12).fill(AppColor.primary.opacity(0.10)))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(AppColor.primary.opacity(0.3), lineWidth: 1))
     }
 
     /// The sender posted an "ECB CONFIRMED" response → they're submitting the form.

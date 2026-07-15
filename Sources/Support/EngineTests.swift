@@ -630,6 +630,21 @@ enum TradeEngineTests {
             check(merged.map(\.id) == ["a", "b"], "INBOX-THREAD: merged thread is chronological across legs")
         }
 
+        // MARK: INBOX-COUNTER-PKG — a counter carries a structured package that survives sync (TRADE-INBOX Stage 8).
+        do {
+            let resp = TradeResponse(id: "c1", requestID: "r", responderID: "them", responderName: "T",
+                                     status: TradeRequestStatus.countered.rawValue, note: "Counter",
+                                     createdAt: Date(timeIntervalSince1970: 1),
+                                     acceptedDayIDs: ["2026-07-15", "2026-07-17"])
+            if let d = try? JSONEncoder().encode(resp),
+               let back = try? JSONDecoder().decode(TradeResponse.self, from: d) {
+                check(back.acceptedDayIDs == ["2026-07-15", "2026-07-17"], "INBOX-COUNTER-PKG: counter package survives the JSON round-trip")
+                check(back.statusValue == .countered, "INBOX-COUNTER-PKG: countered status preserved")
+            } else {
+                check(false, "INBOX-COUNTER-PKG: TradeResponse failed to round-trip")
+            }
+        }
+
         // MARK: B6-BLACKOUT — a blacked-out weekday blocks a pickup (arbitrary days, not just weekends).
         do {
             let prof = TradeProfile(workerID: "z", displayName: "Z", openness: "all",

@@ -1032,15 +1032,20 @@ final class MessagingStore {
         guard !myGive.isEmpty || !myTake.isEmpty else { return }
         // Carry the qual-swap leg only if its give-day survived the trim.
         let leg = request.qualSwap.flatMap { keepDays.contains($0.giveShiftDayID) ? $0 : nil }
+        // Structured package on the .countered response (renders as a package card in the thread),
+        // and link the reciprocal counter-request into the SAME group (loopID) so the whole negotiation
+        // is ONE card + one merged thread (TRADE-INBOX Stage 8).
         await respond(to: request, status: .countered,
-                      note: "Counter — accepting \(DayFmt.list(Array(keepDays))).")
+                      note: "Counter — accepting \(DayFmt.list(Array(keepDays))).",
+                      acceptedDayIDs: Array(keepDays))
         await sendRequest(to: request.fromID, toName: request.fromName,
                           note: "Counter: I can do these days.",
-                          take: myTake, give: myGive, qualSwap: leg, origin: request.inboxOrigin)
+                          take: myTake, give: myGive, qualSwap: leg,
+                          origin: request.inboxOrigin, loopID: request.groupKey)
     }
 
     func respond(to request: TradeRequest, status: TradeRequestStatus, note: String,
-                 imageBase64: String? = nil) async {
+                 imageBase64: String? = nil, acceptedDayIDs: [String]? = nil) async {
         // Never persist a note-less counter — it renders as a blank "counter-offer" row (TRADE-INBOX Stage 7).
         // Accept/decline legitimately carry no note (they show as a status line), so this guards `.countered` only.
         if status == .countered, note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, imageBase64 == nil { return }
@@ -1048,7 +1053,7 @@ final class MessagingStore {
             id: UUID().uuidString, requestID: request.id,
             responderID: myID, responderName: myName,
             status: status.rawValue, note: note, createdAt: Date(),
-            offerID: request.offerID, imageBase64: imageBase64)
+            offerID: request.offerID, acceptedDayIDs: acceptedDayIDs, imageBase64: imageBase64)
         await service.sendResponse(resp)
         responses = (responses.filter { $0.id != resp.id } + [resp]).sorted { $0.createdAt < $1.createdAt }
         // B6-ECB: an ECB offer accepted via the generic path also auto-posts (de-duped by requestID).
