@@ -661,6 +661,18 @@ enum TradeEngineTests {
             check(decoded != nil && decoded?.carryover == nil, "CARRYOVER-SNAPSHOT: legacy snapshot (no key) still decodes")
         }
 
+        // MARK: CARRYOVER-PROFILE — the published field round-trips on TradeProfile; a profile without it decodes. (#4 Stage 2)
+        do {
+            var p = TradeProfile(workerID: "w", displayName: "W", openness: "all",
+                                 blacklistedWeekdays: [], blacklistedDesks: [], blacklistedShiftTypes: [],
+                                 blacklistedRegions: [], seekingDayIDs: [], updatedAt: Date(timeIntervalSince1970: 1))
+            p.carryoverVacationDayIDs = ["2026-08-07"]
+            if let data = try? JSONEncoder().encode(p),
+               let back = try? JSONDecoder().decode(TradeProfile.self, from: data) {
+                check(back.carryoverVacationDayIDs == ["2026-08-07"], "CARRYOVER-PROFILE: carryoverVacationDayIDs round-trips")
+            } else { check(false, "CARRYOVER-PROFILE: TradeProfile failed to round-trip") }
+        }
+
         // MARK: B6-BLACKOUT — a blacked-out weekday blocks a pickup (arbitrary days, not just weekends).
         do {
             let prof = TradeProfile(workerID: "z", displayName: "Z", openness: "all",
