@@ -1824,30 +1824,53 @@ struct QualSwapPickerSheet: View {
                     Text("\(takerName) can't work \(giveDeskLabel) on \(dayLabel). These dispatchers are working that day and could **qual-swap** onto it, freeing their desk for \(takerName). Pick who to ask — the first 5 to accept can respond.")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
-                Section("Who to ask (\(selected.count)/\(candidates.count))") {
+                Section {
+                    // ECB-style selectable cards (avatar tile + name + freed desk) — easier to scan than plain rows.
                     // Favorable bridges first; unfavorable (a stretch for them) sorted last + flagged ⚠.
                     ForEach(candidates.sorted { ($0.favorable ? 0 : 1, $0.name) < ($1.favorable ? 0 : 1, $1.name) }) { c in
-                        Button {
+                        let isSel = selected.contains(c.workerID)
+                        HStack(spacing: 10) {
+                            DXSeatTile(color: TradeColors.color(forParticipant: c.workerID,
+                                                                myID: SettingsManager.shared.username,
+                                                                orderedPeers: [c.workerID]))
+                            VStack(alignment: .leading, spacing: 3) {
+                                HStack(spacing: 6) {
+                                    Text(c.name).font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
+                                    if !c.favorable {
+                                        Label("unfavorable", systemImage: "exclamationmark.triangle.fill")
+                                            .font(.system(size: 9, weight: .bold)).foregroundStyle(AppColor.pending)
+                                            .labelStyle(.titleAndIcon)
+                                    }
+                                }
+                                Text("frees desk \(c.desk) (\(c.qual))").font(.caption).foregroundStyle(.secondary)
+                            }
+                            Spacer(minLength: 0)
+                            Image(systemName: isSel ? "checkmark.circle.fill" : "circle")
+                                .foregroundStyle(isSel ? AppColor.success : .secondary)
+                        }
+                        .padding(.horizontal, 10).padding(.vertical, 9)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(isSel ? AppColor.primary.opacity(0.10) : Color(.secondarySystemBackground))
+                        .clipShape(RoundedRectangle(cornerRadius: DS.rowRadius))
+                        .overlay(RoundedRectangle(cornerRadius: DS.rowRadius).stroke(isSel ? AppColor.primary : .clear, lineWidth: 2))
+                        .contentShape(Rectangle())
+                        .onTapGesture {
                             if selected.contains(c.workerID) { selected.remove(c.workerID) }
                             else { selected.insert(c.workerID) }
-                        } label: {
-                            HStack {
-                                VStack(alignment: .leading, spacing: 1) {
-                                    HStack(spacing: 6) {
-                                        Text(c.name).font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
-                                        if !c.favorable {
-                                            Label("unfavorable", systemImage: "exclamationmark.triangle.fill")
-                                                .font(.system(size: 9, weight: .bold)).foregroundStyle(AppColor.pending)
-                                                .labelStyle(.titleAndIcon)
-                                        }
-                                    }
-                                    Text("frees desk \(c.desk) (\(c.qual))").font(.caption).foregroundStyle(.secondary)
-                                }
-                                Spacer()
-                                Image(systemName: selected.contains(c.workerID) ? "checkmark.circle.fill" : "circle")
-                                    .foregroundStyle(selected.contains(c.workerID) ? AppColor.success : .secondary)
-                            }
                         }
+                        .listRowSeparator(.hidden)
+                        .listRowInsets(EdgeInsets(top: 3, leading: 12, bottom: 3, trailing: 12))
+                        .listRowBackground(Color.clear)
+                    }
+                } header: {
+                    HStack {
+                        Text("Who to ask (\(selected.count)/\(candidates.count))")
+                        Spacer()
+                        Button(selected.count == candidates.count ? "Deselect all" : "Select all") {
+                            if selected.count == candidates.count { selected.removeAll() }
+                            else { selected = Set(candidates.map(\.workerID)) }
+                        }
+                        .font(.caption.weight(.semibold)).textCase(nil)
                     }
                 }
             }
@@ -1856,7 +1879,7 @@ struct QualSwapPickerSheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Send") { onSend(selected) }.disabled(selected.isEmpty)
+                    Button("Send to Selected (\(selected.count))") { onSend(selected) }.disabled(selected.isEmpty)
                 }
             }
         }
