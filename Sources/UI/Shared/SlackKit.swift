@@ -408,6 +408,7 @@ struct SlackComposer: View {
     let onSend: () -> Void
 
     @State private var showMentions = false
+    @FocusState private var focused: Bool
 
     private var isEmpty: Bool {
         text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !canSendWhenEmpty
@@ -417,6 +418,12 @@ struct SlackComposer: View {
         VStack(spacing: 6) {
             HStack(alignment: .bottom, spacing: 8) {
                 TextField(placeholder, text: $text, axis: .vertical)
+                    .focused($focused)
+                    // Return/Enter dismisses the keyboard (the field is vertical, so Return would otherwise
+                    // insert a newline). Strip the trailing newline and resign focus.
+                    .onChange(of: text) { _, newValue in
+                        if newValue.hasSuffix("\n") { text = String(newValue.dropLast()); focused = false }
+                    }
                     .lineLimit(1...5)
                     .padding(.horizontal, 10).padding(.vertical, 8)
                     .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 10))
