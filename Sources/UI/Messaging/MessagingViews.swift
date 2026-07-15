@@ -495,7 +495,11 @@ struct RequestRow: View {
 
     var body: some View {
         let mine = request.fromID == myID            // I sent it
-        let status = store.status(of: request)
+        // For a circular loop, the card shows the AGGREGATE of every leg's status (Stage 4); a plain
+        // request shows its own status.
+        let status: TradeRequestStatus = request.loopID == nil
+            ? store.status(of: request)
+            : MessagingStore.loopStatus(store.requests.filter { $0.groupKey == request.groupKey }.map { store.status(of: $0) })
         let needsMe = status == .pending && !mine     // action required from me
         let otherName = mine ? request.toName : request.fromName
         let otherID   = mine ? request.toID : request.fromID

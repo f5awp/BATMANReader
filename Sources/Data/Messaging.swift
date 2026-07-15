@@ -620,6 +620,17 @@ final class MessagingStore {
         return out
     }
 
+    /// PURE, testable: the single status to show for a whole circular loop, given each leg's status. A loop
+    /// completes only when EVERY leg accepts; any decline/cancel kills it; a counter needs attention.
+    /// Precedence (most→least urgent to surface): declined > cancelled > countered(Replied) > pending > accepted.
+    static func loopStatus(_ legStatuses: [TradeRequestStatus]) -> TradeRequestStatus {
+        if legStatuses.contains(.declined)  { return .declined }
+        if legStatuses.contains(.cancelled) { return .cancelled }
+        if legStatuses.contains(.countered) { return .countered }
+        if legStatuses.contains(.pending)   { return .pending }
+        return legStatuses.isEmpty ? .pending : .accepted   // all legs accepted
+    }
+
     private init() {
         service = SettingsManager.shared.useCloudKit
             ? CloudKitMessagingService()

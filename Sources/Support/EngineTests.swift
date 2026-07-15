@@ -590,6 +590,16 @@ enum TradeEngineTests {
             check(mixed.count == 2, "INBOX-DEDUPE: one loop + one single → 2 cards")
         }
 
+        // MARK: INBOX-LOOPSTATUS — a loop's aggregate status across legs (TRADE-INBOX Stage 4).
+        do {
+            check(MessagingStore.loopStatus([.pending, .countered]) == .countered, "INBOX-LOOPSTATUS: any counter → Replied")
+            check(MessagingStore.loopStatus([.pending, .accepted]) == .pending, "INBOX-LOOPSTATUS: any pending (no counter) → Pending")
+            check(MessagingStore.loopStatus([.accepted, .accepted]) == .accepted, "INBOX-LOOPSTATUS: all accepted → Accepted")
+            check(MessagingStore.loopStatus([.accepted, .declined]) == .declined, "INBOX-LOOPSTATUS: any decline kills the loop → Declined")
+            check(MessagingStore.loopStatus([.countered, .declined]) == .declined, "INBOX-LOOPSTATUS: declined outranks countered")
+            check(MessagingStore.loopStatus([]) == .pending, "INBOX-LOOPSTATUS: empty → Pending")
+        }
+
         // MARK: B6-BLACKOUT — a blacked-out weekday blocks a pickup (arbitrary days, not just weekends).
         do {
             let prof = TradeProfile(workerID: "z", displayName: "Z", openness: "all",
