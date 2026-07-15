@@ -833,6 +833,7 @@ struct DayIntentEditor: View {
     @State private var reason: IntentReason?
     @State private var reasonText = ""
     @State private var significant = false
+    @State private var carryover = false
     @State private var noteText = ""
     @State private var notePrivate = false
     @State private var saving = false
@@ -890,6 +891,12 @@ struct DayIntentEditor: View {
                     Text("Protects this date from automatic trade suggestions.")
                 }
 
+                Section {
+                    Toggle("Carryover Vacation", isOn: $carryover)
+                } footer: {
+                    Text("Marks this day as a vacation (you're off) and tells others — use it for a carryover vacation that isn't printed in the posted schedule.")
+                }
+
                 Section("Note (≤ 50 chars)") {
                     HStack {
                         TextField("Short note", text: $noteText)
@@ -924,6 +931,7 @@ struct DayIntentEditor: View {
         working = intents.workingIntent(forDay: target.dayID)
         off = intents.offIntent(forDay: target.dayID)
         significant = intents.topology(forDay: target.dayID) != .standard
+        carryover = intents.isCarryoverVacation(target.dayID)
         if let n = intents.note(forDay: target.dayID) {
             noteText = n.message; notePrivate = n.isPrivate; reason = n.reason
         }
@@ -936,6 +944,7 @@ struct DayIntentEditor: View {
         if target.isOff { intents.setOffIntent(off, forDay: target.dayID) }
         else { intents.setWorkingIntent(working, forDay: target.dayID) }
         intents.setTopology(significant ? .personalMilestone : nil, forDay: target.dayID)
+        if carryover != intents.isCarryoverVacation(target.dayID) { intents.toggleCarryoverVacation(target.dayID) }
         let trimmed = noteText.trimmingCharacters(in: .whitespacesAndNewlines)
         intents.setNote(trimmed.isEmpty ? nil
                         : DayNote(dayID: target.dayID, message: trimmed, reason: reason, isPrivate: notePrivate),
