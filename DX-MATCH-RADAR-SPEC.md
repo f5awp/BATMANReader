@@ -129,6 +129,9 @@ Remove from `unseenDays`; set `seenPeerSet[day]` = current peer set. Persist (lo
 - **Re-validate on Propose tap:** `fetchProfile(forWorker:)` for that one peer, rebuild the 2-way deal;
   still valid → `sendRequest`; no longer valid → block, toast "This match just changed," refresh that
   day's cards. One fetch, no stall.
+- **Route through the feed's `propose(_:)`** (not a raw `sendRequest`) so the request carries
+  `origin: .intents` → it files under the **Intents** inbox tab (post Trade-Inbox revamp). A radar deal is
+  a plain 2-way → a single request with **no `loopID`**, so it appears once and threads normally.
 - **Request-status reflection:** cross-reference `MessagingStore.requests`. A (day, peer) with an
   active request → card shows **Pending**; the day's badge is de-emphasized/marked so in-flight trades
   don't read like fresh, un-actioned matches (prevents duplicate proposals; keeps radar consistent
@@ -208,36 +211,48 @@ cell and so the radar reads as a deliberate, manually-refreshed mode rather than
 
 ---
 
-## 10. Verified code map (anchors — **verified 2026-07-12**, re-grep before use)
+## 10. Verified code map (anchors — **re-verified 2026-07-15**, re-grep before use)
 
 Every symbol this feature builds on, confirmed present at the line noted. These are load-bearing; if a
 re-grep before a step shows a signature has drifted, STOP and update this map — do not code to memory.
 
+> **Re-verification note (2026-07-15):** all anchors below were re-confirmed after the **U-OBJ engine
+> redesign** and the **Trade-Inbox revamp** (loopID/tabs/Trade History). Line numbers shifted throughout;
+> `MessagingStore.sendRequest` gained parameters (see the row + §3b/§7 origin note). The optimizer's
+> curation is now expressed via **`acceptanceScore`** (per-leg mean quality): `finalize` floors on
+> `acceptanceScore >= floorNormalProb` and caps at `intentResultCap` — which makes §0's "don't reuse the
+> optimizer" argument *more* literally true. `finalize`, `floorNormalProb`/`floorLuckyProb`,
+> `intentResultCap (60)`, and `intentCandidateCap (300)` all still exist.
+
 | Symbol | Location | Signature / shape (as verified) |
 |---|---|---|
-| `TradeRouter.intentSolutions` | TradeRouter.swift:623 | `(excluding:generation:lucky:mutualOnly:) async -> [TradePackage]` — the OPTIMIZER (do not reuse for radar) |
-| `TradeRouter.assembleIntentDeal` | TradeRouter.swift:575 | `(_ p: IntentPairing) -> (gives:[String], takes:[String], mutualMarked:Int)?` |
-| `TradeRouter.IntentPairing` | TradeRouter.swift:562 | struct: `myGiveMarked/myGivePref/theirGiveMarked/theirGivePref: [String]` |
-| `TradeMatcher.twoWayExplore` | TradeMatcher.swift:476 | `(withWorker:name:windowStart:windowEnd:mySeeking:theirSeeking:myProfile:theirProfile:myID:ignoreOwnBlacklist:preloadedMine:preloadedPeer:) async -> TwoWayPlan` |
-| `MatchContext.build` | called TradeRouter.swift:625 | `(selfID:) async` → `ctx.{maps, rosterMeta, profilesByID, universe, mineEntries, priors, start, end, profile(for:name:)}` |
-| **Local closures in `intentSolutions`** | TradeRouter.swift:634–670 | `wouldTake`, `schedulesCross`, `anchoredSet`, `dayUrgency`, `urgency` — **NOT reusable** (see §11 step 1 decision) |
+| `TradeRouter.intentSolutions` | TradeRouter.swift:711 | `(excluding selfID:generation:lucky:mutualOnly:) async -> [TradePackage]` — the OPTIMIZER (do not reuse for radar) |
+| `TradeRouter.assembleIntentDeal` | TradeRouter.swift:682 | `nonisolated (_ p: IntentPairing) -> (gives:[String], takes:[String], mutualMarked:Int)?` |
+| `TradeRouter.IntentPairing` | TradeRouter.swift:669 | `struct IntentPairing: Equatable, Sendable` |
+| `TradeRouter.finalize` | TradeRouter.swift:1108 | floors `acceptanceScore >= floorNormalProb` (`floorLuckyProb` if lucky) + `needsQualSwap`, caps at `intentResultCap` — **the curation to OMIT in radar** |
+| `intentResultCap` / `intentCandidateCap` | TradeRouter.swift:940 / :944 | `60` / `300` (keep 300 only as the runaway backstop; `log()` if it bites) |
+| `TradeMatcher.twoWayExplore` | TradeMatcher.swift:502 | `(withWorker:name:windowStart:windowEnd:mySeeking:theirSeeking:myProfile:theirProfile:myID:ignoreOwnBlacklist:preloadedMine:preloadedPeer:) async -> TwoWayPlan` |
+| `TradeMatcher.twoWayExploreCore` | TradeMatcher.swift:523 | `nonisolated` PURE variant over preloaded schedules — **use this for off-main radar recompute (Task.detached)** |
+| `TwoWayPlan` | TradeMatcher.swift:361 | `struct TwoWayPlan: Sendable` |
+| `TwoWayLeg` fields | TradeMatcher.swift:348 | `dayID, date, desk, startHour, bookend, wanted` (mirror at §11 step 1) |
+| `MatchContext.build` | called TradeRouter.swift:281 & :713 | `(selfID:) async` → `ctx.{maps, rosterMeta, profilesByID, universe, mineEntries, priors, start, end, profile(for:name:)}` |
 | `TradeProfileStore.refreshOthers` | TradeProfile.swift:427 | `() async` — pulls all peer profiles (CloudKit `fetchAll`) |
 | `TradeProfileStore.fetchProfile(forWorker:)` | TradeProfile.swift:549 | `async -> TradeProfile?` — single-peer network fetch (propose re-validate) |
 | `TradeProfileStore.profile(forWorker:)` | TradeProfile.swift:510 | `-> TradeProfile?` — sync, from local `others` |
-| `TradeProfile.seekingDayIDs / wantToWorkDayIDs / opennessLevel` | TradeProfile.swift ~79/102 | `Set<String>` / `Set<String>?` / enum |
-| `DayIntentStore.seekingDayIDs / wantToWorkDayIDs / intentsRevision` | DayIntentStore.swift | derived `Set<String>` / revision Int |
-| `MessagingStore.sendRequest` | Messaging.swift:823 | `(to:toName:note:take:give:origin:) async` |
-| `MessagingStore.requests` / `status(of:)` | Messaging.swift:530 / :1001 | `[TradeRequest]` / `-> TradeRequestStatus` |
-| `propose(_ pkg:)` | TradeIntentsFeed.swift:378 | fires `sendRequest` per assignment |
-| `CompactSwapCard` | TradeIntentsFeed.swift | has `onPropose: (TradePackage)->Void` |
+| `TradeProfile.wantToWorkDayIDs / opennessLevel` | TradeProfile.swift:102 / :195 | `Set<String>?` / `TradeOpenness` (peer "seeking" is passed as `theirSeeking:` into `twoWayExplore`) |
+| `DayIntentStore.seekingDayIDs / wantToWorkDayIDs / intentsRevision` | DayIntentStore.swift:117 / :127 / :24 | derived `Set<String>` / revision Int |
+| `MessagingStore.sendRequest` | Messaging.swift:903 | `(to:toName:note:take:give:daysValid:ecb:ecbValue:offerID:chain:qualSwap:origin:loopID:) async` — **radar proposes via the feed's `propose`, so `origin` is set (→ Intents tab); a 2-way deal has NO `loopID`** |
+| `MessagingStore.requests` / `status(of:)` | Messaging.swift:557 / :1120 | `[TradeRequest]` / `-> TradeRequestStatus` (now loop-aware; a 2-way radar deal is a single request, so it reads normally) |
+| `propose(_ pkg:)` | TradeIntentsFeed.swift:389 | fires `sendRequest` per assignment (sets `origin: .intents`) |
+| `CompactSwapCard` | TradeIntentsFeed.swift:741 | has `onPropose: (TradePackage)->Void` |
 | `TradeFeedCache.intentMatchCount` | TradeIntentsFeed.swift:36 | drives the Intents badge |
-| Global stats bar `TradeStatsBar` | ContentView.swift:287 (rendered :80) | where the ONE new counter goes |
-| `LayerVisibility` | HomeView.swift:29 | fields: `notes, intentOverlays, availability, shiftType, deskAssignments` → **ADD `matches`** |
+| Global stats bar `TradeStatsBar` | ContentView.swift:335 (rendered :83) | where the ONE new counter goes |
+| `LayerVisibility` | HomeView.swift:29 | fields: `notes:30, intentOverlays:31, availability:32, shiftType:33, deskAssignments:34` → **ADD `matches`** |
 | Home cell markers (§10) | HomeCalendar.swift | `noteDot`, `NoteMarker`, `EventMarker`, `numberColor`, `borderColor` |
-| Calendar tap | HomeView.swift:266–299 | `onTap(dayID,isOff)` → `handleTap` → `DayEditTarget` sheet |
-| New-master hook | ContentView.swift:186 + `foregroundRefresh` `rosterRows > 0` | where `.full` recompute attaches |
-| Launch precompute slot | ContentView.swift:192–203 | where the radar seed runs under the loader |
-| Existing engine tests | EngineTests.swift | **must stay green after any engine touch** |
+| Calendar tap | HomeView.swift:106 (`onTap: handleTap`) → `handleTap` :266 → `DayEditTarget` :543 (assigned :281/:109) | `onTap(dayID,isOff)` → `DayEditTarget` sheet |
+| New-master hook | ContentView.swift:272 `foregroundRefresh` → :283 `rosterRows > 0 && diff.hasChanges` | where `.full` recompute attaches |
+| Launch precompute slot | ContentView.swift:183–193 (`async let rosterRows` … `await`) | where the radar seed runs under the loader |
+| Existing engine tests | EngineTests.swift | **must stay green after any engine touch** (now includes 8 `INBOX-*` + `OPS-QUAL` tests) |
 
 ### Assumptions ledger (each must hold; re-check if a step fails)
 1. The mutual candidate set is small enough to run **uncapped** (engine comment says active+schedule-crossing is "already small"). — *Risk if wrong:* refresh latency. *Mitigation:* keep the 300 safety backstop; `log()` if it bites; measure in step 1.
@@ -262,7 +277,8 @@ Each step: **Preconditions** (re-grep/read before touching) → **Guardrails** (
   `RadarMatch` is new, `Sendable`, no engine mutation.
 - *Gate:* `BuildProject` clean **AND** the **existing EngineTests pass unchanged** **AND** two new tests
   pass: (a) *determinism* — `radarMatches` twice → identical; (b) *completeness* — a fixture where a real
-  mutual match sits below `floorNormalProb` is **absent from `intentSolutions` but present in `radarMatches`**.
+  mutual match has `acceptanceScore < floorNormalProb` is **dropped by `finalize` (absent from
+  `intentSolutions`) but present in `radarMatches`** (radar omits `finalize`).
 - *Rollback:* delete the new function + tests; nothing else references it yet.
 
 **Step 2 — `MatchStore`**
