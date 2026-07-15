@@ -23,8 +23,21 @@ final class ShiftStore {
     /// resolved entirely at INGEST (`ScheduleParser.resolveDay` reads the picked-up second shift line), so
     /// there is no manual per-day override layer anymore. (REL1)
     var shifts: [Shift] {
-        guard let rt = SettingsManager.shared.effectiveReliefThrough else { return rawShifts }
-        return rawShifts.filter { !TradeProfile.isPastRelief(day: $0.date, reliefThrough: rt) }
+        let base: [Shift]
+        if let rt = SettingsManager.shared.effectiveReliefThrough {
+            base = rawShifts.filter { !TradeProfile.isPastRelief(day: $0.date, reliefThrough: rt) }
+        } else {
+            base = rawShifts
+        }
+        // #4: a day the user flagged CARRYOVER VACATION becomes a vacation (OFF) day — overriding whatever
+        // the master printed (e.g. an un-coded `L,S` that resolved as worked). Shows VAC; not offered to give.
+        let carryover = DayIntentStore.shared.carryoverVacationDays
+        guard !carryover.isEmpty else { return base }
+        return base.map { s in
+            guard carryover.contains(s.id) else { return s }
+            return Shift(id: s.id, date: s.date, startHour: 0, endHour: 0, role: .off, desk: "",
+                         leaveCode: "V", isOff: true)
+        }
     }
 
     private let encoder = JSONEncoder()
