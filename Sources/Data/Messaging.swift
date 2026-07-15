@@ -910,10 +910,8 @@ final class MessagingStore {
         let recipient = TradeProfileStore.shared.profile(forWorker: toID)
         // GATE: only a REAL signed-in account (profile stamped `accountClaimed`) can receive anything —
         // a legacy/orphan profile record does NOT count. Deny + surface to the UI (they still appear in
-        // matches; behavior is just inferred). EXCEPTION: a qual-swap request's real audience is the BRIDGES
-        // (they discover it via `candidateIDs`), so it must send even if the nominal taker isn't on the app —
-        // otherwise the whole qual swap silently drops and never lands in your Sent inbox.
-        guard toID == myID || recipient?.accountClaimed == true || qualSwap != nil else {
+        // matches; behavior is just inferred).
+        guard toID == myID || recipient?.accountClaimed == true else {
             blockedRecipient = toName
             return
         }
@@ -1154,7 +1152,10 @@ final class MessagingStore {
         await respond(to: request, status: .message, note: t, imageBase64: imageBase64)
     }
 
-    var incoming: [TradeRequest] { requests.filter { $0.toID == myID } }
+    // A request I SENT is never "incoming" — even a self-addressed standing bridge request (fromID == toID
+    // == me). Otherwise it lands in BOTH incoming and outgoing, the same id renders in two List sections,
+    // and SwiftUI drops the duplicate → the sent qual-swap request shows nowhere in my inbox.
+    var incoming: [TradeRequest] { requests.filter { $0.toID == myID && $0.fromID != myID } }
     var outgoing: [TradeRequest] { requests.filter { $0.fromID == myID } }
 
     /// D6 anti-spam: give-day (and qual-swap give) IDs I've ALREADY proposed to `peerID` in an active
