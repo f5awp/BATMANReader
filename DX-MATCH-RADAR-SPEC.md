@@ -86,6 +86,9 @@ Tapping a match opens a **calendar/detail view** (reuse `PackageDetailView.fromC
 - **Days they can take from you** — a **sorted list** (U-OBJ `rankLess`: bookend → soonest → quality) of *your* working days this peer could legally cover and has signalled Want-to-Work for. For a multi-day/day-for-day deal you pick which of these to give (same pattern as the existing multi-day give-back picker).
 - **Propose from here** — per kind (Day / ECB / Both → two buttons). Proposing promotes the match → a real request in Intents (`sendRequest` via `propose`, `origin: .intents`, no `loopID` — a 2-way is a single request, consistent with the Trade-Inbox revamp), and re-validates the peer first (§5).
 
+### 4d. Proposal carries alternates (counter-ready)
+Even though you pick a specific day to propose, the request carries the **full candidate set** — your selected day AND the other legal alternate days from the sorted list. On the recipient's card the **selected day is highlighted**, but the **alternates remain visible so they can counter with a different day** (reusing the Trade-Inbox Stage 8 package-carrying counter: their counter comes back as a package card in one merged thread). So a propose is "here's my pick, and here's what else works" — never a take-it-or-leave-it single day. Store the alternates on the request (e.g. an optional `candidateDayIDs`/`altGiveDayIDs` field, JSON payload, back-compat) so the recipient's counter picker is seeded from them.
+
 ---
 
 ## 5. MatchStore + correctness
@@ -189,5 +192,10 @@ Grep-before-use (verify §10, update first on drift; `DocumentationSearch` for n
 
 ---
 
-## 13. Open interpretation to confirm before Step 1
-- **Want-to-Trade acceptance scope** is read as the **day-for-day return window** (which days/quals/shifts you'll take BACK for a give), default open. If instead the calendar is meant to *bulk-mark a range of your working days as Want-to-Trade* (a marking-efficiency tool), say so — it changes §8's model.
+## 13. Resolved decisions
+- **Want-to-Trade acceptance scope = the day-for-day return window** (which days/quals/shifts you'll take BACK for a give), default open. *(Confirmed 2026-07-15 — this is the §8 model.)*
+- **D1** star = binary direction-A opportunity (no count); mutual drives the passive lane/notifications.
+- **D2** inbox top-level `Matches | Requests` segment (not a 5th peer-tab).
+- **Proposals carry alternates** (§4d) so the recipient can counter with a different day (ties to Trade-Inbox Stage 8).
+
+Spec is build-ready. Step 1 = the `TradeKind` + `AcceptScope` model (§11).
