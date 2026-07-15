@@ -181,7 +181,8 @@ struct FindCandidatesSection: View {
                         n += 1
                     }
                     WidgetData.update()
-                    packageSent = "Bridge request\(n == 1 ? "" : "s") sent for \(n) day\(n == 1 ? "" : "s"). The bridges you asked will see it; track replies in your Inbox."
+                    try? await Task.sleep(for: .milliseconds(400))   // let the picker dismiss before the alert
+                    packageSent = "Bridge request\(n == 1 ? "" : "s") sent for \(n) day\(n == 1 ? "" : "s"). The bridges you asked will see it; track replies in your Inbox → Qual Swap tab."
                 }
             }
         }
@@ -209,7 +210,8 @@ struct FindCandidatesSection: View {
                         take: [], give: [ctx.leg.giveShiftDayID], qualSwap: sendLeg, origin: .search)
                     WidgetData.update()
                     pkgSwap = nil
-                    packageSent = "Qual-swap request sent. Track it in your Inbox."
+                    try? await Task.sleep(for: .milliseconds(400))   // let the picker dismiss before the alert
+                    packageSent = "Qual-swap request sent. Track it in your Inbox → Qual Swap tab."
                 }
             }
         }
@@ -580,9 +582,13 @@ struct FindCandidatesSection: View {
         }
         WidgetData.update()
         let n = pkg.assignments.count
-        packageSent = pkg.qualSwap != nil
-            ? "Qual-swap request sent to \(pkg.assignments.first?.name ?? "the taker") + \(pkg.qualSwap?.candidates.count ?? 0) bridge\(pkg.qualSwap?.candidates.count == 1 ? "" : "s"). Track it in your Inbox."
+        let msg = pkg.qualSwap != nil
+            ? "Qual-swap request sent to \(pkg.assignments.first?.name ?? "the taker") + \(pkg.qualSwap?.candidates.count ?? 0) bridge\(pkg.qualSwap?.candidates.count == 1 ? "" : "s"). Track it in your Inbox → Qual Swap tab."
             : "Sent to \(n) dispatcher\(n == 1 ? "" : "s"). Track replies in your Inbox."
+        // Let any open detail/picker sheet finish dismissing before the confirmation alert shows, so the
+        // alert doesn't race the cover and cascade-close everything (the "propose closed my trade" bug).
+        try? await Task.sleep(for: .milliseconds(400))
+        packageSent = msg
     }
 
     private func messageSelected() {
