@@ -45,17 +45,17 @@ struct MessagingDock: View {
     }
 
     var body: some View {
-        // Four controls: Inbox · Channel · Trade status · ⋯ (settings). Each destination
-        // carries its own "needs you" badge; the ⋯ overflow is settings only.
+        // Three controls: Inbox · Channel · ⋯ (overflow). The ⋯ menu holds Trade History,
+        // ECB Accounting, Trade Settings, and App Settings. Active trades live in the Inbox.
         HStack(spacing: DS.s) {
             iconButton("tray.full.fill", label: "Inbox",
                        badge: store.pendingIncoming.count + ECBAccountingStore.shared.pendingConfirmations.count,
                        badgeColor: AppColor.danger) { showInbox = true }
             iconButton("megaphone.fill", label: "Channel",
                        badge: store.unreadBroadcastCount, badgeColor: AppColor.primary) { showChannel = true }
-            iconButton("checklist", label: "Trade status",
-                       badge: tradeStatusBadge, badgeColor: AppColor.pending) { showDashboard = true }
             Menu {
+                Button { showDashboard = true } label: { Label("Trade History", systemImage: "clock.arrow.circlepath") }
+                Divider()
                 Button { showECB = true } label: { Label("ECB Accounting", systemImage: "banknote") }
                 Divider()
                 Button { showTradeSettings = true } label: { Label("Trade Settings", systemImage: "arrow.left.arrow.right") }

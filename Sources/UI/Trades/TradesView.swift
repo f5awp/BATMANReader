@@ -137,35 +137,17 @@ struct IntentTallyBar: View {
 
 struct TradeDashboardSheet: View {
     @Environment(\.dismiss) private var dismiss
-    @State private var tab = 0
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                DXSegmented(selection: $tab, options: [
-                    .init(0, "Accepted"), .init(1, "Pending"),
-                    .init(2, "Denied"), .init(3, "History"),
-                ], color: { t in
-                    switch t {
-                    case 0:  return AppColor.success
-                    case 1:  return AppColor.pending
-                    case 2:  return AppColor.danger
-                    default: return nil        // History = neutral glazed tile
-                    }
-                })
-                .padding()
-
-                DXPaletteStripe(height: 4).padding(.horizontal)
-
-                switch tab {
-                case 0: AcceptedZone()
-                case 1: PendingZone()
-                case 2: DeniedZone()
-                default: HistoryZone()
-                }
+                DXPaletteStripe(height: 4).padding(.horizontal).padding(.top, 8)
+                // Trade History = DONE only (schedule-proven / official). Active trades — pending,
+                // negotiating, or accepted-but-not-yet-reflected — live in the Trade Inbox instead.
+                HistoryZone()
                 Spacer(minLength: 0)
             }
-            .navigationTitle("Trade Status")
+            .navigationTitle("Trade History")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { DXCloseButton { dismiss() } } }
             // Pull the latest trade state + your cross-device history when the board opens (and on pull).
