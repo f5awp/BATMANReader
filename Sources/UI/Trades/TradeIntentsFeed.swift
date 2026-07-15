@@ -454,17 +454,9 @@ struct MasterFilterSheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Search engine") {
-                    DXSegmented(selection: $draft.engine, options: [
-                        .init(SearchFilter.Engine.minCost, "Min-Cost"),
-                        .init(SearchFilter.Engine.nWay, "N-Way"),
-                        .init(SearchFilter.Engine.both, "Both"),
-                    ])
-                    .listRowInsets(EdgeInsets())
-                    .listRowBackground(Color.clear)
-                    Text("Min-Cost = fewest-people swaps · N-Way = circular loops · Both = everything (capped for speed).")
-                        .font(.caption2).foregroundStyle(.secondary)
-                }
+                // (Search-engine Min-Cost/N-Way/Both toggle retired — every match is a circular loop now,
+                //  so the distinction was misleading. Generation always runs "Both"; the "Max people in a
+                //  trade" control below is the real knob. "I'm Feeling Lucky" is unaffected.)
                 Section("Max people in a trade") {
                     DXSegmented(selection: $draft.maxPeople, options: (1...4).map { .init($0, "\($0)") })
                         .listRowInsets(EdgeInsets())
@@ -549,8 +541,9 @@ struct MasterFilterSheet: View {
                     Text("Search with your openness set to this — just for this search. “Open to all” accepts any pickup that's physically possible (you're off, qualified, rested); “Bookends only” keeps just bookend days. Your blacklist still applies, and your saved setting isn't changed.")
                 }
                 Section {
-                    // One-time HEAVY generation for the chosen criteria (3+ / N-Way included).
+                    // One-time HEAVY generation for the chosen criteria (3+ loops included).
                     Button {
+                        draft.engine = .both   // toggle retired — always generate the full set; ranker curates
                         filter = draft; onGenerate(draft); dismiss()
                     } label: {
                         Label("Generate matches", systemImage: "wand.and.stars").frame(maxWidth: .infinity)
