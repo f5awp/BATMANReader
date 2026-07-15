@@ -678,8 +678,11 @@ struct ThreadView: View {
         .buttonStyle(.borderedProminent).tint(AppColor.success)
         .disabled(!staleDays.isEmpty || acceptDays.isEmpty)
         HStack {
-            Button { respond(.countered) } label: { Label("Message", systemImage: "bubble.left").frame(maxWidth: .infinity) }
+            // Send the note as a real chat message (a visible bubble) — NOT a note-less ".countered"
+            // (which used to render as a blank "counter-offer" row). Empty → disabled.
+            Button { sendReplyMessage() } label: { Label("Message", systemImage: "bubble.left").frame(maxWidth: .infinity) }
                 .buttonStyle(.bordered)
+                .disabled(replyNote.trimmingCharacters(in: .whitespaces).isEmpty)
             Button(role: .destructive) { respond(.declined) } label: { Label("Decline", systemImage: "xmark.circle").frame(maxWidth: .infinity) }
                 .buttonStyle(.bordered).tint(AppColor.danger)
         }
@@ -733,7 +736,7 @@ struct ThreadView: View {
                 auditRow(icon: "paperplane.fill", tint: AppColor.primary,
                          who: request.fromName, what: "proposed this trade", when: request.createdAt,
                          note: request.note)
-                ForEach(store.responses(for: request.id).sorted { $0.createdAt < $1.createdAt }) { r in
+                ForEach(store.responses(forLoop: request.groupKey)) { r in
                     if r.statusValue == .message {
                         // Free-form chat → iMessage-style bubble (§4): mine trailing/blue, theirs leading.
                         let mine = r.responderID == myID
@@ -1045,6 +1048,13 @@ struct ThreadView: View {
             WidgetData.update()
             // Stay on the thread so your reply (and its status) is visible.
         }
+    }
+
+    /// Post the note field as a real chat message (visible bubble). Replaces the old note-less `.countered`.
+    private func sendReplyMessage() {
+        let text = replyNote.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        Task { await store.postMessage(to: request, text: text); replyNote = "" }
     }
 
     /// D7 partial accept — counter back to the sender with only the selected days.

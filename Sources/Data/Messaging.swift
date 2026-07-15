@@ -1041,6 +1041,9 @@ final class MessagingStore {
 
     func respond(to request: TradeRequest, status: TradeRequestStatus, note: String,
                  imageBase64: String? = nil) async {
+        // Never persist a note-less counter — it renders as a blank "counter-offer" row (TRADE-INBOX Stage 7).
+        // Accept/decline legitimately carry no note (they show as a status line), so this guards `.countered` only.
+        if status == .countered, note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, imageBase64 == nil { return }
         let resp = TradeResponse(
             id: UUID().uuidString, requestID: request.id,
             responderID: myID, responderName: myName,
@@ -1093,6 +1096,18 @@ final class MessagingStore {
 
     func responses(for requestID: String) -> [TradeResponse] {
         responses.filter { $0.requestID == requestID }
+    }
+
+    /// All responses across EVERY leg of a loop (grouped by `groupKey`), so a circular trade shows ONE
+    /// merged conversation — counters + messages from every participant, in order. For a plain (single)
+    /// request this is identical to `responses(for:)`. (TRADE-INBOX Stage 7)
+    func responses(forLoop groupKey: String) -> [TradeResponse] {
+        let legIDs = Set(requests.filter { $0.groupKey == groupKey }.map(\.id))
+        return Self.responsesForLoop(responses, legIDs: legIDs)
+    }
+    /// PURE, testable core of the merged-thread fetch.
+    static func responsesForLoop(_ responses: [TradeResponse], legIDs: Set<String>) -> [TradeResponse] {
+        responses.filter { legIDs.contains($0.requestID) }.sorted { $0.createdAt < $1.createdAt }
     }
 
     /// The latest decision on a request (newest non-chat response, else pending).

@@ -617,6 +617,19 @@ enum TradeEngineTests {
                   "INBOX-UNREAD: never-seen + other's response → new")
         }
 
+        // MARK: INBOX-THREAD — responses across a loop's legs merge into one chronological thread (TRADE-INBOX Stage 7).
+        do {
+            func r(_ id: String, req: String, at t: TimeInterval) -> TradeResponse {
+                TradeResponse(id: id, requestID: req, responderID: "x", responderName: "X", status: "message",
+                              note: "m", createdAt: Date(timeIntervalSince1970: t))
+            }
+            // Two legs of one loop (legA, legB) + an unrelated leg (legC).
+            let all = [r("b", req: "legB", at: 30), r("a", req: "legA", at: 10), r("c", req: "legC", at: 20)]
+            let merged = MessagingStore.responsesForLoop(all, legIDs: ["legA", "legB"])
+            check(merged.count == 2, "INBOX-THREAD: only this loop's legs are gathered (legC excluded)")
+            check(merged.map(\.id) == ["a", "b"], "INBOX-THREAD: merged thread is chronological across legs")
+        }
+
         // MARK: B6-BLACKOUT — a blacked-out weekday blocks a pickup (arbitrary days, not just weekends).
         do {
             let prof = TradeProfile(workerID: "z", displayName: "Z", openness: "all",
