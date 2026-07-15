@@ -1,362 +1,190 @@
-# DX Match Radar — Implementation Spec (v2)
+# DX Match Radar — Implementation Spec (v3)
 
-Surface mutual-intent matches directly on the Home calendar so a dispatcher can see — per day —
-that an exact mutual match exists, drill in to the matched people, propose, flag days to watch, and
-see when a day gains a new match.
+Surface trade opportunities directly on the Home calendar. Two layers of signal:
+1. **Passive matches** — a **mutual-intent** match exists on a day (someone wants what you marked, or vice-versa). Shown as a **star** on the cell, auto-surfaced in a passive **Matches** inbox lane, and (optionally) pushed.
+2. **Per-day Trade List** — tap any day → a ranked list of **every legal-to-work trade** for that day (not just mutual matches), so you can act even where no one has flagged an intent yet.
 
-Design-locked from the 2026-07-12 design + skeptical-review conversation. v2 supersedes v1: the data
-source is a **dedicated deterministic query** (not the optimizer's `mutualPackages`), the "unseen"
-state is a **local read-marker** (no CloudKit), refresh is an **explicit control**, matches live
-behind a **layer toggle**, proposals **re-validate**, and **pinning is cut**.
+**v3 supersedes v2.** v2 was mutual-only, per-day "Matches" tab. v3 adds: the per-day **Trade List = all legal trades** (U-OBJ ranked), a **passive Matches vs active Requests** inbox split, **ECB/Day trade-kind** on want-to-trade, **PickupPrefs** on want-to-work, per-day **watch** (per-match notifications) vs **batched** notifications, and the finalized **disc / star / flag-ring** marker language. The engine core, determinism discipline, and the verified anchor map (§10) carry over from v2.
 
 ---
 
-## 0. Core principle & data source (THE critical decision)
+## 0. Two data sources (the critical decisions)
 
-A "match" for a day = a **2-way mutual deal exists** between me and a specific peer that involves that
-day — real, eligibility-checked (qual/desk/timing + both blacklists), and directly proposable.
+### 0a. `radarMatches` — MUTUAL matches (drives the calendar star + passive inbox lane)
+A "match" for a day = a **2-way mutual deal** exists between me and a specific peer involving that day — real, eligibility-checked (qual/desk/timing + both blacklists), directly proposable, and **mutual** (≥1 day I marked AND ≥1 day they marked, both in the deal).
 
-**Do NOT reuse `TradeRouter.intentSolutions` / `mutualPackages`.** That is a curated optimizer output:
-it applies an acceptance-score **floor** (`finalize`, drops real matches), a **rank + cap at 60**,
-**one bundled deal per peer**, and **3-way circular loops** (default `normalMaxPeople = 3`). Feeding
-it to a per-day radar makes the count under-report and shift between refreshes with no intent change —
-which would make the "new match" badge cry wolf.
+**Do NOT reuse `TradeRouter.intentSolutions`.** It curates: `finalize` floors on `acceptanceScore >= floorNormalProb`, caps at `intentResultCap (60)`, bundles one deal per peer, and includes 3-way loops. A per-day radar fed by it would under-count and flicker → the "new match" badge would cry wolf.
 
-### The dedicated radar query
-Add a sibling to `intentSolutions`, e.g. `TradeRouter.radarMatches(excluding selfID:) async -> [RadarMatch]`:
+`TradeRouter.radarMatches(excluding selfID:) async -> [RadarMatch]`: same candidate universe (active, schedule-crossing, sorted by `workerID`), reuse `twoWayExploreCore` + `assembleIntentDeal` + the `mutualOnly` gate, **omit** `finalize`/floor/cap/loops. One `RadarMatch` per surviving peer-deal: `{ peer(id,name), giveDayIDs, takeDayIDs, kind }` where `kind ∈ {day, ecb, both}` (see §2). Deterministic, complete, people-centric.
 
-- Iterate the **same candidate universe** the mutual path uses — active accounts, schedule-crossing,
-  sorted by `workerID` (deterministic). Keep the `Task.yield()` per candidate so it never freezes.
-- For each peer: reuse the existing **`twoWayExplore` + `assembleIntentDeal` + the `mutualOnly` gate**
-  (≥1 day I marked AND ≥1 day they marked, both in the deal).
-- **Omit** everything that curates: no circular-loop block, no `finalize`, no score-floor, no
-  `intentResultCap`, no `intentCandidateCap` truncation (the mutual set is already pruned to active +
-  schedule-crossing peers — the engine notes it's "already small"; confirm perf, keep the 300 safety
-  bound only as a runaway backstop, and `log()` if it ever bites).
-- Return one `RadarMatch` per surviving peer-deal: `{ peer(id,name), giveDayIDs, takeDayIDs }`.
+### 0b. Per-day `dayTradeList` — ALL LEGAL trades for one day (drives the tap-in Trade List)
+When the user taps a day, list **every trade that would be legal to work on that day**, not just mutual matches — ranked by the **normal U-OBJ order** (intent-marked → bookend → split → …). This is a **single-day, on-tap** search, so its candidate set is bounded (peers off/qualified/rested for that day) and it never runs for all days at once.
 
-Deterministic (sorted peers, deal built the same way each run), complete (no floor/cap), people-centric.
+`TradeRouter.dayTradeList(dayID:excluding:) async -> [DayTradeRow]` — reuse the intent/twoWay machinery scoped to the one day, rank with the existing `rankLess` comparator (so `acceptanceScore` + the intent/bookend/split tiering apply unchanged). Row = `{ peer(id,name), shift(desk,startHour,type A/P/M), kind(day/ecb/both), note?, tier(mutual/bookend/split), acceptanceScore }`.
+
+**Star vs List (design decision D1):** the **calendar star = mutual matches only** (`radarMatches`) — high-signal. The **tap-in Trade List = all legal trades** (`dayTradeList`) — comprehensive. If the star lit for every legally-workable day it would be meaningless. *(Flag D1 if this should change.)*
 
 ### Indexing
-`MatchStore` builds `matchesByDay: [DayID: [RadarMatch]]` — for each deal, add it under every dayID in
-`giveDayIDs ∪ takeDayIDs`. **Per-day count = distinct peers.**
-
-| User combination | Where the day appears |
-|---|---|
-| I work a shift I marked **want-to-trade**, someone **wants to work** it | dayID ∈ a deal's `giveDayIDs` |
-| I'm **off** a day I marked **want-to-work**, someone **wants to trade** it | dayID ∈ a deal's `takeDayIDs` |
+`MatchStore.matchesByDay: [DayID: [RadarMatch]]` — each mutual deal filed under every day in `giveDayIDs ∪ takeDayIDs`; **per-day star count = distinct peers**. The Trade List is NOT pre-indexed — it's computed on tap.
 
 ---
 
-## 1. Calendar cell markers
+## 1. Calendar cell markers (finalized language)
 
-Behind a **"Matches" layer toggle** (see §6). Two orthogonal, colorblind-safe channels; all colors via
-`AppColor` (no raw/neon).
+All colors via `AppColor` (colorblind-safe, no neon). Behind the **"Matches" layer toggle** (§6), default on.
 
-### 1a. Match count badge (ambient — every match day)
-- **Position:** top-trailing (the §10 slot). When present, the note/event dot moves to **top-leading**.
-- **Color:** `AppColor.heat` (the Intents/trade hue — consistent, distinct from every tile color).
-- **States:**
-  | State | Appearance |
-  |---|---|
-  | N matches, all seen | **outline** heat circle, number `N` |
-  | N matches, ≥1 new since last seen | **filled** heat circle, number `N` |
-  | ≥1 match already has an in-flight request | see §3b — badge de-emphasized / marked "in motion" |
-- Count = distinct peers. Fill = an **unseen** change (see §3). Cap label at `9+`. Self-contained chip
-  (own background) so it's legible on any tile.
+| Marker | Meaning | Shape |
+|---|---|---|
+| **Orange disc** behind the date number | **Significant day** (holiday / special) — was the star | filled disc, `AppColor` orange |
+| **Star** (cell corner) | **≥1 mutual match** exists for this day | star glyph, trade hue |
+| **Ring around the star** | **You're watching** this day (= flagged; drives per-match notifications, §7) | thin circle around the star |
+| Count chip on the star | distinct mutual peers (`9+` cap); **filled** = unseen growth, **outline** = all seen | |
 
-### 1b. Flag ring (user watchlist)
-- Reuses the removed §10 decorative disc as a **user action**: a ring around the cell, `AppColor.heat`.
-- Present only on flagged days. Independent of the badge (a flagged day still shows its count/fill).
+### Layering (outer→inner, all coexist)
+watch-ring (around star) · today blue inset ring (§10) · **significant orange disc** (behind number) · tile glaze · number · **star + count** (corner) · note/event dot (opposite corner).
+- The **significant day** moves from a star to the **orange disc** (frees the star for matches).
+- The **star** is the match indicator; its **ring** is the watch flag.
+- Never let the watch-ring, today-ring, and significant-disc collide — distinct radii/positions; verify light + dark.
 
-### 1c. Layering
-Outer→inner: flag ring (if flagged) · today blue inset ring (§10, if today) · tile glaze · number ·
-count badge (top-trailing) · note/event dot (top-leading). All coexist.
-
-### "What counts as a change"
-A day's **distinct-peer set grows** (a peer appears that wasn't in the last-seen set). Reordering or
-score changes do **not** count. Fill clears when the user opens that day's Matches tab.
+### "What counts as a new match"
+A day's **distinct-peer set grew** (a peer appears that wasn't in the last-seen set). Reorder/score changes don't count. Filled star clears when the day's Trade List opens (`markSeen`).
 
 ---
 
-## 2. Day detail — Matches tab
+## 2. Trade-kind: ECB / Day / Both
 
-Tapping a day opens the existing day editor with a `DXSegmented`:
-- **[ Info ]** — current day editor (intent / reason / note / vacation), unchanged.
-- **[ Matches ]** — a list of **mini deal cards** (reuse the ECB card / `CompactSwapCard` + its
-  `onPropose`). Each card = one counterparty + the swap summary + a **Propose** button.
-  - **Default sort** by a sensible signal (acceptance likelihood / prior trade partners) so the best
-    options are on top. **No manual pinning** (cut — a day realistically has 1–5 matches; nothing to
-    scroll).
-  - Cards reflect **request status** (§3b): a peer with an outstanding request shows **"Pending"**
-    (Propose disabled), not a fresh Propose button.
-  - Opening this tab calls `markSeen(dayID)` → clears unseen, re-saves the day's peer-set baseline.
+Marking a **want-to-trade** (give-away) day gains a **kind pill: Day · ECB · Both** (`Mark Intents` UI). Marking **want-to-work** stays a single mark (+ optional PickupPrefs, §8).
+
+- **Model:** `DayIntentStore.tradeKindByDay: [DayID: TradeKind]` (`.day/.ecb/.both`, default `.both` for a want-to-trade day). Published on `TradeProfile` (rides the JSON payload — no CloudKit index).
+- **Match kind resolution:** a deal's `kind` = intersection of the giver's kind and what the taker will do:
+  - giver `.day` + reciprocal taker → **Day**; giver `.ecb` + off-taker who takes for points → **ECB**; giver `.both` → whichever the taker supports (possibly **Both**).
+- **Surfacing:** the match card and Trade List row show the kind badge(s). A **Both** card offers **two propose buttons** (Propose Day / Propose ECB). Proposing sets `origin: .intents` and (ECB) the ECB fields.
 
 ---
 
-## 3. MatchStore + correctness rules
+## 3. Day detail — 2 tabs (Trade List default)
 
-`@MainActor @Observable final class MatchStore` (`MatchStore.shared`) — single source of truth;
-calendar, stats bar, and Home list observe it → auto re-render on mutation.
+Tapping a day opens the day editor with a `DXSegmented`, **Trade List selected by default**:
+- **[ Trade List ]** (default) — ranked `dayTradeList` rows for THIS day: **dispatcher name · shift · kind (Day/ECB/Both) · desk · note (if any)**, filtered to legal-to-work, sorted by the **normal ranking** (mutual-intent → bookend → split; `acceptanceScore` within tier; tie-break shift time A→P→M). Each row = a mini card with Propose (per kind). Rows with an in-flight request show **Pending** (§5). Opening this tab calls `markSeen(dayID)`.
+- **[ Info ]** — the current day editor (intent / kind pill / reason / note / vacation), **unchanged**.
 
-### State
+No date column (you're already in the date). The **cross-day, soonest-first** ordering lives in the inbox Matches lane (§4b), not here.
+
+---
+
+## 4. Inbox — passive **Matches** vs active **Requests**
+
+Top-level split so "possible" never reads as "in motion":
+
+### 4a. Requests (active) — unchanged
+The existing tabs (Intents / Search / ECB / Qual Swap) — trades actually sent or received.
+
+### 4b. Matches (passive) — NEW lane
+Auto-surfaced mutual matches (`radarMatches`), **sorted soonest-first** (dates differ here, unlike §3). Each card: peer · day(s) · **kind badges (Day/ECB/Both)** · Propose (per kind). **Proposing promotes** a match → a real request in the Intents tab (`sendRequest` via the feed's `propose`, `origin: .intents`).
+
+**Structure choice (D2, recommended):** a segmented **`Matches | Requests`** control at the top of the Trade Inbox; Requests keeps its 4 sub-tabs. This gives the user's "2 categories" cleanly without a 5th peer-tab. *(Alt: a 5th "Matches" tab — rejected: mixes passive with active.)*
+
+---
+
+## 5. MatchStore + correctness
+
+`@MainActor @Observable final class MatchStore` (`.shared`). State:
 ```
-matchesByDay:   [DayID: [RadarMatch]]   // from radarMatches(), indexed per day
-seenPeerSet:    [DayID: Set<WorkerID>]  // baseline "what I've seen"  — LOCAL ONLY
-unseenDays:     Set<DayID>              // peer-set grew since last seen — LOCAL ONLY
-flaggedDays:    Set<DayID>              // user watchlist — persisted LOCAL (v1; sync later if wanted)
-lastRefreshed:  Date?                   // drives the "as of HH:MM" label
+matchesByDay:  [DayID: [RadarMatch]]   // from radarMatches(), indexed per day (MUTUAL)
+seenPeerSet:   [DayID: Set<WorkerID>]  // baseline for "unseen" — LOCAL
+unseenDays:    Set<DayID>              // peer-set grew since last seen — LOCAL
+watchedDays:   Set<DayID>              // = flagged; per-match notifications — LOCAL (v1)
+lastRefreshed: Date?
 ```
-**No CloudKit schema changes in v1.** `unseen`/baseline are a local read-marker (see review #2);
-flags persist locally. (Cross-device flag sync is a deliberate later add, not v1.)
+No CloudKit schema in v1 (unseen/watch are local). `recompute(scope)`, `markSeen(dayID)`, and the `.local` touch-up are unchanged from v2 (§ below). **Propose-time correctness:** re-validate the single peer (`fetchProfile`), rebuild the deal, send only if still valid else toast; cross-ref `MessagingStore.requests` → show **Pending**; route through the feed's `propose` so `origin: .intents` and a 2-way deal has **no `loopID`** (single request — consistent with the Trade-Inbox revamp).
 
 ### recompute(scope)
-1. `.full` (new master) and `.intentsOnly` (manual refresh): `await TradeProfileStore.shared.refreshOthers()`
-   (+ my-intent sync). `.full` piggybacks the existing master-import path; `.intentsOnly` pulls **only**
-   intents — no messaging/ECB/history/schedule probe. `.local` (my own edit): pull nothing.
-2. `let matches = await TradeRouter.radarMatches(excluding: me)`.
-3. Index → `newMatchesByDay`.
-4. Per day: if its distinct-peer set **grew** vs `seenPeerSet[day]` **and** the day isn't open → add to
-   `unseenDays`.
-5. Assign `matchesByDay`, recompute stats, stamp `lastRefreshed`.
-- **`.local` touch-up:** on my own intent edit, adjust only the affected day(s) — drop a day whose
-  underpinning intent was cleared; re-scan peers for a single newly-marked day. No network, no full pass.
-
-### markSeen(dayID)
-Remove from `unseenDays`; set `seenPeerSet[day]` = current peer set. Persist (local).
-
-### 3b. Propose-time correctness
-- **Re-validate on Propose tap:** `fetchProfile(forWorker:)` for that one peer, rebuild the 2-way deal;
-  still valid → `sendRequest`; no longer valid → block, toast "This match just changed," refresh that
-  day's cards. One fetch, no stall.
-- **Route through the feed's `propose(_:)`** (not a raw `sendRequest`) so the request carries
-  `origin: .intents` → it files under the **Intents** inbox tab (post Trade-Inbox revamp). A radar deal is
-  a plain 2-way → a single request with **no `loopID`**, so it appears once and threads normally.
-- **Request-status reflection:** cross-reference `MessagingStore.requests`. A (day, peer) with an
-  active request → card shows **Pending**; the day's badge is de-emphasized/marked so in-flight trades
-  don't read like fresh, un-actioned matches (prevents duplicate proposals; keeps radar consistent
-  with the Trades › Intents feed).
-
----
-
-## 4. Refresh model
-
-| Trigger | Scope | Recompute | Notes |
-|---|---|---|---|
-| App launch | seed | ✅ | reuse the launch precompute slot; run `radarMatches` under the existing loader |
-| Foreground (no new master) | — | ❌ **never** | foreground stays as fast as today |
-| **Refresh control** (visible button by the calendar header) | `.intentsOnly` | ✅ | spinner + updates the **"as of HH:MM"** label; intents only |
-| Home **matches list** pull-to-refresh (optional) | `.intentsOnly` | ✅ | a list IS a feed — no gesture conflict there |
-| **New master imported** (`rosterRows > 0` / `diff.hasChanges` in the existing launch + `foregroundRefresh` probe) | `.full` | ✅ | automatic, ~3×/day; hooks next to `autoCompleteProvenTrades` |
-| My own intent edit | `.local` | local touch-up | no network, no stall |
-
-**No pull-to-refresh on the calendar itself** — it's a scrolling month/week stream, so a pull-down
-collides with scroll-to-earlier-months, and calendars aren't a pull-to-refresh idiom. Use the explicit
-button; it also carries the freshness label (matches are intentionally stale between manual refreshes).
-
----
-
-## 5. Stats
-
-- **Global stats bar:** exactly **one** new counter = total **match-days** on the calendar.
-- **Home page:** three tappable stat chips — **matched / unchecked (unseen) / flagged** — quiet dot-led
-  style (month-header / IntentTallyBar treatment). Tapping opens a **matches list** filtered to that set
-  (All / Unseen / Flagged). Consider hiding the chips at zero rather than showing "0 matched" noise.
-- **Matches list → tap a date → calendar scrolls/pages to that day/month** (selected-month binding /
-  ScrollViewReader on the calendar).
+`.full` (new master) / `.intentsOnly` (manual refresh): `refreshOthers()` then `radarMatches`. `.local` (my edit): touch only affected day(s). Index → per-day: if the distinct-peer set **grew** vs `seenPeerSet[day]` and the day isn't open → add to `unseenDays` (and fire notifications per §7). Assign, recompute stats, stamp `lastRefreshed`.
 
 ---
 
 ## 6. Layer toggle
-
-Add **"Matches"** to `LayerVisibility` (alongside `notes` / `intentOverlays`). When off, the calendar is
-clean (badges + flag rings hidden). Default **on** (prominent), but toggleable so users can calm the
-cell and so the radar reads as a deliberate, manually-refreshed mode rather than a live overlay.
+Add **`matches`** to `LayerVisibility` (default on). Off → star/count/watch-ring hidden, cell renders exactly as today (regression guarantee). The significant-day orange disc is NOT gated by this toggle (it's not a match marker).
 
 ---
 
-## 7. Reuse map
+## 7. Notifications — watch (per-match) vs batched
 
-| Need | Existing asset |
-|---|---|
-| Per-peer 2-way deal build | `TradeMatcher.twoWayExplore` + `assembleIntentDeal` + `mutualOnly` gate (inside `intentSolutions`) |
-| Single-peer profile fetch (propose re-validate) | `TradeProfileStore.fetchProfile(forWorker:)` (AvailabilityView.swift:1415) |
-| Propose | `MessagingStore.sendRequest` (via the feed's `propose`) |
-| Request status | `MessagingStore.requests` |
-| Mini card | ECB card / `CompactSwapCard` (`onPropose`) |
-| Peer intents pull | `TradeProfileStore.refreshOthers()` |
-| My per-day intents | `DayIntentStore` |
-| Segmented control | `DXSegmented` |
-| Corner marker language | §10 `NoteMarker` / `EventMarker` |
-| Layer gating | `LayerVisibility` |
-| Master-import hook | `foregroundRefresh` `rosterRows > 0` branch + ContentView:186 |
+- **Watched day** (flag ring on): a notification for **each new match** on that day — "New match on Sat Jul 18 — Cary wants your PM."
+- **Unwatched days:** new matches roll into a **batched** notification, deduped via the unseen read-marker — "You have 3 new matching intents." Never one-push-per-match for unwatched days.
+- Fires only on `recompute` when a day's peer set **grows** (not on reorder). Respects the existing notification settings + lead-time. Local scheduling via `NotificationManager`; no server fan-out in v1 (client recompute drives it — see §9).
 
 ---
 
-## 8. Build order (suggested)
-1. `TradeRouter.radarMatches` + a unit test (determinism: same inputs → same set; completeness: a
-   floored-out `intentSolutions` match still appears here).
-2. `MatchStore` (index, unseen read-marker, recompute scopes, `.local` touch-up) + persistence (local).
-3. Calendar markers behind the Matches layer (badge + flag ring + layering with §10).
-4. Day-detail Matches tab (cards, default sort, status reflection, `markSeen`).
-5. Propose re-validation.
-6. Explicit refresh control + "as of HH:MM"; new-master `.full` hook.
-7. Stats: global counter + Home chips + matches list + tap-to-scroll.
+## 8. PickupPrefs — constrain a want-to-work day (feasibility: MODERATE, does NOT bog down)
+
+Let a want-to-work day carry which shifts/desks/quals the user will accept.
+- **Model:** `DayIntentStore.pickupPrefsByDay: [DayID: PickupPrefs { shiftTypes: Set<A/P/M>, quals: Set<String>, desks: Set<String>? }]`, published on the profile (JSON payload). **Default = unconstrained** (= today's behavior) so unmarked days never regress.
+- **Engine:** an **O(1) set-membership prune per candidate leg** inside the taker path of `twoWayExploreCore` — it **removes** candidates before the expensive scoring, so it **shrinks** work, never expands it. No new search dimension, no combinatorial blowup.
+- **Sorting:** unchanged — the U-OBJ objective ranks the surviving (smaller) set with the same comparator. Correct by construction.
+- **Perf verdict:** not a bottleneck; it reduces candidate volume and improves match quality. The cost is UI + model plumbing, not compute.
+- **Risk = over-constraint** (narrow filters → 0 matches → "app is broken"). *Mitigations:* default unconstrained; explicit empty-state — "No matches — your pickup filters are narrow."
+
+---
 
 ## 9. Non-goals (v1)
-- No push notifications for new matches (revisit later; needs client recompute — see review #2).
+- No server-side push fan-out for matches (client recompute drives notifications; server push is a later add).
 - No card pinning.
-- No CloudKit schema changes / cross-device sync of flags or unseen state.
-- No circular / N-way trades on the calendar (they stay in Trades › Intents).
+- No CloudKit schema for unseen/watch/flags (all local v1; cross-device watch sync is a deliberate later add).
+- No 3-way / N-way loops on the calendar or in the per-day Trade List (they stay in Trades › Intents). The per-day list is 2-way legal trades only.
 
 ---
 
 ## 10. Verified code map (anchors — **re-verified 2026-07-15**, re-grep before use)
 
-Every symbol this feature builds on, confirmed present at the line noted. These are load-bearing; if a
-re-grep before a step shows a signature has drifted, STOP and update this map — do not code to memory.
+Load-bearing; if a re-grep shows drift, STOP and update this map first.
 
-> **Re-verification note (2026-07-15):** all anchors below were re-confirmed after the **U-OBJ engine
-> redesign** and the **Trade-Inbox revamp** (loopID/tabs/Trade History). Line numbers shifted throughout;
-> `MessagingStore.sendRequest` gained parameters (see the row + §3b/§7 origin note). The optimizer's
-> curation is now expressed via **`acceptanceScore`** (per-leg mean quality): `finalize` floors on
-> `acceptanceScore >= floorNormalProb` and caps at `intentResultCap` — which makes §0's "don't reuse the
-> optimizer" argument *more* literally true. `finalize`, `floorNormalProb`/`floorLuckyProb`,
-> `intentResultCap (60)`, and `intentCandidateCap (300)` all still exist.
+> **Note (2026-07-15):** re-confirmed after the **U-OBJ redesign** and **Trade-Inbox revamp**. `sendRequest` gained `origin`/`loopID`. Optimizer curation is via `acceptanceScore`: `finalize` floors `acceptanceScore >= floorNormalProb`, caps `intentResultCap`. `finalize`, `floorNormalProb`/`floorLuckyProb`, `intentResultCap (60)`, `intentCandidateCap (300)` all still exist.
 
-| Symbol | Location | Signature / shape (as verified) |
+| Symbol | Location | Signature / shape |
 |---|---|---|
-| `TradeRouter.intentSolutions` | TradeRouter.swift:711 | `(excluding selfID:generation:lucky:mutualOnly:) async -> [TradePackage]` — the OPTIMIZER (do not reuse for radar) |
-| `TradeRouter.assembleIntentDeal` | TradeRouter.swift:682 | `nonisolated (_ p: IntentPairing) -> (gives:[String], takes:[String], mutualMarked:Int)?` |
+| `TradeRouter.intentSolutions` | TradeRouter.swift:711 | `(excluding selfID:generation:lucky:mutualOnly:) async -> [TradePackage]` — the OPTIMIZER (don't reuse for radar) |
+| `TradeRouter.assembleIntentDeal` | TradeRouter.swift:682 | `nonisolated (_ p: IntentPairing) -> (gives:[String],takes:[String],mutualMarked:Int)?` |
 | `TradeRouter.IntentPairing` | TradeRouter.swift:669 | `struct IntentPairing: Equatable, Sendable` |
-| `TradeRouter.finalize` | TradeRouter.swift:1108 | floors `acceptanceScore >= floorNormalProb` (`floorLuckyProb` if lucky) + `needsQualSwap`, caps at `intentResultCap` — **the curation to OMIT in radar** |
-| `intentResultCap` / `intentCandidateCap` | TradeRouter.swift:940 / :944 | `60` / `300` (keep 300 only as the runaway backstop; `log()` if it bites) |
+| `TradeRouter.finalize` | TradeRouter.swift:1108 | floors `acceptanceScore >= floorNormalProb` (+`needsQualSwap`), caps `intentResultCap` — **omit in radar/day-list** |
+| `TradeRouter.rankLess` | TradeRouter.swift (comparator used by finalize:1113) | the normal ranking — **reuse for `dayTradeList` sort** |
+| `intentResultCap` / `intentCandidateCap` | TradeRouter.swift:940 / :944 | `60` / `300` (300 = runaway backstop; `log()` if it bites) |
 | `TradeMatcher.twoWayExplore` | TradeMatcher.swift:502 | `(withWorker:name:windowStart:windowEnd:mySeeking:theirSeeking:myProfile:theirProfile:myID:ignoreOwnBlacklist:preloadedMine:preloadedPeer:) async -> TwoWayPlan` |
-| `TradeMatcher.twoWayExploreCore` | TradeMatcher.swift:523 | `nonisolated` PURE variant over preloaded schedules — **use this for off-main radar recompute (Task.detached)** |
-| `TwoWayPlan` | TradeMatcher.swift:361 | `struct TwoWayPlan: Sendable` |
-| `TwoWayLeg` fields | TradeMatcher.swift:348 | `dayID, date, desk, startHour, bookend, wanted` (mirror at §11 step 1) |
-| `MatchContext.build` | called TradeRouter.swift:281 & :713 | `(selfID:) async` → `ctx.{maps, rosterMeta, profilesByID, universe, mineEntries, priors, start, end, profile(for:name:)}` |
-| `TradeProfileStore.refreshOthers` | TradeProfile.swift:427 | `() async` — pulls all peer profiles (CloudKit `fetchAll`) |
-| `TradeProfileStore.fetchProfile(forWorker:)` | TradeProfile.swift:549 | `async -> TradeProfile?` — single-peer network fetch (propose re-validate) |
-| `TradeProfileStore.profile(forWorker:)` | TradeProfile.swift:510 | `-> TradeProfile?` — sync, from local `others` |
-| `TradeProfile.wantToWorkDayIDs / opennessLevel` | TradeProfile.swift:102 / :195 | `Set<String>?` / `TradeOpenness` (peer "seeking" is passed as `theirSeeking:` into `twoWayExplore`) |
-| `DayIntentStore.seekingDayIDs / wantToWorkDayIDs / intentsRevision` | DayIntentStore.swift:117 / :127 / :24 | derived `Set<String>` / revision Int |
-| `MessagingStore.sendRequest` | Messaging.swift:903 | `(to:toName:note:take:give:daysValid:ecb:ecbValue:offerID:chain:qualSwap:origin:loopID:) async` — **radar proposes via the feed's `propose`, so `origin` is set (→ Intents tab); a 2-way deal has NO `loopID`** |
-| `MessagingStore.requests` / `status(of:)` | Messaging.swift:557 / :1120 | `[TradeRequest]` / `-> TradeRequestStatus` (now loop-aware; a 2-way radar deal is a single request, so it reads normally) |
-| `propose(_ pkg:)` | TradeIntentsFeed.swift:389 | fires `sendRequest` per assignment (sets `origin: .intents`) |
-| `CompactSwapCard` | TradeIntentsFeed.swift:741 | has `onPropose: (TradePackage)->Void` |
-| `TradeFeedCache.intentMatchCount` | TradeIntentsFeed.swift:36 | drives the Intents badge |
-| Global stats bar `TradeStatsBar` | ContentView.swift:335 (rendered :83) | where the ONE new counter goes |
-| `LayerVisibility` | HomeView.swift:29 | fields: `notes:30, intentOverlays:31, availability:32, shiftType:33, deskAssignments:34` → **ADD `matches`** |
-| Home cell markers (§10) | HomeCalendar.swift | `noteDot`, `NoteMarker`, `EventMarker`, `numberColor`, `borderColor` |
-| Calendar tap | HomeView.swift:106 (`onTap: handleTap`) → `handleTap` :266 → `DayEditTarget` :543 (assigned :281/:109) | `onTap(dayID,isOff)` → `DayEditTarget` sheet |
-| New-master hook | ContentView.swift:272 `foregroundRefresh` → :283 `rosterRows > 0 && diff.hasChanges` | where `.full` recompute attaches |
-| Launch precompute slot | ContentView.swift:183–193 (`async let rosterRows` … `await`) | where the radar seed runs under the loader |
-| Existing engine tests | EngineTests.swift | **must stay green after any engine touch** (now includes 8 `INBOX-*` + `OPS-QUAL` tests) |
-
-### Assumptions ledger (each must hold; re-check if a step fails)
-1. The mutual candidate set is small enough to run **uncapped** (engine comment says active+schedule-crossing is "already small"). — *Risk if wrong:* refresh latency. *Mitigation:* keep the 300 safety backstop; `log()` if it bites; measure in step 1.
-2. `twoWayExplore` + `assembleIntentDeal` are **deterministic** for fixed inputs. — *Risk:* flapping unseen. *Mitigation:* step-1 determinism test (run 2× → identical).
-3. `TwoWayPlan` exposes `iGive`/`iTake` legs with `.dayID`/`.wanted`/`.bookend` (as used at TradeRouter.swift:723–729). — *Verify by reading the block before mirroring it.*
-4. `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` still holds → matcher is main-actor; radar recompute needs the same `Task.yield()` cadence to avoid freezes.
+| `TradeMatcher.twoWayExploreCore` | TradeMatcher.swift:523 | `nonisolated` PURE variant — **use for off-main recompute (Task.detached)**; add the PickupPrefs prune here |
+| `TwoWayPlan` / `TwoWayLeg` | TradeMatcher.swift:361 / :348 | leg fields `dayID,date,desk,startHour,bookend,wanted` |
+| `MatchContext.build` | called TradeRouter.swift:281 & :713 | `(selfID:) async` → `ctx.{maps, universe, profilesByID, priors, start, end, …}` |
+| `TradeEligibility.canCover` | TradeMatcher.swift (SSOT eligibility) | the "legal to work" gate for the day-list |
+| `TradeProfileStore.refreshOthers` / `.fetchProfile(forWorker:)` / `.profile(forWorker:)` | TradeProfile.swift:427 / :549 / :510 | all-peer pull / single-peer network / sync-local |
+| `TradeProfile.seekingDayIDs / wantToWorkDayIDs / opennessLevel` | TradeProfile.swift:79 / :102 / :195 | + **ADD** `tradeKindByDay`, `pickupPrefsByDay` |
+| `DayIntentStore.seekingDayIDs / wantToWorkDayIDs / intentsRevision` | DayIntentStore.swift:117 / :127 / :24 | + **ADD** `tradeKindByDay`, `pickupPrefsByDay` |
+| `WorkingIntentState.dontWantToWork` / `OffIntentState.wantToWork` | TradeEngineModels.swift:86 / :106 | the marks the kind-pill/prefs attach to |
+| `MessagingStore.sendRequest` | Messaging.swift:903 | `(to:toName:note:take:give:daysValid:ecb:ecbValue:offerID:chain:qualSwap:origin:loopID:) async` |
+| `MessagingStore.requests` / `status(of:)` | Messaging.swift:557 / :1120 | 2-way radar deal = single request → reads normally |
+| `propose(_ pkg:)` | TradeIntentsFeed.swift:389 | fires `sendRequest` (sets `origin: .intents`) — **route proposes through this** |
+| `CompactSwapCard` | TradeIntentsFeed.swift:741 | `onPropose: (TradePackage)->Void` — reuse for match/day-list cards |
+| `TradeFeedCache.intentMatchCount` | TradeIntentsFeed.swift:36 | Intents badge |
+| `TradeStatsBar` | ContentView.swift:335 (rendered :83) | the ONE new global counter |
+| `LayerVisibility` | HomeView.swift:29 (fields :30–34) | **ADD `matches`** |
+| Home cell markers | HomeCalendar.swift (`EventMarker` :61, `noteDot`, `numberColor`, `borderColor`) | disc/star/ring live here |
+| Calendar tap | HomeView.swift:106 (`onTap: handleTap`) → :266 `handleTap` → :543 `DayEditTarget` | opens the 2-tab day sheet |
+| New-master hook | ContentView.swift:272 `foregroundRefresh` → :283 `rosterRows>0 && diff.hasChanges` | `.full` recompute |
+| Launch precompute slot | ContentView.swift:183–193 | radar seed under the loader |
+| `NotificationManager` | Sources/Services/NotificationManager.swift | watch/batched scheduling |
+| Existing engine tests | EngineTests.swift | must stay green (incl. 8 `INBOX-*` + `OPS-QUAL`) |
 
 ---
 
-## 11. Per-step fail-safes
+## 11. Build order (staged; each step: precondition → guardrail → gate → rollback; STOP after each)
 
-Each step: **Preconditions** (re-grep/read before touching) → **Guardrails** (constraints while editing)
-→ **Gate** (must pass to proceed) → **Rollback**. A step is not "done" until its Gate passes.
+1. **Model:** `TradeKind` + `tradeKindByDay`; `PickupPrefs` + `pickupPrefsByDay` on `DayIntentStore` + `TradeProfile` (optional/defaulted; JSON payload). *Gate:* build + harness green; codec round-trip test; unmarked = today's behavior.
+2. **Engine `radarMatches`** (mutual, typed by kind) + determinism & completeness tests (a match with `acceptanceScore < floorNormalProb` absent from `intentSolutions`, present here). *Guardrail:* additive; do NOT edit `intentSolutions`/`finalize`.
+3. **Engine `dayTradeList(dayID:)`** — all legal trades for one day, `rankLess`-sorted, PickupPrefs-pruned. *Gate:* determinism; a floored match still appears; PickupPrefs shrink (never grow) the set.
+4. **MatchStore** (index, unseen, watch set, recompute scopes, `.local`) + local persistence. *Gate:* seed→grow→unseen; markSeen clears; regrow-no-growth stays seen.
+5. **Calendar markers** behind `matches` layer: significant→orange disc, match→star, watch→ring-around-star, count chip; layering vs today-ring. *Gate:* layer OFF = pixel-identical to today; legible light+dark on every tile.
+6. **Day 2-tab sheet:** Trade List (default, `dayTradeList` cards, kind badges, Propose, Pending) + Info (unchanged). *Gate:* Info identical to current editor; markSeen on Trade List appear.
+7. **Inbox `Matches | Requests` split** + passive Matches lane (soonest-first) + propose-promotes. *Gate:* Requests tabs unchanged; proposing moves a match into Intents.
+8. **Notifications:** watch→per-match, else batched+deduped. *Gate:* prove no per-match push for unwatched; watched fires per new match; foreground with no new master fires none.
+9. **Stats:** global match-day counter + Home chips (matched/unseen/watched) + tap-to-scroll.
 
-**Step 1 — `TradeRouter.radarMatches` + tests**
-- *Precondition:* re-read `intentSolutions` lines 623–758 and `TwoWayPlan` leg fields; confirm §10 anchors.
-- *Decision (document in code):* the helper closures are local. Choose **duplicate the minimal 2-way body
-  into `radarMatches`** (lower blast radius) over refactoring `intentSolutions` (touches a tested hot path).
-  If duplication would drift, extract a `private static` helper used by *both* — but only if EngineTests
-  stay green.
-- *Guardrails:* additive only — **do not edit `intentSolutions`, `finalize`, or `TradePackage`**. New type
-  `RadarMatch` is new, `Sendable`, no engine mutation.
-- *Gate:* `BuildProject` clean **AND** the **existing EngineTests pass unchanged** **AND** two new tests
-  pass: (a) *determinism* — `radarMatches` twice → identical; (b) *completeness* — a fixture where a real
-  mutual match has `acceptanceScore < floorNormalProb` is **dropped by `finalize` (absent from
-  `intentSolutions`) but present in `radarMatches`** (radar omits `finalize`).
-- *Rollback:* delete the new function + tests; nothing else references it yet.
-
-**Step 2 — `MatchStore`**
-- *Precondition:* confirm `@Observable`/`@MainActor` store pattern from `DayIntentStore` / `TradeFeedCache`.
-- *Guardrails:* new file only; local persistence via the same mechanism `DayIntentStore` uses; **no CloudKit**.
-  Pure indexing; the unseen rule is "distinct-peer set grew," nothing else.
-- *Gate:* build clean; a store unit test — seed A→{p1}; recompute A→{p1,p2} ⇒ A ∈ unseen; `markSeen(A)` ⇒
-  A ∉ unseen; recompute A→{p1,p2} again (no growth) ⇒ A stays seen.
-- *Rollback:* delete file; not yet referenced by any view.
-
-**Step 3 — Calendar markers behind the `matches` layer**
-- *Precondition:* re-read the §10 cell body (badge slot, `noteDot`, `numberColor`, `borderColor`).
-- *Guardrails:* **gated by `layers.matches` (default on)**; when off, cell renders exactly as today. Do not
-  touch tile color / number legibility rules / today ring / §10 dots except to move the note dot to
-  top-leading *only when a badge is present*. §8 floating magnifier: DO NOT TOUCH.
-- *Gate:* build clean; visual check **light + dark**; with `matches` OFF the cell is pixel-identical to
-  pre-change; badge legible on navy / gold / teal / graphite tiles.
-- *Rollback:* the layer flag makes this instantly reversible (toggle default off / remove overlay).
-
-**Step 4 — Day-detail Matches tab**
-- *Precondition:* read `handleTap`/`DayEditTarget` + `CompactSwapCard`/ECB card `onPropose`.
-- *Guardrails:* add a `DXSegmented` [Info | Matches]; **Info tab must be the untouched existing editor**.
-  Reuse the existing card; no new proposal path yet (Propose wired in step 5).
-- *Gate:* build clean; opening Info shows the identical current editor; Matches lists the store's cards;
-  `markSeen` fires on Matches appear (store test hook).
-- *Rollback:* remove the segmented wrapper → editor returns to its current single view.
-
-**Step 5 — Propose re-validation + status**
-- *Precondition:* confirm `fetchProfile(forWorker:)` (:549), `sendRequest` (:823), `status(of:)` (:1001).
-- *Guardrails:* on Propose, re-fetch that ONE peer, rebuild the 2-way deal, send only if still valid; else
-  block + toast. Cross-ref `MessagingStore.requests` → show Pending. **No change to `sendRequest` itself.**
-- *Gate:* build clean; manual: propose a valid match sends; a day with an existing request shows Pending
-  (no duplicate send path reachable).
-- *Rollback:* revert the card's action closure; matching/markers unaffected.
-
-**Step 6 — Explicit refresh control + new-master `.full`**
-- *Precondition:* read `foregroundRefresh` + ContentView:186/192–203.
-- *Guardrails:* **do NOT add recompute to the plain foreground path** (locked). Button → `.intentsOnly`;
-  new-master branch → `.full`. Show spinner + "as of HH:MM". Keep `Task.yield()` cadence.
-- *Gate:* build clean; foreground with no new master triggers NO recompute (add a debug counter / log to
-  prove it); button and new-master both recompute; UI never blocks (spinner shows).
-- *Rollback:* remove the button + the one `.full` call; auto behavior returns to today's.
-
-**Step 7 — Stats (global counter + Home chips + list + tap-to-scroll)**
-- *Precondition:* read `TradeStatsBar` (:287) + `IntentTallyBar` style + calendar scroll/anchor model.
-- *Guardrails:* ONE global counter; three Home chips read from the store (derived, no new state); list
-  reuses cards; tap-to-scroll uses the existing month-anchor mechanism.
-- *Gate:* build clean; counts equal `matchesByDay` cardinality; tapping a date scrolls the calendar to it.
-- *Rollback:* additive views; remove to revert.
-
----
-
-## 12. Systemic anti-hallucination / anti-regression protocol
-
-Applies to **every** step, in addition to its own Gate.
-
-1. **Grep-before-use.** Never write a call to an API from memory. Before referencing any symbol, confirm
-   it via grep/read against §10; if it moved or changed, update §10 first. New APIs I "expect" to exist →
-   verify with `DocumentationSearch` (esp. any SwiftUI/Liquid Glass/Observation surface), never assume.
-2. **Build gate.** `BuildProject` must return clean after each step; run `XcodeRefreshCodeIssuesInFile` on
-   every touched file before declaring the step done. No "should compile."
-3. **Regression gate.** After any change under `Sources/Domain/TradeEngine/`, the **existing EngineTests
-   run unchanged and stay green**. If a test needs editing to pass, that's a red flag — stop and explain,
-   don't "fix" the test to match new behavior.
-4. **Blast-radius control.** Each step edits only its declared files (§11). No opportunistic refactors, no
-   drive-by reformatting, no touching §8 magnifier or §9-ECB. If a step tempts an out-of-scope edit, note
-   it and defer.
-5. **Dark-by-default.** The feature is inert until wired: the engine query has no callers until step 2;
-   the UI is behind `layers.matches`. At every step the app with the layer OFF must behave exactly as it
-   does today — that's the guarantee nothing pre-existing regresses.
-6. **Determinism as a test, not a hope.** Anything feeding the unseen badge is covered by a
-   run-twice-identical assertion (step 1 + step 2 gates).
-7. **No silent truncation.** Any cap/prune the radar applies (e.g. the 300 backstop) must `log()` when it
-   bites — a silently-capped list reads as "complete" when it isn't.
-8. **Honest reporting.** Compile-verified ≠ runtime-verified. Each step states exactly what was checked
-   (built / unit-tested / seen light+dark on sim) and what wasn't. No claiming a visual/behavioral result
-   that hasn't been observed running.
-9. **One step, one pause.** Implement a step, pass its Gate, STOP for review before the next — matching the
-   PARITY workflow. No batching steps.
-10. **Spec is the contract.** If implementation forces a deviation from this doc, update the doc first and
-    surface the change; the doc never silently diverges from the code.
+## 12. Anti-hallucination / anti-regression protocol (unchanged from v2)
+Grep-before-use (verify §10, update it first on drift; `DocumentationSearch` for any new SwiftUI/Observation API) · Build gate + `XcodeRefreshCodeIssuesInFile` per touched file · **EngineTests stay green** after any `Sources/Domain/TradeEngine/` change (never edit a test to match new behavior without flagging) · blast-radius control (only declared files; don't touch the §8 magnifier or ECB accounting) · dark-behind-the-layer-toggle (layer OFF = today's behavior) · determinism as a test not a hope · no silent truncation (`log()` any cap that bites) · honest reporting (compile-verified ≠ runtime-verified) · one step / one pause / STOP for review · spec is the contract (update it first if reality forces a deviation).
