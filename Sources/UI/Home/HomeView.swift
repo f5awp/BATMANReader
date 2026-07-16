@@ -116,9 +116,12 @@ struct HomeView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar(.hidden, for: .navigationBar)   // the shared AppTopBar is the header now
             .sheet(item: $editTarget) { target in
-                DayIntentEditor(target: target)
-                    .magnifiable()
-                    .presentationDetents([.large])
+                Group {
+                    if target.showTradeList { DayDetailSheet(target: target) }
+                    else { DayIntentEditor(target: target) }
+                }
+                .magnifiable()
+                .presentationDetents([.large])
             }
             .sheet(isPresented: $showColorKey) { IntentKeySheet() }
             .alert("Overwrite existing marks?", isPresented: Binding(
@@ -276,9 +279,9 @@ struct HomeView: View {
         }
         switch mode {
         case .off:
-            // Outside Mark Intents a day tap opens the FULL day editor (intent, reason, note,
-            // significant-day, and the vacation traded-in toggle) — edit anything in one tap.
-            editTarget = DayEditTarget(dayID: day, isOff: isOff)
+            // Outside Mark Intents a day tap opens the 2-tab day detail — Trade List (who you can trade
+            // with that day + Watch Day) first, then Info (the full intent/reason/note/vacation editor).
+            editTarget = DayEditTarget(dayID: day, isOff: isOff, showTradeList: true)
         case .workingShifts:
             guard !isOff else { return }
             stampNote(day)
@@ -543,6 +546,9 @@ struct VisibilityToolbar: View {
 struct DayEditTarget: Identifiable {
     let dayID: String
     let isOff: Bool
+    /// A Main-View tap opens the 2-tab day detail (Trade List + Info); a Mark-Intents long-press opens the
+    /// plain intent editor. Same target type, two presentations.
+    var showTradeList = false
     var id: String { dayID }
 }
 
