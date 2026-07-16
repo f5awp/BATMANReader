@@ -52,8 +52,10 @@ struct DayTradeListPane: View {
 
     @State private var pickups: [TradeRouter.DayTradeRow] = []
     @State private var wantToWork: [TradeRouter.DayTradeRow] = []
+    @State private var packages: [TradePackage] = []       // working day: real ranked swap packages
+    @State private var detailPackage: TradePackage?         // tapped card → schedule-comparison detail
     @State private var loading = true
-    @State private var selectedCandidate: PlanCandidate?   // tapped person → 2-way calendar
+    @State private var selectedCandidate: PlanCandidate?   // tapped person → 2-way calendar (off-day pickups)
     @State private var fShifts: Set<ShiftAvailabilityType> = []   // shift-type filter (AM/PM/MID)
     @State private var fQuals: Set<String> = []                   // qual filter (desk's required qual)
     @State private var limitReturn = false                       // H6: filter by the return date I want back
@@ -88,6 +90,16 @@ struct DayTradeListPane: View {
         }
         return rows
     }
+    /// Working-day swap packages, filtered by the return-date range (H6) — a package qualifies if any of the
+    /// peer's return options fall in the range. Already rank-sorted at load.
+    private var shownPackages: [TradePackage] {
+        guard let range = returnRange else { return packages }
+        let from = Self.isoF.string(from: range.lowerBound), to = Self.isoF.string(from: range.upperBound)
+        return packages.filter { pkg in
+            pkg.assignments.flatMap { $0.takeOptions.isEmpty ? $0.takeDayIDs : $0.takeOptions }
+                .contains { $0 >= from && $0 <= to }
+        }
+    }
 
     private var prettyDate: String {
         guard let d = TradeMatcher.dayDate(fromISO: target.dayID) else { return target.dayID }
@@ -109,20 +121,35 @@ struct DayTradeListPane: View {
 
                 if loading {
                     Section { HStack { Spacer(); ProgressView(); Spacer() } }
-                } else {
-                    if availShifts.count > 1 || !availQuals.isEmpty || !target.isOff { filterBar }
+                } else if target.isOff {
+                    if availShifts.count > 1 || !availQuals.isEmpty { filterBar }
                     Section {
                         if shownRows.isEmpty {
-                            emptyRow(activeRows.isEmpty
-                                     ? (target.isOff ? "Nobody working this day has marked it to trade away."
-                                                     : "Nobody could work this day.")
-                                     : "No one matches these filters.")
+                            emptyRow(activeRows.isEmpty ? "Nobody working this day has marked it to trade away."
+                                                       : "No one matches these filters.")
                         } else {
-                            ForEach(shownRows) { personCard($0, showsShift: target.isOff) }
+                            ForEach(shownRows) { personCard($0, showsShift: true) }
                         }
                     } header: {
-                        Label(target.isOff ? "Shifts you can pick up" : "Who could work this day",
-                              systemImage: target.isOff ? "tray.and.arrow.down" : "hand.raised")
+                        Label("Shifts you can pick up", systemImage: "tray.and.arrow.down")
+                    } footer: { radarStamp }
+                } else {
+                    filterBar   // return-date range (H6)
+                    Section {
+                        if shownPackages.isEmpty {
+                            emptyRow(packages.isEmpty ? "No swaps found for this day."
+                                                      : "No swaps have a return date in that range.")
+                        } else {
+                            ForEach(shownPackages) { pkg in
+                                CompactSwapCard(package: pkg,
+                                                onPropose: { p in Task { await propose(p) } },
+                                                onOpen: { detailPackage = pkg })
+                                    .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
+                                    .listRowBackground(Color.clear)
+                            }
+                        }
+                    } header: {
+                        Label("Who could work this day", systemImage: "hand.raised")
                     } footer: { radarStamp }
                 }
             }
@@ -144,6 +171,10 @@ struct DayTradeListPane: View {
                             initialGive: target.isOff ? [] : [target.dayID],
                             initialTake: target.isOff ? [target.dayID] : [],
                             returnRange: returnRange)   // H6: limit their return dates to my chosen range
+            }
+            // Working-day swap card → the schedule-comparison detail (twin calendars) to pick days + propose.
+            .fullScreenCover(item: $detailPackage) { pkg in
+                PackageDetailView(package: pkg, onPropose: { p in Task { await propose(p) } }, onExecute: {})
             }
         }
     }
@@ -223,18 +254,33 @@ struct DayTradeListPane: View {
     private func reload(fullRadar: Bool) async {
         loading = true
         if fullRadar || !radar.hasComputed { await radar.recompute(scope: .local) }
-        let r = radar.rows(forDay: target.dayID)
-        func sorted(_ rows: [TradeRouter.DayTradeRow]) -> [TradeRouter.DayTradeRow] {
-            rows.sorted { $0.tier != $1.tier ? $0.tier > $1.tier : $0.peerName < $1.peerName }   // marked first
-        }
-        // Broad discovery — always show the full eligible pool (everyone who COULD work this day / whose shift
-        // I COULD pick up), tier-sorted so active markers come first. Works even on open (unmarked) days.
         if target.isOff {
-            pickups = sorted(r.pickups); wantToWork = []
+            // OFF day = pickups (covering someone's shift): the broad eligible pool, tier-sorted.
+            let r = radar.rows(forDay: target.dayID)
+            pickups = r.pickups.sorted { $0.tier != $1.tier ? $0.tier > $1.tier : $0.peerName < $1.peerName }
+            wantToWork = []; packages = []
         } else {
-            wantToWork = sorted(r.wantToWork); pickups = []
+            // WORKING day = trade it away: real ranked 2-person swap packages (same engine as Trade Solutions),
+            // rendered as CompactSwapCards. Falls back to nothing if no swap exists.
+            let me = SettingsManager.shared.username
+            if let shift = ShiftStore.shared.shifts.first(where: { $0.id == target.dayID }), !shift.isOff {
+                let pkgs = await TradeRouter.packages(forGiveShifts: [shift], excluding: me)
+                packages = pkgs.filter { $0.usesCompactCard }.sorted { $0.rankScore > $1.rankScore }
+            } else { packages = [] }
+            pickups = []; wantToWork = []
         }
         loading = false
+    }
+
+    /// Propose a swap package straight from the trade list — files under Requests (manual, origin .search).
+    private func propose(_ pkg: TradePackage) async {
+        for a in pkg.assignments {
+            await MessagingStore.shared.sendRequest(
+                to: a.workerID, toName: a.name, note: "Swap proposed from your trade list.",
+                take: a.takeDayIDs, give: a.giveDayIDs, origin: .search)
+        }
+        WidgetData.update()
+        dismiss()
     }
 }
 

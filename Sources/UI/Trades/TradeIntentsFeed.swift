@@ -812,8 +812,27 @@ struct CompactSwapCard: View {
         .onTapGesture(perform: onOpen)
     }
 
+    /// Which trade methods this swap supports, from my give-days' kinds: a day-for-day is always possible on a
+    /// swap package; ECB is additionally possible when any give day is kind ECB or Both.
+    private var methodIcons: (day: Bool, ecb: Bool) {
+        let kinds = package.assignments.flatMap(\.giveDayIDs).map { DayIntentStore.shared.tradeKind(forDay: $0) }
+        let day = kinds.isEmpty || kinds.contains { $0 != .ecb }
+        let ecb = kinds.contains { $0 == .ecb || $0 == .both }
+        return (day, ecb)
+    }
+
     @ViewBuilder private var badges: some View {
         HStack(spacing: 6) {
+            // Method: Day (swap), ECB (points), or both indicators when a day can go either way.
+            let m = methodIcons
+            if m.day {
+                Image(systemName: "arrow.left.arrow.right").font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(AppColor.primary).accessibilityLabel("Day-for-day")
+            }
+            if m.ecb {
+                Image(systemName: "star.circle.fill").font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(AppColor.pending).accessibilityLabel("ECB")
+            }
             if package.qualSwap != nil {
                 // Amber Q CAUTION: this solution needs a qual swap — open the card to pick the bridge.
                 Image(systemName: "q.square.fill").font(.system(size: 12, weight: .bold)).foregroundStyle(AppColor.pending)
