@@ -36,14 +36,14 @@ enum ReleaseNotes {
 
         ReleaseNote(
             version: "v2.3 (Build 2)",
-            headline: "Meet Trade Radar — the app now checks the whole group's shifts and intents for you and stars any day a trade is possible, so matches come to you instead of searching — plus standing offers that can fill themselves, alerts to both sides, qual swaps fixed for every qualification, and a refreshed Trade Inbox and history.",
+            headline: "Meet Trade Radar — the app now checks the whole group's shifts and intents for you and stars any day a trade is possible, so matches come to you instead of searching — plus auto-matching that sends your trades for you, alerts to both sides, qual swaps fixed for every qualification, and a refreshed Trade Inbox and history.",
             bullets: [
                 ReleaseBullet(icon: "★", color: green, title: "Trade Radar",
                     body: "The app now checks the whole group's shifts and intents for you and puts a green star on any day a trade is possible — a shift you could pick up on a day off, or a coworker who'd take a shift you want off. Tap Watch Day on a date to be alerted when a match shows up."),
                 ReleaseBullet(icon: "☰", color: blue, title: "See who you can trade with",
                     body: "Tap a day and open Trade List to see exactly who you can trade with. Tap a person to open both calendars side by side, pick the day(s), and send — the offer shows the alternate days they can counter with."),
-                ReleaseBullet(icon: "⟳", color: violet, title: "Standing offers",
-                    body: "Set a \"give this day to get that day\" offer once and the app keeps watching for a match. With auto-match on (Trade Settings) it sends the trade for you — to up to three coworkers at once when several fit, first to accept wins. Turn it off to just be notified and send yourself."),
+                ReleaseBullet(icon: "⟳", color: violet, title: "Auto-match your intents",
+                    body: "Mark a day Want to Trade or Want to Work and pick Day, ECB, or Both — those marks ARE your standing offers. With Auto-match on (Trade Settings) the app sends the swap to matching coworkers for you — up to three at once, first to accept wins. Add an optional 1-time date, shift-type, or qual limit on any day's Info tab."),
                 ReleaseBullet(icon: "✧", color: gold, title: "Alerts & safeguards",
                     body: "You're told when a match is found, when someone wants a day you're giving away, or wants a day you want off — and both people get the alert. Once you accept a trade, that day locks so you can't promise it twice, duplicate offers are caught, and your daily summary rolls up anything you haven't handled."),
                 ReleaseBullet(icon: "⇄", color: teal, title: "Qual swaps, fixed",
