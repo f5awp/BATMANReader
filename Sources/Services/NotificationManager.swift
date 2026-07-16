@@ -207,6 +207,23 @@ final class NotificationManager {
     static let radarDayKey = "batman.radar.dayID"
     static let radarIDPrefix = "batman.radar."
 
+    /// Alert when a trade YOU'RE in just went invalid (a traded day changed on the roster — usually because
+    /// that day got traded elsewhere). Fired per device, so the giver and the taker each get their own.
+    func notifyTradesInvalid(_ items: [(peer: String, day: String)]) async {
+        guard !items.isEmpty else { return }
+        guard await center.notificationSettings().authorizationStatus == .authorized else { return }
+        for item in items {
+            let content = UNMutableNotificationContent()
+            content.title = "A trade is no longer valid"
+            content.body = "Your trade with \(item.peer) for \(Self.prettyDay(item.day)) can't go through — that day changed. Pick another day, counter, or remove it."
+            content.sound = .default
+            content.userInfo = [Self.radarDayKey: item.day]
+            let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
+            try? await center.add(UNNotificationRequest(identifier: Self.radarIDPrefix + "invalid." + item.day + "." + item.peer,
+                                                        content: content, trigger: trigger))
+        }
+    }
+
     /// A newly-formed mutual match — fired on BOTH parties' devices (each detects it independently), so both
     /// sides learn of the match, watched or not. Deep-links to the first involved day's Trade List.
     func notifyMutualMatch(_ items: [(peer: String, dayID: String, dayLabel: String)]) async {

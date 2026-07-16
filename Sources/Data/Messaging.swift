@@ -746,12 +746,24 @@ final class MessagingStore {
     /// Auto-clears — a reversed schedule drops the request out on the next refresh.
     func refreshInvalidRequests() async {
         var invalid = Set<String>()
+        var staleByReq: [String: Set<String>] = [:]
         for req in requests where !req.isECB {
             let stale = await TradeMatcher.staleDays(fromID: req.fromID, toID: req.toID,
                                                      giveDayIDs: req.giveDayIDs, takeDayIDs: req.takeDayIDs)
-            if !stale.isEmpty { invalid.insert(req.id) }
+            if !stale.isEmpty { invalid.insert(req.id); staleByReq[req.id] = stale }
+        }
+        // Notify BOTH sides (each device runs this) about a trade of THEIRS that JUST became invalid — naming
+        // the day that changed. Runs per user, so the giver and the taker each get their own alert.
+        let newlyInvalid = invalid.subtracting(invalidRequestIDs)
+        var alerts: [(peer: String, day: String)] = []
+        for req in requests where newlyInvalid.contains(req.id) && (req.fromID == myID || req.toID == myID) {
+            let st = status(of: req)
+            guard st == .pending || st == .countered || st == .accepted else { continue }   // only live trades
+            guard let day = staleByReq[req.id]?.sorted().first else { continue }
+            alerts.append((peer: req.fromID == myID ? req.toName : req.fromName, day: day))
         }
         invalidRequestIDs = invalid
+        if !alerts.isEmpty { await NotificationManager.shared.notifyTradesInvalid(alerts) }
     }
 
     /// Whether this request is currently invalid (a traded day is no longer worked).
