@@ -35,6 +35,29 @@ enum ReleaseNotes {
     static let all: [ReleaseNote] = [
 
         ReleaseNote(
+            version: "v2.3 (Build 2)",
+            headline: "Meet Trade Radar — the app now checks the whole group's shifts and intents for you and stars any day a trade is possible, so matches come to you instead of searching — plus standing offers that can fill themselves, alerts to both sides, qual swaps fixed for every qualification, and a refreshed Trade Inbox and history.",
+            bullets: [
+                ReleaseBullet(icon: "★", color: green, title: "Trade Radar",
+                    body: "The app now checks the whole group's shifts and intents for you and puts a green star on any day a trade is possible — a shift you could pick up on a day off, or a coworker who'd take a shift you want off. Tap Watch Day on a date to be alerted when a match shows up."),
+                ReleaseBullet(icon: "☰", color: blue, title: "See who you can trade with",
+                    body: "Tap a day and open Trade List to see exactly who you can trade with. Tap a person to open both calendars side by side, pick the day(s), and send — the offer shows the alternate days they can counter with."),
+                ReleaseBullet(icon: "⟳", color: violet, title: "Standing offers",
+                    body: "Set a \"give this day to get that day\" offer once and the app keeps watching for a match. With auto-match on (Trade Settings) it sends the trade for you — to up to three coworkers at once when several fit, first to accept wins. Turn it off to just be notified and send yourself."),
+                ReleaseBullet(icon: "✧", color: gold, title: "Alerts & safeguards",
+                    body: "You're told when a match is found, when someone wants a day you're giving away, or wants a day you want off — and both people get the alert. Once you accept a trade, that day locks so you can't promise it twice, duplicate offers are caught, and your daily summary rolls up anything you haven't handled."),
+                ReleaseBullet(icon: "⇄", color: teal, title: "Qual swaps, fixed",
+                    body: "Qual swaps now work for every qualification. The green bridge finder and the amber Q correctly cover all desks and quals, so a trade that needs someone to slide onto a desk matches like any other."),
+                ReleaseBullet(icon: "✈", color: orange, title: "Carryover vacation toggle",
+                    body: "Carryover vacation isn't printed in the posted schedule, so the app can't read it. Tap a day → Info and turn on Carryover Vacation to mark yourself off — the group sees you're unavailable and that day stays out of trades."),
+                ReleaseBullet(icon: "▤", color: brand, title: "Trade Inbox & history",
+                    body: "The Trade Inbox now splits into Auto-Matches (what the radar found) and Requests (actual offers). Trade History moved into the ⋯ menu. And when you accept a trade, it closes itself and files into History → Done automatically once the BATMAN schedule shows it went through — no manual step."),
+                ReleaseBullet(icon: "»", color: gray, title: "Faster & refinements",
+                    body: "Trade lists open instantly, and the match check runs in the background across the whole group without slowing the app."),
+            ]
+        ),
+
+        ReleaseNote(
             version: "v2.3",
             headline: "Rebuilt the match engine around one honest acceptance score — the best trade wins, not just the smallest — plus a full qual-swap workflow, partial accepts, and a guided welcome.",
             bullets: [
