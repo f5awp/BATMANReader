@@ -18,6 +18,18 @@ final class MatchStore {
     private(set) var takerAvailableDays: Set<String> = []
     /// Mutual matches indexed per day (give ∪ take) → the passive Matches lane + notifications.
     private(set) var matchesByDay: [String: [TradeRouter.RadarMatch]] = [:]
+    /// v4 SUGGESTED lane (SSOT): per active peer, my 3-/2-mutual give days + the peer's offered return days.
+    /// These are NOT auto-sent — the inbox surfaces them for a manual propose. Computed each recompute.
+    private(set) var suggestedMatches: [SuggestedMatch] = []
+
+    /// One peer's Suggested entry — a real trade exists but it needs you to pick day(s) (3-/2-mutual).
+    struct SuggestedMatch: Sendable, Hashable, Identifiable {
+        let peerID: String
+        let peerName: String
+        let giveDayIDs: [String]   // my want-to-trade days (3/2-mutual with this peer) I'd offer
+        let takeDayIDs: [String]   // the peer's offered return days (candidates for the two-way calendar)
+        var id: String { peerID }
+    }
     /// Precomputed per-day rows (both directions) so the day-detail Trade List is an O(1) lookup, not a scan.
     private(set) var dayIndex: [String: TradeRouter.DayRadar] = [:]
     /// The Watch toggle (per day). Local v1 (cross-device sync is a later add).
@@ -112,6 +124,20 @@ final class MatchStore {
             for d in Set(m.giveDayIDs + m.takeDayIDs) { byDay[d, default: []].append(m) }
         }
         matchesByDay = byDay
+        // v4 SUGGESTED (SSOT): classify each active peer's gives; keep the 3-/2-mutual bucket for manual propose.
+        // Computed regardless of the auto-match toggle (Suggested shows even when auto-send is off).
+        let wtwNow = DayIntentStore.shared.wantToWorkDayIDs
+        var sugg: [SuggestedMatch] = []
+        for m in r.matches where TradeProfileStore.shared.isActiveAccount(m.peerID) {
+            let gives = Array(Set(m.giveDayIDs + m.ecbGiveDayIDs))
+            let kinds = Dictionary(gives.map { ($0, DayIntentStore.shared.tradeKind(forDay: $0)) }, uniquingKeysWith: { a, _ in a })
+            let split = TradeRouter.classifyGives(gives, takes: m.takeDayIDs, myWantToWork: wtwNow, kindOfGive: kinds)
+            if !split.suggested.isEmpty {
+                sugg.append(SuggestedMatch(peerID: m.peerID, peerName: m.peerName,
+                                           giveDayIDs: split.suggested.sorted(), takeDayIDs: m.takeDayIDs))
+            }
+        }
+        suggestedMatches = sugg.sorted { $0.peerName < $1.peerName }
         lastRefreshed = Date()
         if !gainedPickups.isEmpty || !gainedTakers.isEmpty {
             await NotificationManager.shared.notifyRadar(gainedPickups: gainedPickups, gainedTakers: gainedTakers,
@@ -163,13 +189,17 @@ final class MatchStore {
         //   • Both → day-for-day WITH an ECB fallback the acceptor can choose, or ECB-only if no reciprocal
         let intents = DayIntentStore.shared
         let wantToWork = intents.wantToWorkDayIDs
-        var dfd: [String: [(peer: TradeRouter.RadarMatch, take: String)]] = [:]   // day-for-day candidates
-        var ecb: [String: [TradeRouter.RadarMatch]] = [:]                          // ECB (points) candidates
+        // v4: ONLY 4-mutual swaps and ECB-only-kind days auto-send (no day choice needed). The classifier is
+        // the single source of truth; 3-/2-mutual go to Suggested (computed for the UI, never auto-sent here).
+        var dfd: [String: [(peer: TradeRouter.RadarMatch, take: String)]] = [:]   // give → peers with a 4-mutual (give,take)
+        var ecb: [String: [TradeRouter.RadarMatch]] = [:]                          // give → peers for ECB-only auto
         for m in matches where TradeProfileStore.shared.isActiveAccount(m.peerID) {
-            if let take = m.takeDayIDs.first(where: { wantToWork.contains($0) }) {
-                for give in m.giveDayIDs { dfd[give, default: []].append((peer: m, take: take)) }
-            }
-            for give in m.ecbGiveDayIDs { ecb[give, default: []].append(m) }
+            let gives = Array(Set(m.giveDayIDs + m.ecbGiveDayIDs))
+            let kindOfGive = Dictionary(gives.map { ($0, intents.tradeKind(forDay: $0)) }, uniquingKeysWith: { a, _ in a })
+            let split = TradeRouter.classifyGives(gives, takes: m.takeDayIDs, myWantToWork: wantToWork, kindOfGive: kindOfGive)
+            for pair in split.autoSwaps { dfd[pair.give, default: []].append((peer: m, take: pair.take)) }
+            for give in split.autoECB { ecb[give, default: []].append(m) }
+            // split.suggested is intentionally NOT auto-sent — the Suggested lane surfaces it for manual propose.
         }
         let matchable = Set(dfd.keys).union(ecb.keys)
         // First run, or toggle off → just record the baseline; never blast pre-existing matches.
