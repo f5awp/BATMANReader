@@ -56,6 +56,16 @@ struct DayTradeListPane: View {
     @State private var selectedCandidate: PlanCandidate?   // tapped person → 2-way calendar
     @State private var fShifts: Set<ShiftAvailabilityType> = []   // shift-type filter (AM/PM/MID)
     @State private var fQuals: Set<String> = []                   // qual filter (desk's required qual)
+    @State private var limitReturn = false                       // H6: filter by the return date I want back
+    @State private var returnFrom = Date()
+    @State private var returnTo = Date()
+
+    private static let isoF: DateFormatter = { let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; return f }()
+    /// The active return-date range (working days only, when the filter is on and valid).
+    private var returnRange: ClosedRange<Date>? {
+        guard limitReturn, !target.isOff, returnFrom <= returnTo else { return nil }
+        return returnFrom...returnTo
+    }
 
     /// The list shown for this day (off → pickups, working → who-could-work).
     private var activeRows: [TradeRouter.DayTradeRow] { target.isOff ? pickups : wantToWork }
@@ -69,7 +79,15 @@ struct DayTradeListPane: View {
         (fShifts.isEmpty || fShifts.contains(shiftOf(r)))
             && (fQuals.isEmpty || (qualOf(r).map { fQuals.contains($0) } ?? false))
     }
-    private var shownRows: [TradeRouter.DayTradeRow] { activeRows.filter(passesFilter) }
+    private var shownRows: [TradeRouter.DayTradeRow] {
+        var rows = activeRows.filter(passesFilter)
+        if let range = returnRange {   // H6: only people who could give me a return day in the range
+            let peers = radar.peersWithReturnDay(fromISO: Self.isoF.string(from: range.lowerBound),
+                                                 toISO: Self.isoF.string(from: range.upperBound))
+            rows = rows.filter { peers.contains($0.peerID) }
+        }
+        return rows
+    }
 
     private var prettyDate: String {
         guard let d = TradeMatcher.dayDate(fromISO: target.dayID) else { return target.dayID }
@@ -92,7 +110,7 @@ struct DayTradeListPane: View {
                 if loading {
                     Section { HStack { Spacer(); ProgressView(); Spacer() } }
                 } else {
-                    if availShifts.count > 1 || !availQuals.isEmpty { filterBar }
+                    if availShifts.count > 1 || !availQuals.isEmpty || !target.isOff { filterBar }
                     Section {
                         if shownRows.isEmpty {
                             emptyRow(activeRows.isEmpty
@@ -124,7 +142,8 @@ struct DayTradeListPane: View {
             .sheet(item: $selectedCandidate) { cand in
                 TwoWaySheet(candidate: cand,
                             initialGive: target.isOff ? [] : [target.dayID],
-                            initialTake: target.isOff ? [target.dayID] : [])
+                            initialTake: target.isOff ? [target.dayID] : [],
+                            returnRange: returnRange)   // H6: limit their return dates to my chosen range
             }
         }
     }
@@ -171,6 +190,15 @@ struct DayTradeListPane: View {
                     }
                 }
                 .padding(.vertical, 2)
+            }
+            // H6: on a working day, narrow to people who could give me a return day in a date range — and the
+            // two-way opens showing only those return dates.
+            if !target.isOff {
+                Toggle("Filter by return date", isOn: $limitReturn.animation())
+                if limitReturn {
+                    DatePicker("From", selection: $returnFrom, displayedComponents: .date)
+                    DatePicker("To", selection: $returnTo, in: returnFrom..., displayedComponents: .date)
+                }
             }
         } header: { Text("Filter") }
     }

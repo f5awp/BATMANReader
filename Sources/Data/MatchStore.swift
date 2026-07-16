@@ -292,6 +292,16 @@ final class MatchStore {
         return (TradeRouter.sortDayRows(d.pickups), d.wantToWork.sorted { $0.peerName < $1.peerName })
     }
 
+    /// Peers who have a working day I could cover within an ISO day range [from, to] — i.e. who could give me
+    /// a RETURN day in that range. Drives the day-detail return-date filter (H6). ISO strings compare correctly.
+    func peersWithReturnDay(fromISO: String, toISO: String) -> Set<String> {
+        var out = Set<String>()
+        for (day, dr) in dayIndex where day >= fromISO && day <= toISO {
+            for r in dr.pickups { out.insert(r.peerID) }
+        }
+        return out
+    }
+
     func setWatched(_ dayID: String, _ on: Bool) {
         if on { watchedDays.insert(dayID) } else { watchedDays.remove(dayID) }
         UserDefaults.standard.set(Array(watchedDays), forKey: Keys.watched)
