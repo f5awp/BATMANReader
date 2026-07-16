@@ -487,9 +487,11 @@ struct IntentCalendarView: View {
         .overlay(
             RoundedRectangle(cornerRadius: DXSpace.cellRadius)
                 .strokeBorder(borderColor(dayID: dayID, isToday: isToday, isOff: isOff, hasShift: hasShift),
+                              // "today" = blue tile ring for ANY day. The sig-day disc now lives around the
+                              // NUMBER (not the tile edge), so today + sig-day shows BOTH: blue edge ring +
+                              // orange/pink number disc — no collision, and today is never dropped.
                               lineWidth: flashDays.contains(dayID) ? 3
-                                       : (isToday && intents.topology(forDay: dayID) == .standard ? 2
-                                          : borderWidth(dayID: dayID, isOff: isOff)))
+                                       : (isToday ? 2 : borderWidth(dayID: dayID, isOff: isOff)))
         )
         // Intent pill (TRADE / KEEP / BLACKOUT / WANT) flashes in ONLY when you tap the day — never
         // rendered persistently, so it can't crowd the number. Notes / events stay top-right.
@@ -782,8 +784,8 @@ struct IntentCalendarView: View {
 
     private func borderColor(dayID: String, isToday: Bool, isOff: Bool, hasShift: Bool) -> Color {
         if flashDays.contains(dayID) { return BrickPalette.warning }
-        // "today" is a blue inset ring on the tile (mockup), for ANY day — including a holiday/milestone,
-        // which now carries only the small corner dot (§10) rather than a disc, so the ring is its "today" cue.
+        // "today" is a blue inset ring on the tile edge, for ANY day — including a sig day, whose orange/pink
+        // disc sits around the date NUMBER, so the two never occupy the same spot.
         if isToday { return AppColor.primary }
         return .clear
     }
