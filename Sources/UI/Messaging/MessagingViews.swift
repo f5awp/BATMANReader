@@ -733,6 +733,11 @@ struct ThreadView: View {
         guard request.isBroadcastLeg, request.fromID == myID else { return [] }
         return store.requests.filter { $0.groupKey == request.groupKey }.sorted { $0.toName < $1.toName }
     }
+    /// Takers who have accepted this broadcast (their bids) + the method each chose — the giver picks one.
+    private var giverBids: [(leg: TradeRequest, kind: TradeKind?)] {
+        guard request.isBroadcastLeg, request.fromID == myID, let offerID = request.offerID else { return [] }
+        return store.broadcastBids(offerID: offerID)
+    }
 
     // The trade card, extracted so the List body stays inside the type-checker's budget.
     @ViewBuilder private var tradeCard: some View {
@@ -909,15 +914,28 @@ struct ThreadView: View {
                         .listRowBackground(BrickPalette.critical.opacity(0.12))
                 }
             }
-            // Broadcast (owner side): each recipient's live status — first to accept wins.
+            // Broadcast (owner side): each recipient's live status. You PICK who to trade with — a taker's
+            // accept is a bid (with the method they chose); tapping Choose finalizes them and cancels the rest.
             if !broadcastLegs.isEmpty {
-                Section("Sent to \(broadcastLegs.count) · first to accept wins") {
+                let bidIDs = Set(giverBids.map(\.leg.id))
+                Section("Sent to \(broadcastLegs.count) · you choose who to trade with") {
                     ForEach(broadcastLegs) { leg in
                         HStack(spacing: 10) {
                             Avatar(name: leg.toName, id: leg.toID, size: 26)
-                            Text(leg.toName).font(.subheadline)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(leg.toName).font(.subheadline)
+                                if let kind = giverBids.first(where: { $0.leg.id == leg.id })?.kind {
+                                    Text(kind == .ecb ? "chose ECB" : "chose day-for-day")
+                                        .font(.caption).foregroundStyle(kind == .ecb ? AppColor.pending : AppColor.primary)
+                                }
+                            }
                             Spacer()
-                            StatusBadge(status: store.status(of: leg))
+                            if bidIDs.contains(leg.id) {
+                                Button("Choose") { Task { await store.finalizeBroadcastPick(leg) } }
+                                    .buttonStyle(.borderedProminent).controlSize(.small).tint(AppColor.success)
+                            } else {
+                                StatusBadge(status: store.status(of: leg))
+                            }
                         }
                     }
                 }
@@ -1001,6 +1019,11 @@ struct ThreadView: View {
                     Label("You replied: \(status.label)", systemImage: "checkmark.seal.fill")
                         .font(.subheadline.bold())
                         .foregroundStyle(status == .declined ? AppColor.danger : AppColor.success)
+                    // A broadcast to several takers: my accept is a bid the giver still has to choose.
+                    if status == .accepted, request.isBroadcastLeg, request.toID == myID {
+                        Label("Bid placed — \(request.fromName) is choosing among the responders.", systemImage: "person.2.wave.2")
+                            .font(.caption).foregroundStyle(AppColor.pending)
+                    }
                 }
             }
 

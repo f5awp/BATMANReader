@@ -470,6 +470,8 @@ struct TradeResponse: Sendable, Codable, Identifiable, Hashable {
     var deleted: Bool? = nil        // soft-delete tombstone for a chat message (B4).
     var reactions: [Reaction]? = nil // emoji reactions on a 1:1 chat message (B6).
     var imageBase64: String? = nil   // attached photo on a 1:1 chat message (downscaled JPEG, base64) — #28.
+    var acceptedKind: TradeKind? = nil // Match Radar: the method the taker chose accepting a Both offer (day/ecb),
+                                       // so the giver sees each responder's pick. Set post-init; optional ⇒ old records decode.
 
     // EXPLICIT init — freezes the construction signature (stale-incremental-link fix).
     init(id: String, requestID: String, responderID: String, responderName: String,
@@ -739,7 +741,6 @@ final class MessagingStore {
         replies    = FetchMerge.keepCacheOnEmpty(existing: replies, fetched: reps.sorted { $0.createdAt < $1.createdAt })
         // ECB maintenance (sender side): auto-complete ledger on receipt.
         reconcileECBLedger()
-        await reconcileBroadcastOffers()   // first-accept-wins: cancel losing legs of a broadcast I sent
         await reconcileMirrorDuplicates()  // both sides auto-sent the same swap → collapse to one
         await refreshInvalidRequests()
     }
@@ -762,17 +763,28 @@ final class MessagingStore {
         }
     }
 
-    /// FIRST-ACCEPT-WINS for a day-for-day broadcast (a standing-offer fan-out): for each shared-`offerID`
-    /// group I SENT, once one leg is accepted, cancel the still-pending siblings so only one trade goes
-    /// through. Owner-side (I own every leg), runs on refresh. (ECB offers are a points queue — skipped.)
-    func reconcileBroadcastOffers() async {
-        let mine = requests.filter { $0.fromID == myID && $0.offerID != nil && !$0.isECB }
-        for (_, legs) in Dictionary(grouping: mine, by: { $0.offerID! }) {
-            guard legs.count > 1, legs.contains(where: { status(of: $0) == .accepted }) else { continue }
-            for leg in legs where status(of: leg) == .pending {
-                await respond(to: leg, status: .cancelled, note: "This trade was filled by another dispatcher.")
-            }
+    /// GIVER PICKS among the up-to-3 takers of a day-for-day / Both broadcast: cancel every OTHER leg of the
+    /// same `offerID` (pending bids that lost, or a competing accept), leaving `picked` as the trade that goes
+    /// through. Owner-side (I own every leg). A solo (1-recipient) offer has no `offerID`, so it just
+    /// auto-finalizes on the taker's accept — no pick needed. (ECB uses its own per-shift queue in ECBOfferView.)
+    func finalizeBroadcastPick(_ picked: TradeRequest) async {
+        guard picked.fromID == myID, let offerID = picked.offerID else { return }
+        for leg in requests where leg.offerID == offerID && leg.fromID == myID && leg.id != picked.id {
+            let st = status(of: leg)
+            guard st == .pending || st == .accepted else { continue }
+            await respond(to: leg, status: .cancelled, note: "You chose another dispatcher for this trade.")
         }
+    }
+
+    /// The takers who have ACCEPTED a broadcast I sent (their bids), each with the method they chose — so the
+    /// giver can compare and pick. Keyed to one `offerID`. Empty for a non-broadcast or if no one has accepted.
+    func broadcastBids(offerID: String) -> [(leg: TradeRequest, kind: TradeKind?)] {
+        requests.filter { $0.offerID == offerID && $0.fromID == myID && status(of: $0) == .accepted }
+            .map { leg in
+                let kind = responses.first { $0.requestID == leg.id && $0.statusValue == .accepted }?.acceptedKind
+                return (leg, kind)
+            }
+            .sorted { $0.leg.toName < $1.leg.toName }
     }
 
     /// S-VALID: recompute which active (non-ECB) requests are stale against the live roster.
@@ -1186,11 +1198,12 @@ final class MessagingStore {
             committedNotice = "You already traded \(DayFmt.nice(clash)) — this trade is no longer possible. Offer a different day."
             return
         }
-        let resp = TradeResponse(
+        var resp = TradeResponse(
             id: UUID().uuidString, requestID: request.id,
             responderID: myID, responderName: myName,
             status: status.rawValue, note: note, createdAt: Date(),
             offerID: request.offerID, acceptedDayIDs: acceptedDayIDs, imageBase64: imageBase64)
+        if status == .accepted, request.offersDayForDay { resp.acceptedKind = .day }   // taker chose the swap
         await service.sendResponse(resp)
         responses = (responses.filter { $0.id != resp.id } + [resp]).sorted { $0.createdAt < $1.createdAt }
         // B6-ECB: an ECB offer accepted via the generic path also auto-posts (de-duped by requestID). An IOU
@@ -1412,10 +1425,11 @@ final class MessagingStore {
     /// Recipient: accept specific shifts of an ECB offer (employee # auto-included).
     func acceptECB(_ request: TradeRequest, days: [String]) async {
         let note = "Employee #\(myID). Accepting: " + days.map { DayFmt.nice($0) }.joined(separator: ", ")
-        let resp = TradeResponse(
+        var resp = TradeResponse(
             id: UUID().uuidString, requestID: request.id, responderID: myID, responderName: myName,
             status: TradeRequestStatus.accepted.rawValue, note: note, createdAt: Date(),
             offerID: request.offerID, acceptedDayIDs: days)
+        resp.acceptedKind = .ecb   // taker chose ECB — so a multi-taker giver sees this pick
         await service.sendResponse(resp)
         responses = (responses.filter { $0.id != resp.id } + [resp]).sorted { $0.createdAt < $1.createdAt }
         // B6-ECB: accepting an ECB offer auto-posts a CONFIRMED shared ledger line (sender pays accepter).
