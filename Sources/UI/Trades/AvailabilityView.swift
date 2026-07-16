@@ -1120,6 +1120,7 @@ struct TwoWaySheet: View {
     let candidate: PlanCandidate
     var initialGive: Set<String> = []   // seed selection (from a tapped match card); else mutual-wanted default
     var initialTake: Set<String> = []
+    var returnRange: ClosedRange<Date>? = nil   // H6: when set, only return dates (their shifts) in this range show
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.horizontalSizeClass) private var hSize
@@ -1368,10 +1369,21 @@ struct TwoWaySheet: View {
         }
     }
 
+    // Package-card style (matches Trade Solutions): the possible dates scroll HORIZONTALLY for each side —
+    // "You take" (their shift) and "You give" (your shift). Tap chips to build the proposal. Mutual-wanted
+    // days sort first and carry a gold rim.
+    private var takeLegs: [TwoWayLeg] {
+        var legs = full?.iTake ?? []
+        if let r = returnRange { legs = legs.filter { r.contains($0.date) } }   // H6: only return dates in range
+        return legs.sorted { ($0.wanted ? 0 : 1, $0.date) < ($1.wanted ? 0 : 1, $1.date) }
+    }
+    private var giveLegs: [TwoWayLeg] {
+        (full?.iGive ?? []).sorted { ($0.wanted ? 0 : 1, $0.date) < ($1.wanted ? 0 : 1, $1.date) }
+    }
+
     private var content: some View {
-        GeometryReader { geo in
         ScrollView {
-            VStack(spacing: 16) {
+            VStack(alignment: .leading, spacing: 16) {
                 if let theirStatus {   // R-B: show the peer's published status in-context
                     HStack(alignment: .top, spacing: 6) {
                         Image(systemName: "quote.bubble").font(.caption).foregroundStyle(themColor)
@@ -1382,60 +1394,83 @@ struct TwoWaySheet: View {
                     .padding(10)
                     .background(themColor.opacity(0.10), in: RoundedRectangle(cornerRadius: DS.cardRadius))
                 }
-                scheduleGlance(geo.size)
+                if let r = returnRange {
+                    Label("Showing return dates \(Self.rangeF.string(from: r.lowerBound)) – \(Self.rangeF.string(from: r.upperBound))",
+                          systemImage: "line.3.horizontal.decrease.circle")
+                        .font(.caption).foregroundStyle(AppColor.primary)
+                }
+                VStack(alignment: .leading, spacing: 14) {
+                    chipSection(title: "You take", subtitle: "their shift you'd cover",
+                                legs: takeLegs, selected: selectedTake, accent: themColor) { id in
+                        if selectedTake.contains(id) { selectedTake.remove(id) } else { selectedTake.insert(id) }
+                    }
+                    Divider()
+                    chipSection(title: "You give", subtitle: "your shift they'd take",
+                                legs: giveLegs, selected: selectedGive, accent: AppColor.primary) { id in
+                        if selectedGive.contains(id) { selectedGive.remove(id) } else { selectedGive.insert(id) }
+                    }
+                }
+                .padding(14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .dxCard()
+
                 Toggle(isOn: $ignoreMyBlacklist.animation()) {
                     Label("Show my blacklisted shifts (override)", systemImage: "eye.slash")
                         .font(.caption.weight(.semibold))
                 }
                 .tint(AppColor.pending)
-                if mutualN > 0 { mutualSection }
-                discoverySection
-                VStack(spacing: 4) {
-                    Button { propose() } label: {
-                        Label("Propose selected swap", systemImage: "message.fill").frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(selectedTake.isEmpty && selectedGive.isEmpty)
-                    if selectedTake.isEmpty && selectedGive.isEmpty {
-                        Text("Tap days above to add them to the proposal.")
-                            .font(.caption2).foregroundStyle(.secondary)
-                    }
+
+                Button { propose() } label: {
+                    Label("Propose selected swap", systemImage: "message.fill").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(selectedTake.isEmpty && selectedGive.isEmpty)
+                if selectedTake.isEmpty && selectedGive.isEmpty {
+                    Text("Tap dates above to build the proposal.").font(.caption2).foregroundStyle(.secondary)
                 }
             }
             .padding()
         }
-        }
     }
 
-    // Highlighted, NOT windowed — guarantees a gold candidate always shows content.
-    private var mutualSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Label("^[\(mutualN) match](inflect: true) where you BOTH want the trade", systemImage: "flame.fill")
-                .font(.subheadline.bold()).foregroundStyle(seekingGold)
-            columns(takes: mutualTakes, gives: mutualGives)
-        }
-        .padding(12)
-        .background(seekingGold.opacity(0.10))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-    }
-
-    private var discoverySection: some View {
-        VStack(spacing: 10) {
-            HStack {
-                Button { if windowIndex > 0 { windowIndex -= 1 } } label: { Image(systemName: "chevron.left").font(.headline) }
-                    .disabled(windowIndex == 0)
-                Spacer()
-                VStack(spacing: 1) {
-                    Text(rangeLabel).font(.subheadline).bold()
-                    Text("All bookend swaps · 4-month window").font(.caption2).foregroundStyle(.secondary)
-                }
-                Spacer()
-                Button { if windowIndex < maxWindow { windowIndex += 1 } } label: { Image(systemName: "chevron.right").font(.headline) }
-                    .disabled(windowIndex >= maxWindow)
+    /// One horizontal-scrolling row of day chips for a side of the trade.
+    private func chipSection(title: String, subtitle: String, legs: [TwoWayLeg], selected: Set<String>,
+                             accent: Color, toggle: @escaping (String) -> Void) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Text(title).font(.dsCardTitle)
+                Text(subtitle).font(.caption).foregroundStyle(.secondary)
+                Spacer(minLength: 0)
             }
-            IntentColorKey()   // #5: intent-color legend in the two-way sheet
-            columns(takes: winTakes, gives: winGives)
+            if legs.isEmpty {
+                Text("None available").font(.caption).foregroundStyle(.tertiary)
+            } else {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(legs) { leg in
+                            dayChip(leg, on: selected.contains(leg.dayID), accent: accent)
+                                .contentShape(Rectangle())
+                                .onTapGesture { toggle(leg.dayID) }
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+            }
         }
+    }
+
+    private func dayChip(_ leg: TwoWayLeg, on: Bool, accent: Color) -> some View {
+        VStack(spacing: 2) {
+            Text(Self.rangeF.string(from: leg.date)).font(.dsBadge)
+            Text("\(ShiftAvailabilityType.infer(fromStartHour: leg.startHour).rawValue) · \(leg.desk)")
+                .font(.caption2).foregroundStyle(on ? Color.white.opacity(0.9) : .secondary)
+        }
+        .padding(.horizontal, 12).padding(.vertical, 8)
+        .background(on ? accent : (leg.wanted ? seekingGold.opacity(DS.pillFill) : Color(.tertiarySystemFill)),
+                    in: RoundedRectangle(cornerRadius: DS.rowRadius, style: .continuous))
+        .foregroundStyle(on ? Color.white : Color.primary)
+        .overlay(leg.wanted && !on
+                 ? RoundedRectangle(cornerRadius: DS.rowRadius).stroke(seekingGold, lineWidth: 1) : nil)
     }
 
     // Two side-by-side columns: take (their shift) | give (your shift). Tap a day
