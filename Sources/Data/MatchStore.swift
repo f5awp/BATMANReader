@@ -132,32 +132,37 @@ final class MatchStore {
             for d in Set(m.giveDayIDs + m.takeDayIDs) where !committed.contains(d) { byDay[d, default: []].append(m) }
         }
         matchesByDay = byDay
-        // v4 SUGGESTED (SSOT): classify each active peer's gives; keep the 3-/2-mutual bucket for manual propose.
-        // Computed regardless of the auto-match toggle (Suggested shows even when auto-send is off).
-        let wtwNow = DayIntentStore.shared.wantToWorkDayIDs
-        var sugg: [SuggestedMatch] = []
-        for m in r.matches where TradeProfileStore.shared.isActiveAccount(m.peerID) {
-            let gives = Array(Set(m.giveDayIDs + m.ecbGiveDayIDs))
-            let kinds = Dictionary(gives.map { ($0, DayIntentStore.shared.tradeKind(forDay: $0)) }, uniquingKeysWith: { a, _ in a })
-            let split = TradeRouter.classifyGives(gives, takes: m.takeDayIDs, myWantToWork: wtwNow, kindOfGive: kinds)
-            let suggestGives = split.suggested.filter { !committed.contains($0) }   // never suggest a locked day
-            if !suggestGives.isEmpty {
-                let takes = m.takeDayIDs.filter { !committed.contains($0) }
-                // Shift/qual facets this trade spans — from my give-day shift + the peer's return-day shift
-                // (both already in the day index) so the Suggested lane can filter by shift type and qual.
-                var shifts = Set<ShiftAvailabilityType>(); var quals = Set<String>()
-                func note(desk: String, startHour: Int) {
-                    shifts.insert(.infer(fromStartHour: startHour))
-                    if let q = DeskRules.requiredQual(forDesk: desk) { quals.insert(q) }
+        // v4 SUGGESTED (SSOT) — broad, mirroring the day detail: for each of MY marked days (want-to-trade
+        // working / want-to-work off), gather the eligible peers from the day index and group by peer. This
+        // surfaces trades that need a manual pick (peer wants my day, or I'd cover theirs) — not just the
+        // narrow 4-mutual set. The AUTO 4-mutual/ECB sends are filtered out in the inbox (proposed peers).
+        let myTrade = DayIntentStore.shared.seekingDayIDs        // my want-to-trade working days
+        let myWork = DayIntentStore.shared.wantToWorkDayIDs      // my want-to-work off days
+        typealias Acc = (name: String, gives: Set<String>, takes: Set<String>, shifts: Set<ShiftAvailabilityType>, quals: Set<String>)
+        var byPeer: [String: Acc] = [:]
+        for (day, dr) in dayIndex where !committed.contains(day) {
+            if myTrade.contains(day) {
+                for row in dr.wantToWork where TradeProfileStore.shared.isActiveAccount(row.peerID) {
+                    byPeer[row.peerID, default: ("", [], [], [], [])].name = row.peerName
+                    byPeer[row.peerID, default: ("", [], [], [], [])].gives.insert(day)
+                    byPeer[row.peerID, default: ("", [], [], [], [])].shifts.insert(.infer(fromStartHour: row.startHour))
+                    if let q = DeskRules.requiredQual(forDesk: row.desk) { byPeer[row.peerID, default: ("", [], [], [], [])].quals.insert(q) }
                 }
-                for g in suggestGives { if let row = dayIndex[g]?.wantToWork.first { note(desk: row.desk, startHour: row.startHour) } }
-                for t in takes { if let row = dayIndex[t]?.pickups.first(where: { $0.peerID == m.peerID }) { note(desk: row.desk, startHour: row.startHour) } }
-                sugg.append(SuggestedMatch(peerID: m.peerID, peerName: m.peerName,
-                                           giveDayIDs: suggestGives.sorted(), takeDayIDs: takes,
-                                           shiftTypes: shifts, quals: quals))
+            }
+            if myWork.contains(day) {
+                for row in dr.pickups where TradeProfileStore.shared.isActiveAccount(row.peerID) {
+                    byPeer[row.peerID, default: ("", [], [], [], [])].name = row.peerName
+                    byPeer[row.peerID, default: ("", [], [], [], [])].takes.insert(day)
+                    byPeer[row.peerID, default: ("", [], [], [], [])].shifts.insert(.infer(fromStartHour: row.startHour))
+                    if let q = DeskRules.requiredQual(forDesk: row.desk) { byPeer[row.peerID, default: ("", [], [], [], [])].quals.insert(q) }
+                }
             }
         }
-        suggestedMatches = sugg.sorted { $0.peerName < $1.peerName }
+        suggestedMatches = byPeer.compactMap { pid, acc in
+            (acc.gives.isEmpty && acc.takes.isEmpty) ? nil
+                : SuggestedMatch(peerID: pid, peerName: acc.name, giveDayIDs: acc.gives.sorted(),
+                                 takeDayIDs: acc.takes.sorted(), shiftTypes: acc.shifts, quals: acc.quals)
+        }.sorted { $0.peerName < $1.peerName }
         lastRefreshed = Date()
         if !gainedPickups.isEmpty || !gainedTakers.isEmpty {
             await NotificationManager.shared.notifyRadar(gainedPickups: gainedPickups, gainedTakers: gainedTakers,
