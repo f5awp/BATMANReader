@@ -90,11 +90,13 @@ final class NotificationManager {
     func scheduleDailyDigest(enabled: Bool, hour: Int, pending: Int, unread: Int) async {
         center.removePendingNotificationRequests(withIdentifiers: [digestID])
         guard enabled else { return }
+        // Fold in unwatched radar matches so they surface daily (delivery is on-open until push lands).
+        let matches = await MainActor.run { MatchStore.shared.unwatchedOpportunityCount }
         let content = UNMutableNotificationContent()
         content.title = "\(AppGuide.appName) — daily check-in"
-        content.body = Self.digestBody(pending: pending, unread: unread)
+        content.body = Self.digestBody(pending: pending, unread: unread, matches: matches)
         content.sound = .default
-        let total = pending + unread
+        let total = pending + unread + matches
         if total > 0 { content.badge = NSNumber(value: total) }
         var comps = DateComponents(); comps.hour = max(0, min(23, hour)); comps.minute = 0
         let trigger = UNCalendarNotificationTrigger(dateMatching: comps, repeats: true)
@@ -115,6 +117,9 @@ final class NotificationManager {
             let work = Task { @MainActor in
                 self.scheduleDigestRefresh()   // chain the next background run
                 await MessagingStore.shared.refresh()
+                // Refresh the radar so the digest's unwatched-match count is current — and give watched-day
+                // alerts a chance to fire from the background (best-effort, when iOS grants the slot).
+                await MatchStore.shared.recompute()
                 let s = SettingsManager.shared
                 let c = DashboardCounts.from(requests: MessagingStore.shared.requests,
                                              responses: MessagingStore.shared.responses,
@@ -141,11 +146,12 @@ final class NotificationManager {
     }
 
     /// PURE, testable: the digest sentence for the given counts.
-    static func digestBody(pending: Int, unread: Int) -> String {
+    static func digestBody(pending: Int, unread: Int, matches: Int = 0) -> String {
         func plural(_ n: Int, _ noun: String) -> String { "\(n) \(noun)\(n == 1 ? "" : "s")" }
         var parts: [String] = []
         if pending > 0 { parts.append(plural(pending, "pending trade")) }
         if unread > 0  { parts.append(plural(unread, "unread message")) }
+        if matches > 0 { parts.append("\(matches) trade match\(matches == 1 ? "" : "es") you haven't watched") }
         if parts.isEmpty { return "Nothing needs you right now — tap to browse your matches." }
         return "You have " + parts.joined(separator: " and ") + ". Tap to review."
     }

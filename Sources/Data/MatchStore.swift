@@ -81,6 +81,12 @@ final class MatchStore {
         return (r.pickupDays, r.takerDays)
     }
 
+    /// Count of current opportunities (both directions) the user hasn't WATCHED yet — folded into the daily
+    /// digest so unwatched matches still surface without per-day spam (delivery is on-open until push lands).
+    var unwatchedOpportunityCount: Int {
+        pickupAvailableDays.union(takerAvailableDays).subtracting(watchedDays).count
+    }
+
     /// A day has a star (a legal pickup for me exists). (Star stays direction-A only, per spec.)
     func hasStar(_ dayID: String) -> Bool { pickupAvailableDays.contains(dayID) }
     func matches(on dayID: String) -> [TradeRouter.RadarMatch] { matchesByDay[dayID] ?? [] }

@@ -1324,6 +1324,10 @@ enum TradeEngineTests {
               "digest: singular pending")
         check(NotificationManager.digestBody(pending: 3, unread: 2) == "You have 3 pending trades and 2 unread messages. Tap to review.",
               "digest: both, pluralized")
+        check(NotificationManager.digestBody(pending: 0, unread: 0, matches: 1) == "You have 1 trade match you haven't watched. Tap to review.",
+              "digest: singular unwatched match")
+        check(NotificationManager.digestBody(pending: 1, unread: 0, matches: 4) == "You have 1 pending trade and 4 trade matches you haven't watched. Tap to review.",
+              "digest: pending + unwatched matches, pluralized")
 
         // MARK: U-RECV — a day I RECEIVE back must be a clean bookend for me (attaches to my work) or a
         // day I explicitly marked want-to-work; a random mid-week island is dropped. Bookends rank first.
