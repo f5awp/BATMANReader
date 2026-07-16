@@ -303,7 +303,7 @@ struct InboxView: View {
             VStack(spacing: 0) {
                 // Top split: passive Matches (what the radar found for you) vs Requests (actual proposals).
                 DXSegmented(selection: $topMode, options: [
-                    .init(0, "Matches", badge: matchCount), .init(1, "Requests", badge: 0),
+                    .init(0, "Auto-Matches", badge: matchCount), .init(1, "Requests", badge: 0),
                 ], color: { v in [0: AppColor.success, 1: AppColor.primary][v] })
                 .padding([.horizontal, .top])
 
