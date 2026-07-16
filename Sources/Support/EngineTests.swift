@@ -352,6 +352,23 @@ enum TradeEngineTests {
         check(TradeRequest.clampECB(13.3) == 13.5, "ECB: clamp rounds to nearest 0.5")
         check(ecbText(9) == "9" && ecbText(13.5) == "13.5", "ecbText: drops trailing .0")
 
+        // MARK: ECB-MODEL — a request's offer helpers drive the proposal card's accept options.
+        do {
+            func req(take: [String], give: [String], ecb: Double?, kind: TradeKind?) -> TradeRequest {
+                var r = TradeRequest(id: "x", fromID: "a", fromName: "A", toID: "b", toName: "B", note: "",
+                                     takeDayIDs: take, giveDayIDs: give, createdAt: Date(timeIntervalSince1970: 1),
+                                     expiresAt: Date(timeIntervalSince1970: 100), ecbValue: ecb)
+                r.offerKind = kind
+                return r
+            }
+            let dayOnly = req(take: ["d1"], give: ["d2"], ecb: nil, kind: .day)
+            check(dayOnly.offersDayForDay && !dayOnly.offersECB && !dayOnly.offersChoice, "ECB-MODEL: day-only offers swap, not ECB")
+            let ecbOnly = req(take: [], give: ["d2"], ecb: 9, kind: .ecb)
+            check(ecbOnly.isECB && ecbOnly.offersECB && !ecbOnly.offersDayForDay && !ecbOnly.offersChoice, "ECB-MODEL: ecb-only is one-way points")
+            let both = req(take: ["d1"], give: ["d2"], ecb: 9, kind: .both)
+            check(both.offersChoice && both.offersECB && both.offersDayForDay && !both.isECB, "ECB-MODEL: Both offers a real either/or, not a pure ECB")
+        }
+
         // MARK: Intents-tab badge count (D2a). activeIntentCount counts non-neutral intents.
         do {
             let store = DayIntentStore.shared

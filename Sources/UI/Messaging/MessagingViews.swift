@@ -1011,7 +1011,8 @@ struct ThreadView: View {
             }
 
             if isIncoming, request.isECB, status == .pending {
-                Section("Accept shifts — \(ecbText(request.ecbAmount ?? 0)) ECB each") {
+                Section {
+                    if let iou = ecbIOUNote { Label(iou, systemImage: "clock.badge.checkmark").font(.caption).foregroundStyle(AppColor.pending) }
                     ForEach(request.giveDayIDs, id: \.self) { d in
                         Toggle(DayFmt.nice(d), isOn: Binding(
                             get: { ecbSelectedDays.contains(d) },
@@ -1022,9 +1023,26 @@ struct ThreadView: View {
                     }
                     .tint(AppColor.success).disabled(ecbSelectedDays.isEmpty)
                     Button(role: .destructive) { respond(.declined) } label: { Label("Decline all", systemImage: "xmark.circle") }
+                } header: {
+                    Text("Accept shifts — \(ecbText(request.ecbAmount ?? 0)) ECB each")
                 }
             } else if isIncoming && status == .pending {
-                cardSection { respondCard }
+                cardSection {
+                    respondCard
+                    // Match Radar: a Both offer lets you accept the day-for-day swap ABOVE, or take it for ECB
+                    // points instead (no swap). One card, your choice.
+                    if request.offersChoice {
+                        Divider()
+                        Text("…or take it for ECB instead").font(.subheadline.weight(.semibold))
+                        if let iou = ecbIOUNote { Label(iou, systemImage: "clock.badge.checkmark").font(.caption).foregroundStyle(AppColor.pending) }
+                        Button { Task { await store.acceptECB(request, days: request.giveDayIDs) } } label: {
+                            Label("Accept for \(ecbText(request.ecbAmount ?? 0)) ECB (no swap)", systemImage: "star.circle.fill")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered).tint(AppColor.pending)
+                        .disabled(store.committedConflictDay(request) != nil)
+                    }
+                }
             } else if !isIncoming && status == .pending {
                 cardSection {
                     Button(role: .destructive) {
@@ -1225,6 +1243,11 @@ struct ThreadView: View {
         store.responses(for: request.id).contains {
             $0.responderID == request.fromID && $0.note.localizedCaseInsensitiveContains("ECB CONFIRMED")
         }
+    }
+    /// IOU note for an ECB offer paid on a future date — nil when it pays on acceptance.
+    private var ecbIOUNote: String? {
+        guard request.isECBIOU, let d = request.ecbAvailableDate else { return nil }
+        return "IOU — ECB posts \(DayFmt.pretty.string(from: d))"
     }
     /// You already confirmed receipt.
     private var receivedECB: Bool {
