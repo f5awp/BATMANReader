@@ -763,6 +763,26 @@ enum TradeEngineTests {
         check(route(.both, .both) == (true, true), "MATCH-KIND-2SIDED: Both + Both → either method")
         check(route(.day, .day) == (true, false), "MATCH-KIND-2SIDED: Day + Day → day-for-day")
 
+        // MARK: MATCH-SPLIT (v4) — classifyGives buckets my give days into AUTO (4-mutual / ECB-only) vs
+        // Suggested (3-/2-mutual). "Does the app need me to pick days?" No → AUTO; yes → Suggested.
+        do {
+            typealias DP = TradeRouter.DayPair
+            let s1 = TradeRouter.classifyGives(["X"], takes: ["Y"], myWantToWork: ["Y"], kindOfGive: ["X": .both])
+            check(s1.autoSwaps == [DP(give: "X", take: "Y")] && s1.suggested.isEmpty && s1.autoECB.isEmpty,
+                  "MATCH-SPLIT: 4-mutual (return I also want) → AUTO swap")
+            let s2 = TradeRouter.classifyGives(["X"], takes: ["Y"], myWantToWork: [], kindOfGive: ["X": .both])
+            check(s2.suggested == ["X"] && s2.autoSwaps.isEmpty, "MATCH-SPLIT: return I didn't mark → Suggested (manual)")
+            let s3 = TradeRouter.classifyGives(["X"], takes: [], myWantToWork: [], kindOfGive: ["X": .ecb])
+            check(s3.autoECB == ["X"] && s3.suggested.isEmpty, "MATCH-SPLIT: ECB-only give → AUTO ECB")
+            let s4 = TradeRouter.classifyGives(["X"], takes: [], myWantToWork: [], kindOfGive: ["X": .day])
+            check(s4.isEmpty, "MATCH-SPLIT: day-only give, no return → no trade (dropped)")
+            let s5 = TradeRouter.classifyGives(["X"], takes: [], myWantToWork: [], kindOfGive: ["X": .both])
+            check(s5.suggested == ["X"], "MATCH-SPLIT: Both give, no return → Suggested (manual ECB)")
+            let s6 = TradeRouter.classifyGives(["A", "B"], takes: ["Y"], myWantToWork: ["Y"], kindOfGive: ["A": .both, "B": .ecb])
+            check(s6.autoSwaps.count == 1 && s6.autoECB == ["B"] && s6.suggested.isEmpty,
+                  "MATCH-SPLIT: each give lands in exactly ONE bucket (A→swap, B→ECB)")
+        }
+
         // MARK: MATCH-STAR / MATCH-DETERMINISM — radar per-peer contribution (Match Radar Stage 3).
         do {
             func leg(_ d: String, wanted: Bool) -> TwoWayLeg {

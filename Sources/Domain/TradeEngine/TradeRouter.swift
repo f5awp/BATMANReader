@@ -746,6 +746,49 @@ enum TradeRouter {
         var id: String { peerID }
     }
 
+    // MARK: - v4 classifier (DX-MATCH-RADAR-V4-SPEC) — the AUTO / Suggested single source of truth
+
+    /// One day-for-day swap leg: my `give` day ↔ the peer's `take` day.
+    struct DayPair: Sendable, Hashable, Codable { let give: String; let take: String }
+
+    /// How one peer's candidate trades split by the v4 rule — "does the app need you to pick days?"
+    ///  • `autoSwaps`  — 4-mutual (both want both legs): send itself. AUTO.
+    ///  • `autoECB`    — ECB-ONLY-kind give days a want-to-work peer covers: one-way, nothing to pick. AUTO.
+    ///  • `suggested`  — 3-/2-mutual give days: a day choice exists → propose manually. SUGGESTED.
+    struct MatchSplit: Sendable, Equatable {
+        var autoSwaps: [DayPair] = []
+        var autoECB: [String] = []
+        var suggested: [String] = []
+        var isEmpty: Bool { autoSwaps.isEmpty && autoECB.isEmpty && suggested.isEmpty }
+    }
+
+    /// PURE, testable: classify my want-to-trade `gives` (the peer wants to work each) into the v4 buckets.
+    /// A give is a **4-mutual** swap when a peer-offered return day (`takes`) is also one **I** marked
+    /// Want-to-Work (`myWantToWork`) — the exact days are agreed, so it auto-sends. Otherwise, by the give's
+    /// kind: **ECB-only → auto ECB**; **Day-only → suggested only if a return exists** (else no trade, dropped);
+    /// **Both → suggested** (manual day-for-day pick and/or ECB). Greedy 1:1 pairing, sorted → deterministic.
+    /// Each give lands in exactly ONE bucket, so a candidate is never double-listed across AUTO/Suggested.
+    nonisolated static func classifyGives(_ gives: [String], takes: [String], myWantToWork: Set<String>,
+                                          kindOfGive: [String: TradeKind]) -> MatchSplit {
+        var split = MatchSplit()
+        let pool = takes.filter { myWantToWork.contains($0) }.sorted()   // 4-mutual return candidates (M3+M4)
+        var used = 0
+        let hasReturn = !takes.isEmpty
+        for give in gives.sorted() {
+            let kind = kindOfGive[give] ?? .both
+            if kind != .ecb, used < pool.count {                         // 4-mutual: exact agreed swap
+                split.autoSwaps.append(DayPair(give: give, take: pool[used])); used += 1
+                continue
+            }
+            switch kind {
+            case .ecb:  split.autoECB.append(give)                       // ECB-only → auto (one-way, no pick)
+            case .day:  if hasReturn { split.suggested.append(give) }    // day-only needs a return; else no trade
+            case .both: split.suggested.append(give)                     // both → manual (swap-pick and/or ECB)
+            }
+        }
+        return split
+    }
+
     /// PURE, testable core: from one peer's `TwoWayPlan`, derive (a) the STAR pickups — the peer's
     /// want-to-trade days I can legally cover (direction A, no intent required from me), and (b) the MUTUAL
     /// legs — my marked give days they'd take + their marked days I'd take. `TwoWayLeg.wanted` already means
