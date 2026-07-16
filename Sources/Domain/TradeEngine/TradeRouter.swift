@@ -180,7 +180,22 @@ enum TradeRouter {
                                                       blacklistWeekends: !inf.worksWeekend)
         }
 
+        /// Cached world from the last build, keyed by a token that changes on: user, day rollover, roster
+        /// generation swap, any peer-profile update, or a new/removed request. A hit skips the two full-roster
+        /// SwiftData queries + the universe/inferred-prefs derive entirely.
+        private static var cache: (token: String, ctx: MatchContext)?
+
         static func build(selfID: String) async -> MatchContext {
+            let profiles = TradeProfileStore.shared.others
+            let profileSig = "\(profiles.count):\(profiles.values.map { $0.updatedAt.timeIntervalSince1970 }.max() ?? 0)"
+            let token = "\(selfID)|\(horizon.start.timeIntervalSince1970)|\(RosterStore.shared.generationToken.timeIntervalSince1970)|\(profileSig)|\(MessagingStore.shared.requests.count)"
+            if let c = cache, c.token == token { return c.ctx }
+            let ctx = await buildFresh(selfID: selfID)
+            cache = (token, ctx)
+            return ctx
+        }
+
+        private static func buildFresh(selfID: String) async -> MatchContext {
             let (start, end) = horizon
             // The store reads stay on the main actor (RosterModelActor hop + @Observable reads); the heavy
             // CPU — building the per-worker day-maps, the candidate universe, and the 60-day inferred-prefs

@@ -129,6 +129,10 @@ final class RosterStore {
         set { UserDefaults.standard.set(newValue, forKey: "batman.rosterReaderGen") }
     }
 
+    /// Read-only cache-invalidation token: changes whenever the live roster generation is swapped (a new
+    /// master imported). Used by `MatchContext` to know when its cached world is stale.
+    var generationToken: Date { readerGeneration }
+
     /// B4-8: synchronous worker-id → roster-name cache so views (calendars, package detail, handoff
     /// chain) can resolve a real name instead of showing the employee number. Warmed by every roster
     /// fetch below. `name(for:)` is the read; callers still route through `TradeNames.resolved` for the

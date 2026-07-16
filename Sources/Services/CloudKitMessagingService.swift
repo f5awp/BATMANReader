@@ -175,6 +175,30 @@ final class PrivateStateStore {
         await syncNotesOnLaunch()
         await syncIntentsOnLaunch()   // B4-2 — ALWAYS runs, regardless of the notes record
         await syncPrefsOnLaunch()     // welcome / update-notes / consent flags across the user's devices
+        await syncRadarOnLaunch()     // Match Radar watch/seen across the user's devices
+    }
+
+    /// Reconcile Match Radar watch/seen state across the user's devices (newer wins, by radarStateUpdatedAt).
+    func syncRadarOnLaunch() async {
+        guard SettingsManager.shared.useCloudKit else { return }
+        let store = MatchStore.shared
+        guard let remote = await cloud.fetchRadar() else {
+            if let json = store.exportRadarJSON(), store.radarStateUpdatedAt > .distantPast {
+                await cloud.publishRadar(json, updatedAt: store.radarStateUpdatedAt)
+            }
+            return
+        }
+        if remote.updatedAt > store.radarStateUpdatedAt {
+            store.applyRemoteRadar(remote.json, at: remote.updatedAt)            // remote newer → adopt
+        } else if store.radarStateUpdatedAt > remote.updatedAt, let json = store.exportRadarJSON() {
+            await cloud.publishRadar(json, updatedAt: store.radarStateUpdatedAt) // local newer → push
+        }
+    }
+
+    /// Push the local radar watch/seen state up (called after the user toggles Watch Day).
+    func publishLocalRadar() async {
+        guard SettingsManager.shared.useCloudKit, let json = MatchStore.shared.exportRadarJSON() else { return }
+        await cloud.publishRadar(json, updatedAt: MatchStore.shared.radarStateUpdatedAt)
     }
 
     /// Reconcile the welcome/update/consent flags across the user's devices (newer wins, by prefsSyncedAt).
@@ -348,6 +372,25 @@ actor CloudKitPrivateStateService {
         guard let record = try? await db.record(for: id),
               let json = record["appPrefs"] as? String,
               let updatedAt = record["appPrefsUpdatedAt"] as? Date else { return nil }
+        return (json, updatedAt)
+    }
+
+    /// Match Radar watch/seen state — private, cross-device only. Rides the same private_state record in its
+    /// own fields (needs `radar` / `radarUpdatedAt` deployed in the CloudKit Console — see CLOUDKIT_DEPLOY.md).
+    func publishRadar(_ json: String, updatedAt: Date) async {
+        let record: CKRecord
+        if let existing = try? await db.record(for: id) { record = existing }
+        else { record = CKRecord(recordType: Self.recordType, recordID: id) }
+        record["radar"] = json as CKRecordValue
+        record["radarUpdatedAt"] = updatedAt as CKRecordValue
+        do { _ = try await db.save(record) }
+        catch { print("⚠️ radar-state publish failed: \(error.localizedDescription)") }
+    }
+
+    func fetchRadar() async -> (json: String, updatedAt: Date)? {
+        guard let record = try? await db.record(for: id),
+              let json = record["radar"] as? String,
+              let updatedAt = record["radarUpdatedAt"] as? Date else { return nil }
         return (json, updatedAt)
     }
 }

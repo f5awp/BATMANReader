@@ -157,6 +157,7 @@ struct HomeView: View {
             .task {
                 await TradeProfileStore.shared.refreshOthers()
                 await PrivateStateStore.shared.syncIntentsOnLaunch()
+                await PrivateStateStore.shared.syncRadarOnLaunch()   // pull watch/seen before recompute notifies
                 await TradeProfileStore.shared.syncMyPreferences()
                 // Match Radar: recompute the star/matches off the just-synced peers + roster (no extra fetch).
                 await MatchStore.shared.recompute(scope: .local)

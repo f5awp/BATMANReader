@@ -42,6 +42,7 @@ final class MatchStore {
         seenPickupDays = Set(UserDefaults.standard.stringArray(forKey: Keys.seen) ?? [])
         seenTakerDays  = Set(UserDefaults.standard.stringArray(forKey: Keys.seenTaker) ?? [])
         hasBaselined   = UserDefaults.standard.bool(forKey: Keys.baselined)
+        radarStateUpdatedAt = (UserDefaults.standard.object(forKey: Keys.stateUpdatedAt) as? Date) ?? .distantPast
     }
 
     /// PURE, testable: opportunity-days that appeared since the last-seen baseline (a NEW alert).
@@ -100,13 +101,45 @@ final class MatchStore {
     func setWatched(_ dayID: String, _ on: Bool) {
         if on { watchedDays.insert(dayID) } else { watchedDays.remove(dayID) }
         UserDefaults.standard.set(Array(watchedDays), forKey: Keys.watched)
+        // Watch is a USER action → advance the LWW clock and push. (Seen changes on recompute don't advance
+        // the clock, so a background recompute can't clobber another device's watch toggle.)
+        radarStateUpdatedAt = Date()
+        UserDefaults.standard.set(radarStateUpdatedAt, forKey: Keys.stateUpdatedAt)
+        Task { await PrivateStateStore.shared.publishLocalRadar() }
     }
     func isWatched(_ dayID: String) -> Bool { watchedDays.contains(dayID) }
 
+    // MARK: Cross-device sync (rides the PrivateState blob, LWW by `radarStateUpdatedAt`)
+
+    private(set) var radarStateUpdatedAt: Date = .distantPast
+
+    private struct RadarSnapshot: Codable { var watched: [String]; var seenPickup: [String]; var seenTaker: [String] }
+
+    /// JSON of the syncable radar state (watch + notify baselines) for the private-DB blob.
+    func exportRadarJSON() -> String? {
+        let snap = RadarSnapshot(watched: Array(watchedDays), seenPickup: Array(seenPickupDays),
+                                 seenTaker: Array(seenTakerDays))
+        guard let data = try? JSONEncoder().encode(snap) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    /// Adopt a remote radar snapshot (LWW winner). Overwrites local watch + baselines.
+    func applyRemoteRadar(_ json: String, at date: Date) {
+        guard let data = json.data(using: .utf8),
+              let snap = try? JSONDecoder().decode(RadarSnapshot.self, from: data) else { return }
+        watchedDays = Set(snap.watched); seenPickupDays = Set(snap.seenPickup); seenTakerDays = Set(snap.seenTaker)
+        radarStateUpdatedAt = date
+        UserDefaults.standard.set(Array(watchedDays), forKey: Keys.watched)
+        UserDefaults.standard.set(Array(seenPickupDays), forKey: Keys.seen)
+        UserDefaults.standard.set(Array(seenTakerDays), forKey: Keys.seenTaker)
+        UserDefaults.standard.set(date, forKey: Keys.stateUpdatedAt)
+    }
+
     private enum Keys {
-        static let watched   = "batman.radar.watchedDays"
-        static let seen      = "batman.radar.seenPickupDays"
-        static let seenTaker = "batman.radar.seenTakerDays"
-        static let baselined = "batman.radar.baselined"
+        static let watched        = "batman.radar.watchedDays"
+        static let seen           = "batman.radar.seenPickupDays"
+        static let seenTaker      = "batman.radar.seenTakerDays"
+        static let baselined      = "batman.radar.baselined"
+        static let stateUpdatedAt = "batman.radar.stateUpdatedAt"
     }
 }
