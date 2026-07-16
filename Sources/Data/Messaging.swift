@@ -226,7 +226,14 @@ struct TradeRequest: Sendable, Codable, Identifiable, Hashable {
 
     /// Grouping key: a circular loop's N per-participant requests share one `loopID` and collapse to a
     /// single inbox card / merged thread; a plain (2-way / single) request groups on its own id.
-    var groupKey: String { loopID ?? id }
+    var groupKey: String {
+        if let loopID { return loopID }
+        if !isECB, let offerID { return offerID }   // standing-offer broadcast legs collapse into ONE card
+        return id
+    }
+
+    /// A leg of a standing-offer broadcast (shared non-ECB offerID) — the owner sees all N legs as one card.
+    var isBroadcastLeg: Bool { offerID != nil && !isECB }
 
     // EXPLICIT init — REPLACES the synthesized memberwise init and FREEZES the construction
     // signature, so adding a NEW optional field above won't churn the init symbol (the
@@ -664,6 +671,17 @@ final class MessagingStore {
         if legStatuses.contains(.countered) { return .countered }
         if legStatuses.contains(.pending)   { return .pending }
         return legStatuses.isEmpty ? .pending : .accepted   // all legs accepted
+    }
+
+    /// PURE, testable: the status to show for a first-accept-wins BROADCAST (a standing-offer fan-out). Unlike
+    /// a loop, ONE accept wins the whole offer; still-live beats settled. Precedence:
+    /// accepted > countered > pending > declined > cancelled.
+    static func broadcastStatus(_ legStatuses: [TradeRequestStatus]) -> TradeRequestStatus {
+        if legStatuses.contains(.accepted)  { return .accepted }   // first-accept-wins
+        if legStatuses.contains(.countered) { return .countered }
+        if legStatuses.contains(.pending)   { return .pending }
+        if legStatuses.contains(.declined)  { return .declined }
+        return legStatuses.isEmpty ? .pending : .cancelled
     }
 
     private init() {

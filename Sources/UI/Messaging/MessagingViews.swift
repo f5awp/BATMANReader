@@ -637,11 +637,15 @@ struct RequestRow: View {
 
     var body: some View {
         let mine = request.fromID == myID            // I sent it
-        // For a circular loop, the card shows the AGGREGATE of every leg's status (Stage 4); a plain
-        // request shows its own status.
-        let status: TradeRequestStatus = request.loopID == nil
-            ? store.status(of: request)
-            : MessagingStore.loopStatus(store.requests.filter { $0.groupKey == request.groupKey }.map { store.status(of: $0) })
+        // A standing-offer BROADCAST I sent shows as ONE card aggregating its legs (first-accept-wins); a
+        // circular loop aggregates via loopStatus; a plain request shows its own status.
+        let broadcast = request.isBroadcastLeg && mine
+        let legStatuses = store.requests.filter { $0.groupKey == request.groupKey }.map { store.status(of: $0) }
+        let legCount = store.requests.filter { $0.groupKey == request.groupKey }.count
+        let status: TradeRequestStatus = broadcast
+            ? MessagingStore.broadcastStatus(legStatuses)
+            : (request.loopID == nil ? store.status(of: request)
+                                     : MessagingStore.loopStatus(legStatuses))
         let needsMe = status == .pending && !mine     // action required from me
         let otherName = mine ? request.toName : request.fromName
         let otherID   = mine ? request.toID : request.fromID
@@ -656,7 +660,8 @@ struct RequestRow: View {
                     Spacer()
                     Text(request.createdAt, style: .relative).font(.caption2).foregroundStyle(.secondary)
                 }
-                Text(mine ? "You proposed a swap" : "Proposed a swap with you")
+                Text(broadcast ? "You auto-offered to \(legCount) coworker\(legCount == 1 ? "" : "s") · first to accept wins"
+                               : (mine ? "You proposed a swap" : "Proposed a swap with you"))
                     .font(.caption).foregroundStyle(.secondary)
                 if let chain = request.chain, !chain.isEmpty {
                     Label("\(tradeTypeLabel(distinctPeople: distinctParticipants(in: chain))) · tap to view", systemImage: "arrow.triangle.2.circlepath")
@@ -718,7 +723,11 @@ struct ThreadView: View {
 
     private var myID: String { SettingsManager.shared.username }
     private var isIncoming: Bool { request.toID == myID }
-    private var status: TradeRequestStatus { store.status(of: request) }
+    private var status: TradeRequestStatus {
+        (request.isBroadcastLeg && request.fromID == myID)   // owner's fan-out → first-accept-wins aggregate
+            ? MessagingStore.broadcastStatus(store.requests.filter { $0.groupKey == request.groupKey }.map { store.status(of: $0) })
+            : store.status(of: request)
+    }
 
     // The trade card, extracted so the List body stays inside the type-checker's budget.
     @ViewBuilder private var tradeCard: some View {

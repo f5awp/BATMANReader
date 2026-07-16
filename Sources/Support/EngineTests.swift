@@ -773,6 +773,13 @@ enum TradeEngineTests {
             check(ranked.map(\.peerID) == ["high", "mid", "low"], "MATCH-BROADCAST: ranked by acceptance prior desc")
             check(TradeRouter.rankStandingMatches([sm("a"), sm("b"), sm("c"), sm("d")], priors: [:], cap: 3).count == 3,
                   "MATCH-BROADCAST: capped at 3")
+            // First-accept-wins aggregate for the owner's one broadcast card: one accept wins; else still-live.
+            check(MessagingStore.broadcastStatus([.pending, .accepted, .cancelled]) == .accepted,
+                  "MATCH-BROADCAST: any accepted leg → card shows accepted (first wins)")
+            check(MessagingStore.broadcastStatus([.pending, .declined]) == .pending,
+                  "MATCH-BROADCAST: still-live beats a declined leg")
+            check(MessagingStore.broadcastStatus([.declined, .cancelled]) == .declined,
+                  "MATCH-BROADCAST: all settled → declined over cancelled")
         }
 
         // MARK: TRADE-DEDUPE — the duplicate key is direction-agnostic (A→B == B→A for the same days).
