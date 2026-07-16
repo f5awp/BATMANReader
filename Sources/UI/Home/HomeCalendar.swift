@@ -851,6 +851,8 @@ struct DayIntentEditor: View {
     @State private var saving = false
     @State private var tradeKind: TradeKind = .both          // Match Radar: how this day is offered
     @State private var acceptTypes: Set<ShiftAvailabilityType> = []  // shift types accepted in return
+    @State private var limitDates = false                    // restrict the return to specific dates
+    @State private var acceptDates: Set<DateComponents> = []  // the accepted return dates (when limitDates)
 
     init(target: DayEditTarget) { self.target = target }
 
@@ -910,11 +912,17 @@ struct DayIntentEditor: View {
                                     }
                                 }
                             }
+                            // Optional date scope — a multi-select calendar of the return dates you'll accept.
+                            Toggle("Only on certain dates", isOn: $limitDates.animation())
+                            if limitDates {
+                                MultiDatePicker("Accepted return dates", selection: $acceptDates, in: Date()...)
+                                    .frame(minHeight: 320)
+                            }
                         }
                     } header: {
                         Text("Trade options")
                     } footer: {
-                        Text("Day-for-day swaps another shift onto you; ECB trades the day for points. \"Accept in return\" limits which shift types you'll take back — leave all off for any.")
+                        Text("Day-for-day swaps another shift onto you; ECB trades the day for points. \"Accept in return\" limits which shift types you'll take back (leave all off for any) — and, optionally, which dates.")
                     }
                 }
 
@@ -985,7 +993,11 @@ struct DayIntentEditor: View {
         significant = intents.topology(forDay: target.dayID) != .standard
         carryover = intents.isCarryoverVacation(target.dayID)
         tradeKind = intents.tradeKind(forDay: target.dayID)
-        acceptTypes = intents.acceptScope(forDay: target.dayID).shiftTypes
+        let scope = intents.acceptScope(forDay: target.dayID)
+        acceptTypes = scope.shiftTypes
+        let isoDates = scope.dates ?? []
+        limitDates = !isoDates.isEmpty
+        acceptDates = Self.componentsFromISO(isoDates)
         if let n = intents.note(forDay: target.dayID) {
             noteText = n.message; notePrivate = n.isPrivate; reason = n.reason
         }
@@ -1004,6 +1016,8 @@ struct DayIntentEditor: View {
             intents.setTradeKind(tradeKind, forDay: target.dayID)
             var scope = intents.acceptScope(forDay: target.dayID)
             scope.shiftTypes = acceptTypes
+            let iso = (limitDates && !acceptDates.isEmpty) ? Self.isoFromComponents(acceptDates) : nil
+            scope.dates = (iso?.isEmpty ?? true) ? nil : iso
             intents.setAcceptScope(scope, forDay: target.dayID)
         }
         let trimmed = noteText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1012,6 +1026,17 @@ struct DayIntentEditor: View {
                         forDay: target.dayID)
         saving = false
         dismiss()
+    }
+
+    // MARK: Accept-scope date ↔ ISO conversion (MultiDatePicker uses DateComponents; the model uses ISO days)
+    private static let isoDayF: DateFormatter = { let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; return f }()
+    private static func componentsFromISO(_ iso: Set<String>) -> Set<DateComponents> {
+        let cal = Calendar.current
+        return Set(iso.compactMap { isoDayF.date(from: $0) }.map { cal.dateComponents([.year, .month, .day], from: $0) })
+    }
+    private static func isoFromComponents(_ comps: Set<DateComponents>) -> Set<String> {
+        let cal = Calendar.current
+        return Set(comps.compactMap { cal.date(from: $0) }.map { isoDayF.string(from: $0) })
     }
 }
 
