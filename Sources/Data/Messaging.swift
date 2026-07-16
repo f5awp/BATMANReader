@@ -1437,6 +1437,13 @@ final class MessagingStore {
                 TradeHistoryStore.shared.markComplete(id: e.id, at: Date())
             }
         }
+        // Giver side: when the taker posts "ECB RECEIVED", auto-clear the shared ledger line so the points
+        // move on BOTH ledgers (−amount for me the payer, +amount for the taker) without a manual step.
+        for r in requests where r.isECB {
+            if responses.contains(where: { $0.requestID == r.id && $0.note.localizedCaseInsensitiveContains("received") }) {
+                ECBAccountingStore.shared.markReceived(requestID: r.id)
+            }
+        }
     }
 
     #if DEBUG

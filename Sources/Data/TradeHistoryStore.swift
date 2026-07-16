@@ -414,6 +414,14 @@ final class ECBAccountingStore {
         entries.append(e)
         publishShared(e)
     }
+    /// The ECB landed: CLEAR the shared trade line for `requestID` on both ledgers automatically. Because a
+    /// single shared line carries payer + payee, clearing it credits the payee (+amount) and debits the payer
+    /// (−amount) in one stroke — no manual entry. Idempotent; a received ECB is a fact, so it isn't cap-blocked.
+    func markReceived(requestID: String) {
+        guard let i = entries.firstIndex(where: { $0.tradeRequestID == requestID }), !entries[i].cleared else { return }
+        entries[i].cleared = true; entries[i].updatedAt = Date()
+        publishShared(entries[i])
+    }
     /// Edit a confirmed shared line → re-proposes it (`.pendingOutgoing`); the counterparty re-confirms.
     func proposeSharedEdit(id: String, magnitude: Double, iPaid: Bool, memo: String, date: Date) {
         guard let i = entries.firstIndex(where: { $0.id == id }), entries[i].isShared,

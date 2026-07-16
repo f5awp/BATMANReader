@@ -1274,6 +1274,7 @@ struct ThreadView: View {
         let ecb = request.ecbAmount ?? 0
         Task {
             await store.respond(to: request, status: .accepted, note: "ECB RECEIVED — got the \(ecbText(ecb)) ECB. Thanks!")
+            ECBAccountingStore.shared.markReceived(requestID: request.id)   // credit me, debit the payer — auto
             TradeHistoryStore.shared.record(TradeHistoryEntry(
                 summary: "Received \(ecbText(ecb)) ECB from \(request.fromName) for taking \(DayFmt.list(request.giveDayIDs))",
                 participants: [request.fromName], dayIDs: request.giveDayIDs,

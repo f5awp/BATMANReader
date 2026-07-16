@@ -200,12 +200,12 @@ final class MatchStore {
                 // ECB one-way: give this day for points to the top peers who'd cover it (first-accept-wins queue).
                 let ranked = ecbCands.sorted { (priors[$0.peerID] ?? 0) > (priors[$1.peerID] ?? 0) }.prefix(Self.autoMatchCap)
                 guard let lead = ranked.first else { continue }
-                let offerID = UUID().uuidString
+                let offerID = UUID().uuidString   // ECB ALWAYS shares an offerID (even solo) so it groups into one ECB folder
                 for c in ranked {
                     await MessagingStore.shared.sendRequest(
                         to: c.peerID, toName: c.peerName, note: "Auto-match ECB trade.",
                         take: [], give: [give], ecbValue: amount,
-                        offerID: ranked.count > 1 ? offerID : nil, origin: .intents,
+                        offerID: offerID, origin: .intents,
                         offerKind: .ecb, ecbAvailableDate: available)
                 }
                 autoSentGiveDays.insert(give)

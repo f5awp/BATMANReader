@@ -369,6 +369,19 @@ enum TradeEngineTests {
             check(both.offersChoice && both.offersECB && both.offersDayForDay && !both.isECB, "ECB-MODEL: Both offers a real either/or, not a pure ECB")
         }
 
+        // MARK: ECB-LEDGER — one shared trade line moves points on BOTH sides. Once RECEIVED (cleared) it
+        // credits the payee (taker) +amount and debits the payer (giver) −amount — no second entry.
+        do {
+            let giver = "G", taker = "T"
+            let cleared = ECBEntry(date: Date(timeIntervalSince1970: 1), amount: 9, category: .trade, memo: "",
+                                   cleared: true, payerID: giver, payerName: "G", payeeID: taker, payeeName: "T", state: .confirmed)
+            check(ECBAccounting.available([cleared], viewerID: taker) == 9, "ECB-LEDGER: received line credits the taker +amount")
+            check(ECBAccounting.available([cleared], viewerID: giver) == -9, "ECB-LEDGER: same line debits the giver −amount")
+            var iou = cleared; iou.cleared = false
+            check(ECBAccounting.available([iou], viewerID: taker) == 0, "ECB-LEDGER: an un-received IOU isn't in available yet")
+            check(ECBAccounting.owed([iou], myID: taker) == 9 && ECBAccounting.owe([iou], myID: giver) == 9, "ECB-LEDGER: an IOU shows as owed/owe until received")
+        }
+
         // MARK: Intents-tab badge count (D2a). activeIntentCount counts non-neutral intents.
         do {
             let store = DayIntentStore.shared
