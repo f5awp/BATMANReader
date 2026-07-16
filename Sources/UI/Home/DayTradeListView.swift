@@ -53,18 +53,20 @@ struct DayTradeListPane: View {
 
                 if loading {
                     Section { HStack { Spacer(); ProgressView(); Spacer() } }
-                } else {
+                } else if target.isOff {
+                    // OFF day → people looking to have this day off (shifts I could pick up).
                     Section {
                         if pickups.isEmpty {
-                            Text("No shifts you can legally pick up today.")
+                            Text("Nobody working this day has marked it to trade away.")
                                 .font(.caption).foregroundStyle(.secondary)
                         } else {
                             ForEach(pickups) { DayTradeRowView(row: $0, showsShift: true) }
                         }
                     } header: {
                         Label("Shifts you can pick up", systemImage: "tray.and.arrow.down")
-                    }
-
+                    } footer: { radarStamp }
+                } else {
+                    // WORKING day → people looking to work this day (they'd take my shift).
                     Section {
                         if wantToWork.isEmpty {
                             Text("Nobody has marked wanting to work this day.")
@@ -74,11 +76,7 @@ struct DayTradeListPane: View {
                         }
                     } header: {
                         Label("Wants to work this day", systemImage: "hand.raised")
-                    } footer: {
-                        if let t = radar.lastRefreshed {
-                            Text("Radar updated \(t.formatted(.relative(presentation: .named)))")
-                        }
-                    }
+                    } footer: { radarStamp }
                 }
             }
             .navigationTitle(prettyDate)
@@ -91,6 +89,12 @@ struct DayTradeListPane: View {
                 }
             }
             .task(id: target.dayID) { await reload(fullRadar: false) }
+        }
+    }
+
+    @ViewBuilder private var radarStamp: some View {
+        if let t = radar.lastRefreshed {
+            Text("Radar updated \(t.formatted(.relative(presentation: .named)))")
         }
     }
 
