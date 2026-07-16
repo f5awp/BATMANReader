@@ -628,10 +628,12 @@ struct IntentCalendarView: View {
         if layers.notes, let note = intents.note(forDay: dayID), note.reason != .vacation {
             NoteMarker(note: note)
         } else if topo == .personalMilestone {
-            EventMarker(name: "Personal milestone", color: BrickPalette.milestone, icon: "star.fill")
+            // §Match-Radar: a significant day is a DISC (pink milestone / orange high-demand). The STAR shape
+            // is reserved for the radar match marker (bottom-trailing), so the two never read as the same thing.
+            EventMarker(name: "Personal milestone", color: BrickPalette.milestone, icon: "circle.fill")
         } else if topo == .highDemand {
             EventMarker(name: Holidays.name(forDay: dayID) ?? "High-demand day",
-                        color: BrickPalette.highImpact, icon: "star.fill")
+                        color: BrickPalette.highImpact, icon: "circle.fill")
         } else {
             Color.clear.frame(height: 9)
         }
