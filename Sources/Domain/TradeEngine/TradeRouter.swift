@@ -819,6 +819,50 @@ enum TradeRouter {
         }.value
     }
 
+    /// PURE, testable: does this peer satisfy the offer? They must take ≥1 of my give-days AND offer ≥1 of
+    /// my get-days (their want-to-trade days I can cover). nil if the offer is inactive/incomplete or unmet.
+    nonisolated static func standingMatch(offer: StandingOffer, peerID: String, peerName: String,
+                                          peerWouldTake: Set<String>, peerOffersToMe: Set<String>) -> StandingMatch? {
+        guard offer.active, offer.isComplete else { return nil }
+        let give = offer.giveDayIDs.filter(peerWouldTake.contains)
+        let get  = offer.getDayIDs.filter(peerOffersToMe.contains)
+        guard !give.isEmpty, !get.isEmpty else { return nil }
+        return StandingMatch(offerID: offer.id, peerID: peerID, peerName: peerName, giveDayIDs: give, getDayIDs: get)
+    }
+
+    /// Evaluate STANDING OFFERS ("trade X to get Y"). For each active, complete offer, find peers who can
+    /// satisfy BOTH sides right now: they'd take one of my give-days (an iGive leg) AND they've marked one of
+    /// my get-days want-to-trade that I can cover (an iTake.wanted leg). Reuses the cached `MatchContext` +
+    /// the off-main per-peer sweep — same eligibility engine as the radar. Returns offerID → satisfying peers.
+    static func evaluateStandingOffers(_ offers: [StandingOffer], excluding selfID: String) async -> [String: [StandingMatch]] {
+        let active = offers.filter { $0.active && $0.isComplete }
+        guard !active.isEmpty else { return [:] }
+        let ctx = await MatchContext.build(selfID: selfID)
+        let mySeeking = DayIntentStore.shared.seekingDayIDs
+        let myProfile = TradeProfileStore.shared.myProfile()
+        return await Task.detached(priority: .userInitiated) {
+            var out: [String: [StandingMatch]] = [:]
+            for cand in ctx.universe.sorted(by: { $0.workerID < $1.workerID }) {
+                let profile = ctx.profile(for: cand.workerID, name: cand.name)
+                let plan = TradeMatcher.twoWayExploreCore(
+                    withWorker: cand.workerID, name: cand.name,
+                    windowStart: ctx.start, windowEnd: ctx.end,
+                    mySeeking: mySeeking, theirSeeking: profile.seekingDayIDs,
+                    myProfile: myProfile, theirProfile: profile, ignoreOwnBlacklist: false,
+                    myEntries: ctx.mineEntries, peerEntries: Array((ctx.maps[cand.workerID] ?? [:]).values))
+                let peerWouldTake = Set(plan.iGive.map(\.dayID))                        // my days this peer covers
+                let peerOffersToMe = Set(plan.iTake.filter { $0.wanted }.map(\.dayID))  // their want-to-trade days I cover
+                for offer in active {
+                    if let m = standingMatch(offer: offer, peerID: cand.workerID, peerName: cand.name,
+                                             peerWouldTake: peerWouldTake, peerOffersToMe: peerOffersToMe) {
+                        out[offer.id, default: []].append(m)
+                    }
+                }
+            }
+            return out
+        }.value
+    }
+
     /// One row in a day's Trade List. Section A rows carry the shift; section B rows are want-to-work peers.
     struct DayTradeRow: Sendable, Hashable, Identifiable {
         let peerID: String

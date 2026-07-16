@@ -207,6 +207,26 @@ final class NotificationManager {
     static let radarDayKey = "batman.radar.dayID"
     static let radarIDPrefix = "batman.radar."
 
+    /// One newly-fillable standing offer.
+    struct StandingAlert: Sendable { let getDayID: String; let giveDayID: String; let peer: String }
+
+    /// Alert when a STANDING OFFER becomes fillable. One per offer, naming both dates + the peer; taps
+    /// deep-link to the get-day's Trade List (reuses the radar router).
+    func notifyStanding(_ items: [StandingAlert]) async {
+        guard !items.isEmpty else { return }
+        guard await center.notificationSettings().authorizationStatus == .authorized else { return }
+        for item in items {
+            let content = UNMutableNotificationContent()
+            content.title = "Your standing offer can be filled"
+            content.body = "Give \(Self.prettyDay(item.giveDayID)), get \(Self.prettyDay(item.getDayID)) with \(item.peer)."
+            content.sound = .default
+            content.userInfo = [Self.radarDayKey: item.getDayID]
+            let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
+            try? await center.add(UNNotificationRequest(identifier: Self.radarIDPrefix + "standing." + item.getDayID + "." + item.giveDayID,
+                                                        content: content, trigger: trigger))
+        }
+    }
+
     static func prettyDay(_ id: String) -> String {
         let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"
         guard let d = f.date(from: id) else { return id }

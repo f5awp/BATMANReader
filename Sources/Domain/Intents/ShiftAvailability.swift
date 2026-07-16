@@ -127,6 +127,34 @@ struct AcceptScope: Codable, Sendable, Hashable {
     }
 }
 
+// MARK: - Standing conditional offer (Build 6 MUST-have)
+
+/// A persistent "trade X to get Y" offer that keeps standing: give away one of `giveDayIDs` (days you work)
+/// in return for one of `getDayIDs` (days you want to work). The engine re-checks it every recompute and
+/// alerts the moment a peer can satisfy both sides — no re-search needed. (Match Radar's standing sibling.)
+struct StandingOffer: Codable, Sendable, Hashable, Identifiable {
+    var id: String
+    var giveDayIDs: [String]      // days you'll trade away (you work these)
+    var getDayIDs: [String]       // days you want in return (you'd work these)
+    var kind: TradeKind
+    var note: String
+    var active: Bool
+    var createdAt: Date
+
+    var isComplete: Bool { !giveDayIDs.isEmpty && !getDayIDs.isEmpty }
+}
+
+/// One peer who can satisfy a standing offer right now: which of your give-days they'd take + which of
+/// their want-to-trade days (from your get-list) you'd take.
+struct StandingMatch: Sendable, Hashable, Identifiable {
+    let offerID: String
+    let peerID: String
+    let peerName: String
+    let giveDayIDs: [String]      // your give-days this peer would take (⊆ offer.give)
+    let getDayIDs: [String]       // peer's want-to-trade days you'd take (⊆ offer.get)
+    var id: String { "\(offerID)|\(peerID)" }
+}
+
 // MARK: - Your availability entry for a single day
 
 struct DayAvailability: Codable, Identifiable, Hashable {

@@ -371,6 +371,11 @@ struct InboxView: View {
         } else {
             List {
                 Section {
+                    NavigationLink { StandingOffersView() } label: {
+                        Label("Standing Offers", systemImage: "arrow.triangle.2.circlepath")
+                    }
+                }
+                Section {
                     ForEach(matches) { m in
                         NavigationLink { MatchDetailView(match: m) } label: { MatchLaneRow(match: m) }
                     }

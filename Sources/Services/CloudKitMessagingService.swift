@@ -176,6 +176,30 @@ final class PrivateStateStore {
         await syncIntentsOnLaunch()   // B4-2 — ALWAYS runs, regardless of the notes record
         await syncPrefsOnLaunch()     // welcome / update-notes / consent flags across the user's devices
         await syncRadarOnLaunch()     // Match Radar watch/seen across the user's devices
+        await syncStandingOffersOnLaunch()   // standing conditional offers across the user's devices
+    }
+
+    /// Reconcile standing conditional offers across the user's devices (newer wins, by updatedAt).
+    func syncStandingOffersOnLaunch() async {
+        guard SettingsManager.shared.useCloudKit else { return }
+        let store = StandingOfferStore.shared
+        guard let remote = await cloud.fetchStanding() else {
+            if let json = store.exportJSON(), store.updatedAt > .distantPast {
+                await cloud.publishStanding(json, updatedAt: store.updatedAt)
+            }
+            return
+        }
+        if remote.updatedAt > store.updatedAt {
+            store.applyRemote(remote.json, at: remote.updatedAt)
+        } else if store.updatedAt > remote.updatedAt, let json = store.exportJSON() {
+            await cloud.publishStanding(json, updatedAt: store.updatedAt)
+        }
+    }
+
+    /// Push the local standing offers up (called after any edit).
+    func publishLocalStandingOffers() async {
+        guard SettingsManager.shared.useCloudKit, let json = StandingOfferStore.shared.exportJSON() else { return }
+        await cloud.publishStanding(json, updatedAt: StandingOfferStore.shared.updatedAt)
     }
 
     /// Reconcile Match Radar watch/seen state across the user's devices (newer wins, by radarStateUpdatedAt).
@@ -391,6 +415,25 @@ actor CloudKitPrivateStateService {
         guard let record = try? await db.record(for: id),
               let json = record["radar"] as? String,
               let updatedAt = record["radarUpdatedAt"] as? Date else { return nil }
+        return (json, updatedAt)
+    }
+
+    /// Standing conditional offers — private, cross-device only. Rides the same private_state record in its
+    /// own fields (needs `standingOffers` / `standingOffersUpdatedAt` deployed in the CloudKit Console).
+    func publishStanding(_ json: String, updatedAt: Date) async {
+        let record: CKRecord
+        if let existing = try? await db.record(for: id) { record = existing }
+        else { record = CKRecord(recordType: Self.recordType, recordID: id) }
+        record["standingOffers"] = json as CKRecordValue
+        record["standingOffersUpdatedAt"] = updatedAt as CKRecordValue
+        do { _ = try await db.save(record) }
+        catch { print("⚠️ standing-offers publish failed: \(error.localizedDescription)") }
+    }
+
+    func fetchStanding() async -> (json: String, updatedAt: Date)? {
+        guard let record = try? await db.record(for: id),
+              let json = record["standingOffers"] as? String,
+              let updatedAt = record["standingOffersUpdatedAt"] as? Date else { return nil }
         return (json, updatedAt)
     }
 }

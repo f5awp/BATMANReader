@@ -745,6 +745,26 @@ enum TradeEngineTests {
                   "MATCH-SCOPE: no scopes → inert (accepts everything)")
         }
 
+        // MARK: MATCH-STANDING — a standing offer is met only when a peer takes a give AND offers a get. (Build 6)
+        do {
+            let offer = StandingOffer(id: "o1", giveDayIDs: ["2026-08-01"], getDayIDs: ["2026-08-10"],
+                                      kind: .both, note: "", active: true, createdAt: Date(timeIntervalSince1970: 1))
+            let hit = TradeRouter.standingMatch(offer: offer, peerID: "p", peerName: "P",
+                                                peerWouldTake: ["2026-08-01"], peerOffersToMe: ["2026-08-10"])
+            check(hit?.giveDayIDs == ["2026-08-01"] && hit?.getDayIDs == ["2026-08-10"],
+                  "MATCH-STANDING: both sides satisfied → a match")
+            check(TradeRouter.standingMatch(offer: offer, peerID: "p", peerName: "P",
+                                            peerWouldTake: ["2026-08-01"], peerOffersToMe: []) == nil,
+                  "MATCH-STANDING: peer takes my give but offers no get → no match")
+            check(TradeRouter.standingMatch(offer: offer, peerID: "p", peerName: "P",
+                                            peerWouldTake: [], peerOffersToMe: ["2026-08-10"]) == nil,
+                  "MATCH-STANDING: peer offers a get but won't take my give → no match")
+            var paused = offer; paused.active = false
+            check(TradeRouter.standingMatch(offer: paused, peerID: "p", peerName: "P",
+                                            peerWouldTake: ["2026-08-01"], peerOffersToMe: ["2026-08-10"]) == nil,
+                  "MATCH-STANDING: a paused offer never matches")
+        }
+
         // MARK: CARRYOVER-SNAPSHOT — carryover-vacation days survive the intent snapshot round-trip;
         // an older snapshot without the key still decodes (back-compat). (#4 Stage 1)
         do {
