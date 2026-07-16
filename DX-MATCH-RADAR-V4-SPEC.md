@@ -54,6 +54,10 @@ mirror duplicates by design). AUTO contains only trades needing **no day choice*
 both; with **multiple bidders (≤3)** the **giver chooses the person**. ECB is inherently
 "complete" (sheds an unwanted shift / gains a wanted one, no unwanted shift in return).
 
+**When ECB auto-sends:** ONLY (a) riding along a **4-mutual** offer as the taker-pickable
+alternative, or (b) as an **ECB-only-kind** day. For **3-/2-mutual it never auto-sends** — ECB
+is offered together with the day-for-day only when you **propose manually** from Suggested.
+
 **Multiple 4-mutual return options** (several fully-mutual Ys): auto-send the top-ranked Y and
 **carry the alternates** (existing propose-carries-alternates), so the taker can counter.
 
