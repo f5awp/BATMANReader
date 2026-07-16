@@ -707,6 +707,14 @@ enum TradeEngineTests {
             check(tie.map(\.peerID) == ["Abe", "Zed"], "MATCH-DAYLIST: same tier → name tiebreak")
         }
 
+        // MARK: MATCH-SEEN — "newly gained a pickup" = new pickups minus what was already seen/known. (Stage 5)
+        do {
+            let gained = MatchStore.newlyGainedDays(old: ["2026-08-01", "2026-08-02"], new: ["2026-08-02", "2026-08-09"])
+            check(gained == ["2026-08-09"], "MATCH-SEEN: only the not-yet-seen pickup day is 'newly gained'")
+            check(MatchStore.newlyGainedDays(old: ["2026-08-09"], new: ["2026-08-09"]).isEmpty,
+                  "MATCH-SEEN: an already-seen pickup does not re-notify")
+        }
+
         // MARK: CARRYOVER-SNAPSHOT — carryover-vacation days survive the intent snapshot round-trip;
         // an older snapshot without the key still decodes (back-compat). (#4 Stage 1)
         do {
