@@ -504,10 +504,10 @@ struct IntentCalendarView: View {
                     .padding(3).transition(.scale.combined(with: .opacity))
             }
         }
-        .overlay(alignment: .topTrailing) { noteDot(dayID).padding(3) }
-        // Match Radar: green star = a legal pickup/match exists for you here; blue ring = you're watching
-        // this day. Bottom-trailing corner so it never crowds the number, the intent pill, or the note dot.
-        .overlay(alignment: .bottomTrailing) { matchMarker(dayID).padding(3) }
+        // Match Radar: star (pickup/match) + watch ring live TOP-RIGHT so they never overlap the shift code
+        // at the bottom of the cell. The note dot moves to the bottom-leading corner (clear of both).
+        .overlay(alignment: .topTrailing) { matchMarker(dayID).padding(3) }
+        .overlay(alignment: .bottomLeading) { noteDot(dayID).padding(3) }
         .opacity(faded ? 0.3 : (isPast ? 0.45 : 1))
         .contentShape(Rectangle())
         .onTapGesture {
