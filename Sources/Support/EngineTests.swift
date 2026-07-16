@@ -719,6 +719,20 @@ enum TradeEngineTests {
         check(TradeMatcher.allowsDayForDaySwap(.day), "MATCH-KIND: .day allows swap")
         check(!TradeMatcher.allowsDayForDaySwap(.ecb), "MATCH-KIND: .ecb-only excluded from day-for-day swap")
 
+        // MARK: MATCH-KIND-2SIDED — the pills gate matching on BOTH sides. The routed method is resolve()
+        // of the giver's kind and the taker's kind: disjoint (Day vs ECB) → NO match; else the intersection
+        // routes to the swap list (day/both) and/or the ECB list (ecb/both). Mirrors twoWayExploreCore.
+        func route(_ giver: TradeKind, _ taker: TradeKind) -> (swap: Bool, ecb: Bool) {
+            guard let r = giver.resolve(with: taker) else { return (false, false) }
+            return (r != .ecb, r != .day)
+        }
+        check(route(.day, .ecb) == (false, false), "MATCH-KIND-2SIDED: giver Day + taker ECB → NOT a match")
+        check(route(.ecb, .day) == (false, false), "MATCH-KIND-2SIDED: giver ECB + taker Day → NOT a match")
+        check(route(.day, .both) == (true, false), "MATCH-KIND-2SIDED: Day + Both → day-for-day only")
+        check(route(.ecb, .both) == (false, true), "MATCH-KIND-2SIDED: ECB + Both → ECB only")
+        check(route(.both, .both) == (true, true), "MATCH-KIND-2SIDED: Both + Both → either method")
+        check(route(.day, .day) == (true, false), "MATCH-KIND-2SIDED: Day + Day → day-for-day")
+
         // MARK: MATCH-STAR / MATCH-DETERMINISM — radar per-peer contribution (Match Radar Stage 3).
         do {
             func leg(_ d: String, wanted: Bool) -> TwoWayLeg {

@@ -564,11 +564,16 @@ enum TradeMatcher {
             guard check.eligible else { continue }
             let leg = TwoWayLeg(dayID: me.day, date: day, desk: me.desk, startHour: me.startHour,
                                 bookend: check.isBookend, wanted: mySeeking.contains(me.day))
-            let kind = myProfile.tradeKindByDay?[me.day] ?? .both
-            // Match Radar: my ECB-only give days aren't offered for a day-for-day swap (see iTake note); an
-            // ECB or Both day IS an ECB (one-way, points) candidate. Both lists share the eligibility above.
-            if Self.allowsDayForDaySwap(kind) { iGive.append(leg) }   // .day / .both
-            if kind != .day { iGiveECB.append(leg) }                  // .ecb / .both
+            // Match Radar: the trade KIND is a two-sided filter. My want-to-trade kind on this day must
+            // resolve with the peer's want-to-work kind on the SAME date (both keyed by the ISO day) — e.g. I
+            // want a Day-for-day swap but they only want ECB ⇒ no common method ⇒ not a match. The RESOLVED
+            // method then routes the leg: day/both → the swap list, ecb/both → the ECB (one-way) list. Absent
+            // kinds default to `.both`, so this is inert until someone marks a specific method.
+            let myKind = myProfile.tradeKindByDay?[me.day] ?? .both
+            let theirKind = theirProfile.tradeKindByDay?[me.day] ?? .both
+            guard let resolved = myKind.resolve(with: theirKind) else { continue }
+            if resolved != .ecb { iGive.append(leg) }     // .day / .both → day-for-day swap
+            if resolved != .day { iGiveECB.append(leg) }  // .ecb / .both → ECB (one-way, points)
         }
         let myGiveDayIDs = iGive.map(\.dayID)
 
@@ -587,10 +592,13 @@ enum TradeMatcher {
                 coverMap: myMap, coverQuals: myQuals, coverProfile: myProfile,
                 options: EligibilityOptions(applySoftGates: !ignoreOwnBlacklist), cal: cal)
             guard check.eligible else { continue }
-            // Match Radar: a day the giver marked ECB-only is offered for POINTS, not a day-for-day swap
-            // (ECB is the separate one-way flow) — so it's excluded from the reciprocal two-way match.
-            // Absent kind defaults to `.both` (allows a swap), so this is inert until kinds are set.
-            guard Self.allowsDayForDaySwap(theirProfile.tradeKindByDay?[pe.day]) else { continue }
+            // Match Radar: `iTake` is the day-for-day RECIPROCAL I'd take back. The peer's want-to-trade kind
+            // on this day must resolve with my want-to-work kind on the same date AND permit a swap — an
+            // ECB-only day (either side) is offered for points, not a swap, so it's excluded here. Absent
+            // kinds default to `.both`, so this is inert until a specific method is marked.
+            let theirGiveKind = theirProfile.tradeKindByDay?[pe.day] ?? .both
+            let myTakeKind = myProfile.tradeKindByDay?[pe.day] ?? .both
+            guard let resolved = theirGiveKind.resolve(with: myTakeKind), resolved != .ecb else { continue }
             // Match Radar §8: your per-give-day ACCEPT-SCOPE prunes returns you wouldn't take. Inert unless you
             // scoped a give day (then a received leg must satisfy some give's scope). Skipped when overriding.
             if !ignoreOwnBlacklist,
