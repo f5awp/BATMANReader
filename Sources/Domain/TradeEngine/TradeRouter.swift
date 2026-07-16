@@ -805,17 +805,19 @@ enum TradeRouter {
                 wantToWork.append(DayTradeRow(peerID: cand.workerID, peerName: cand.name, desk: "", startHour: 0,
                                               kind: profile.tradeKindByDay?[dayID] ?? .both, note: nil, tier: 0))
             }
-            // Section A: their working shift on the tapped day that I can legally cover → a pickup for me.
+            // Section A: a shift ACTUALLY ON OFFER that I can legally cover → a pickup for me. Only days the
+            // peer MARKED want-to-trade (`leg.wanted`) count — otherwise every coworker I'm merely eligible to
+            // cover would flood the list. This keeps Section A consistent with the calendar star.
             let plan = TradeMatcher.twoWayExploreCore(
                 withWorker: cand.workerID, name: cand.name,
                 windowStart: ctx.start, windowEnd: ctx.end,
                 mySeeking: mySeeking, theirSeeking: profile.seekingDayIDs,
                 myProfile: myProfile, theirProfile: profile, ignoreOwnBlacklist: false,
                 myEntries: ctx.mineEntries, peerEntries: Array((ctx.maps[cand.workerID] ?? [:]).values))
-            if let leg = plan.iTake.first(where: { $0.dayID == dayID }) {
+            if let leg = plan.iTake.first(where: { $0.dayID == dayID && $0.wanted }) {
                 pickups.append(DayTradeRow(peerID: cand.workerID, peerName: cand.name, desk: leg.desk,
                                            startHour: leg.startHour, kind: profile.tradeKindByDay?[dayID] ?? .both,
-                                           note: nil, tier: leg.wanted ? 0 : (leg.bookend ? 1 : 2)))
+                                           note: nil, tier: 0))
             }
         }
         return (sortDayRows(pickups), wantToWork.sorted { $0.peerName < $1.peerName })

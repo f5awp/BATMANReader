@@ -57,29 +57,6 @@ struct NoteMarker: View {
     }
 }
 
-/// A tappable event marker (holiday / milestone) showing the event name in a popover.
-struct EventMarker: View {
-    let name: String
-    let color: Color
-    let icon: String
-    @State private var show = false
-
-    var body: some View {
-        Button { show = true } label: {
-            Image(systemName: icon).font(.system(size: 9, weight: .bold)).foregroundStyle(color)
-        }
-        .buttonStyle(.plain)
-        .popover(isPresented: $show) {
-            VStack(alignment: .leading, spacing: 6) {
-                Label(name, systemImage: icon).font(.subheadline.bold()).foregroundStyle(color)
-                Text("High-demand date").font(.caption2).foregroundStyle(.secondary)
-            }
-            .padding(14).frame(minWidth: 180)
-            .presentationCompactAdaptation(.popover)
-        }
-    }
-}
-
 // MARK: - Interactive month calendar with intent overlays
 
 struct IntentCalendarView: View {
@@ -450,9 +427,15 @@ struct IntentCalendarView: View {
 
         VStack(spacing: 1) {
             ZStack {
-                // §10: NO behind-number disc. High-demand (holiday) + personal-milestone days are marked by
-                // the SAME small corner dot as notes (see `noteDot`); plain "today" is the inset tile ring
-                // (see `borderColor`). One consistent marker language — no one-off copper circle.
+                // §Match-Radar: a SIGNIFICANT day (high-demand holiday / personal milestone) is marked by a
+                // DISC drawn AROUND the date number in the topology accent (orange / pink) — not a corner dot.
+                // The star (matches) + note dot live in the corners; "today" is the inset tile ring.
+                let topo = intents.topology(forDay: dayID)
+                if topo != .standard {
+                    Circle()
+                        .stroke(topo.accent, lineWidth: 1.5)
+                        .frame(width: 24, height: 24)
+                }
                 Text("\(cal.component(.day, from: date))")
                     .font(isToday ? DXFont.dayNumber.weight(.heavy) : DXFont.dayNumber)
                     .foregroundStyle(numberColor(dayID: dayID, isWorking: isWorking, hasShift: hasShift, date: date, shift: shift))
@@ -624,16 +607,10 @@ struct IntentCalendarView: View {
         // the slot first; otherwise an event day — personal milestone or high-demand holiday — shows the same
         // corner dot in its semantic palette color (was a one-off copper disc behind the number). Vacation-
         // reason notes stay hidden (the "VAC" label conveys them).
-        let topo = intents.topology(forDay: dayID)
+        // §Match-Radar: significant days are now marked by the DISC around the date number (see the number
+        // ZStack), so the corner dot is reserved for NOTES only.
         if layers.notes, let note = intents.note(forDay: dayID), note.reason != .vacation {
             NoteMarker(note: note)
-        } else if topo == .personalMilestone {
-            // §Match-Radar: a significant day is a DISC (pink milestone / orange high-demand). The STAR shape
-            // is reserved for the radar match marker (bottom-trailing), so the two never read as the same thing.
-            EventMarker(name: "Personal milestone", color: BrickPalette.milestone, icon: "circle.fill")
-        } else if topo == .highDemand {
-            EventMarker(name: Holidays.name(forDay: dayID) ?? "High-demand day",
-                        color: BrickPalette.highImpact, icon: "circle.fill")
         } else {
             Color.clear.frame(height: 9)
         }
