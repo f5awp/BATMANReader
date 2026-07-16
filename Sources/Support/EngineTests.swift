@@ -603,6 +603,20 @@ enum TradeEngineTests {
             check(singles.count == 2, "INBOX-DEDUPE: plain (nil-loopID) requests are NOT merged")
             let mixed = MessagingStore.dedupeLoops([legReq("x", loop: "L2"), legReq("y", loop: "L2"), legReq("z", loop: nil)])
             check(mixed.count == 2, "INBOX-DEDUPE: one loop + one single → 2 cards")
+
+            // Broadcast fan-out: 3 legs to 3 peers sharing ONE offerID collapse to a single owner card.
+            func bcastLeg(_ id: String, offer: String?) -> TradeRequest {
+                var r = TradeRequest(id: id, fromID: "me", fromName: "F", toID: "peer\(id)", toName: "T", note: "",
+                                     takeDayIDs: ["2026-07-20"], giveDayIDs: ["2026-07-15"],
+                                     createdAt: Date(timeIntervalSince1970: 1), expiresAt: Date(timeIntervalSince1970: 100),
+                                     offerID: offer)
+                return r
+            }
+            let bcast = MessagingStore.dedupeLoops([bcastLeg("c", offer: "OFR"), bcastLeg("a", offer: "OFR"), bcastLeg("b", offer: "OFR")])
+            check(bcast.count == 1, "INBOX-DEDUPE: 3 broadcast legs (shared offerID) collapse to ONE owner card")
+            check(bcast.first?.id == "a", "INBOX-DEDUPE: broadcast representative is the lowest id")
+            let bcastMixed = MessagingStore.dedupeLoops([bcastLeg("p", offer: "O1"), bcastLeg("q", offer: "O1"), bcastLeg("r", offer: nil)])
+            check(bcastMixed.count == 2, "INBOX-DEDUPE: a broadcast + a plain request → 2 cards")
         }
 
         // MARK: INBOX-LOOPSTATUS — a loop's aggregate status across legs (TRADE-INBOX Stage 4).
