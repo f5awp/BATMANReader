@@ -736,7 +736,7 @@ enum TradeRouter {
     // MARK: - Match Radar (DX-MATCH-RADAR-SPEC v3.1)
 
     /// One mutual radar match with a specific peer — both of us marked compatible days.
-    struct RadarMatch: Sendable, Hashable, Identifiable {
+    struct RadarMatch: Sendable, Hashable, Identifiable, Codable {
         let peerID: String
         let peerName: String
         let giveDayIDs: [String]   // MY marked days the peer would take
@@ -758,7 +758,7 @@ enum TradeRouter {
 
     /// Per-day rows for the day-detail Trade List — precomputed in ONE scan so tapping a day is an O(1)
     /// lookup, not a fresh per-tap scan.
-    struct DayRadar: Sendable {
+    struct DayRadar: Sendable, Codable {
         var pickups: [DayTradeRow] = []      // OFF day: peers wanting to trade that day, legal for me
         var wantToWork: [DayTradeRow] = []   // WORKING day: peers wanting to work it, able to cover my shift
     }
@@ -874,7 +874,7 @@ enum TradeRouter {
     }
 
     /// One row in a day's Trade List. Section A rows carry the shift; section B rows are want-to-work peers.
-    struct DayTradeRow: Sendable, Hashable, Identifiable {
+    struct DayTradeRow: Sendable, Hashable, Identifiable, Codable {
         let peerID: String
         let peerName: String
         let desk: String        // section A: the shift I'd pick up; section B: "" (they're off, want to work)

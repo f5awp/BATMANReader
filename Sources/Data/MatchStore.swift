@@ -47,6 +47,35 @@ final class MatchStore {
         seenMatchKeys  = Set(UserDefaults.standard.stringArray(forKey: Keys.seenMatch) ?? [])
         hasBaselined   = UserDefaults.standard.bool(forKey: Keys.baselined)
         radarStateUpdatedAt = (UserDefaults.standard.object(forKey: Keys.stateUpdatedAt) as? Date) ?? .distantPast
+        loadCachedIndex()   // show last session's Trade List instantly on cold launch; recompute refreshes it
+    }
+
+    // MARK: Disk cache of the computed index (so the Trade List renders instantly on a cold launch)
+
+    private struct RadarCache: Codable {
+        var owner: String
+        var pickupDays: [String]; var takerDays: [String]
+        var matchesByDay: [String: [TradeRouter.RadarMatch]]
+        var dayIndex: [String: TradeRouter.DayRadar]
+        var lastRefreshed: Date
+    }
+    private static var cacheURL: URL? {
+        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
+            .appendingPathComponent("dx-radar-index.json")
+    }
+    private func loadCachedIndex() {
+        guard let url = Self.cacheURL, let data = try? Data(contentsOf: url),
+              let c = try? JSONDecoder().decode(RadarCache.self, from: data),
+              c.owner == SettingsManager.shared.username else { return }
+        pickupAvailableDays = Set(c.pickupDays); takerAvailableDays = Set(c.takerDays)
+        matchesByDay = c.matchesByDay; dayIndex = c.dayIndex; lastRefreshed = c.lastRefreshed
+    }
+    private func saveCachedIndex() {
+        guard let url = Self.cacheURL, let refreshed = lastRefreshed else { return }
+        let c = RadarCache(owner: SettingsManager.shared.username,
+                           pickupDays: Array(pickupAvailableDays), takerDays: Array(takerAvailableDays),
+                           matchesByDay: matchesByDay, dayIndex: dayIndex, lastRefreshed: refreshed)
+        if let data = try? JSONEncoder().encode(c) { try? data.write(to: url, options: .atomic) }
     }
 
     /// PURE, testable: opportunity-days that appeared since the last-seen baseline (a NEW alert).
@@ -99,6 +128,7 @@ final class MatchStore {
         UserDefaults.standard.set(Array(r.pickupDays), forKey: Keys.seen)
         UserDefaults.standard.set(Array(r.takerDays), forKey: Keys.seenTaker)
         if !hasBaselined { hasBaselined = true; UserDefaults.standard.set(true, forKey: Keys.baselined) }
+        saveCachedIndex()   // persist so the next cold launch shows this instantly
         return (r.pickupDays, r.takerDays)
     }
 
