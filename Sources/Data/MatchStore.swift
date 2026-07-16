@@ -22,12 +22,17 @@ final class MatchStore {
     /// is "new" (drives the batched notification + a subtle new-emphasis).
     private(set) var seenPickupDays: Set<String> = []
     private(set) var lastRefreshed: Date?
+    /// Whether we've established a baseline yet. The FIRST-EVER recompute records the current pickups
+    /// silently (so the user isn't spammed with an alert for every pre-existing opportunity); only later
+    /// recomputes fire new-pickup notifications.
+    private var hasBaselined: Bool
 
     enum Scope { case full, intentsOnly, local }
 
     private init() {
         watchedDays    = Set(UserDefaults.standard.stringArray(forKey: Keys.watched) ?? [])
         seenPickupDays = Set(UserDefaults.standard.stringArray(forKey: Keys.seen) ?? [])
+        hasBaselined   = UserDefaults.standard.bool(forKey: Keys.baselined)
     }
 
     /// PURE, testable: pickup-days that appeared since the last-seen baseline (a NEW star).
@@ -49,6 +54,16 @@ final class MatchStore {
         }
         matchesByDay = byDay
         lastRefreshed = Date()
+        if hasBaselined {
+            await NotificationManager.shared.notifyRadar(gained: gained, watched: watchedDays)
+        } else {
+            // First-ever run: adopt the current pickups as the seen baseline so we don't alert on
+            // opportunities that already existed before the feature was live.
+            seenPickupDays.formUnion(pickups)
+            UserDefaults.standard.set(Array(seenPickupDays), forKey: Keys.seen)
+            hasBaselined = true
+            UserDefaults.standard.set(true, forKey: Keys.baselined)
+        }
         return gained
     }
 
@@ -70,7 +85,8 @@ final class MatchStore {
     func isWatched(_ dayID: String) -> Bool { watchedDays.contains(dayID) }
 
     private enum Keys {
-        static let watched = "batman.radar.watchedDays"
-        static let seen    = "batman.radar.seenPickupDays"
+        static let watched   = "batman.radar.watchedDays"
+        static let seen      = "batman.radar.seenPickupDays"
+        static let baselined = "batman.radar.baselined"
     }
 }

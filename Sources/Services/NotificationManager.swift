@@ -160,6 +160,44 @@ final class NotificationManager {
         center.removePendingNotificationRequests(withIdentifiers: toRemove)
     }
 
+    // MARK: - Match Radar (new-pickup alerts)
+
+    private let radarPrefix = "batman.radar."
+
+    /// Alert for days that just gained a pickup. Each WATCHED day gets its own immediate alert; the rest
+    /// collapse into ONE batched summary so the user isn't spammed. No-op if nothing gained or if the user
+    /// hasn't authorized notifications (best-effort — never prompts here).
+    func notifyRadar(gained: Set<String>, watched: Set<String>) async {
+        guard !gained.isEmpty else { return }
+        guard await center.notificationSettings().authorizationStatus == .authorized else { return }
+
+        func fire(id: String, title: String, body: String) async {
+            let content = UNMutableNotificationContent()
+            content.title = title; content.body = body; content.sound = .default
+            let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
+            try? await center.add(UNNotificationRequest(identifier: id, content: content, trigger: trigger))
+        }
+
+        for day in gained.intersection(watched).sorted() {
+            await fire(id: radarPrefix + "watch." + day,
+                       title: "New match on a day you're watching",
+                       body: "\(Self.prettyDay(day)) — a shift you can pick up just opened up.")
+        }
+        let others = gained.subtracting(watched).sorted()
+        if !others.isEmpty {
+            await fire(id: radarPrefix + "batch",
+                       title: "New trade matches",
+                       body: others.count == 1 ? "\(Self.prettyDay(others[0])) has a shift you can pick up."
+                                               : "\(others.count) days now have shifts you can pick up.")
+        }
+    }
+
+    static func prettyDay(_ id: String) -> String {
+        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"
+        guard let d = f.date(from: id) else { return id }
+        let out = DateFormatter(); out.dateFormat = "EEE, MMM d"; return out.string(from: d)
+    }
+
     // MARK: - Helpers
 
     private func makeBody(for shift: Shift, leadHours: Int) -> String {
