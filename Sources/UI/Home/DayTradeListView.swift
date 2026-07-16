@@ -18,14 +18,25 @@ struct DayDetailSheet: View {
         _tab = State(initialValue: initialTab)
     }
 
+    /// Keep (mustWork) and Blackout (mustBeOff) days are protected — you're not trading them, so there's no
+    /// Trade List; show just the Info editor.
+    private var protectedDay: Bool {
+        DayIntentStore.shared.workingIntent(forDay: target.dayID) == .mustWork
+            || DayIntentStore.shared.offIntent(forDay: target.dayID) == .mustBeOff
+    }
+
     var body: some View {
-        TabView(selection: $tab) {
-            // Info is the default (left); Trade List is second (right) — for both working and off days.
+        if protectedDay {
             DayIntentEditor(target: target)
-                .tabItem { Label("Info", systemImage: "info.circle") }.tag(Tab.info)
-            // Tab-gated: the Trade List only computes/loads once its tab is actually selected.
-            DayTradeListPane(target: target, isActive: tab == .tradeList)
-                .tabItem { Label("Trade List", systemImage: "arrow.left.arrow.right") }.tag(Tab.tradeList)
+        } else {
+            TabView(selection: $tab) {
+                // Info is the default (left); Trade List is second (right) — for both working and off days.
+                DayIntentEditor(target: target)
+                    .tabItem { Label("Info", systemImage: "info.circle") }.tag(Tab.info)
+                // Tab-gated: the Trade List only computes/loads once its tab is actually selected.
+                DayTradeListPane(target: target, isActive: tab == .tradeList)
+                    .tabItem { Label("Trade List", systemImage: "arrow.left.arrow.right") }.tag(Tab.tradeList)
+            }
         }
     }
 }
@@ -185,20 +196,15 @@ struct DayTradeListPane: View {
         loading = true
         if fullRadar || !radar.hasComputed { await radar.recompute(scope: .local) }
         let r = radar.rows(forDay: target.dayID)
-        let di = DayIntentStore.shared
         func sorted(_ rows: [TradeRouter.DayTradeRow]) -> [TradeRouter.DayTradeRow] {
             rows.sorted { $0.tier != $1.tier ? $0.tier > $1.tier : $0.peerName < $1.peerName }   // marked first
         }
-        // Broad discovery (everyone who COULD work it / whose shift I COULD pick up) when I've marked this day;
-        // otherwise just the peers who actively marked the complementary intent (tier 1). (Match Radar v4.)
+        // Broad discovery — always show the full eligible pool (everyone who COULD work this day / whose shift
+        // I COULD pick up), tier-sorted so active markers come first. Works even on open (unmarked) days.
         if target.isOff {
-            let broad = di.offIntent(forDay: target.dayID) == .wantToWork
-            pickups = sorted(broad ? r.pickups : r.pickups.filter { $0.tier >= 1 })
-            wantToWork = []
+            pickups = sorted(r.pickups); wantToWork = []
         } else {
-            let broad = di.workingIntent(forDay: target.dayID) == .dontWantToWork
-            wantToWork = sorted(broad ? r.wantToWork : r.wantToWork.filter { $0.tier >= 1 })
-            pickups = []
+            wantToWork = sorted(r.wantToWork); pickups = []
         }
         loading = false
     }

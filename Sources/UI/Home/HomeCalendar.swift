@@ -842,8 +842,6 @@ struct DayIntentEditor: View {
 
     @State private var working: WorkingIntentState?
     @State private var off: OffIntentState?
-    @State private var reason: IntentReason?
-    @State private var reasonText = ""
     @State private var significant = false
     @State private var carryover = false
     @State private var noteText = ""
@@ -966,21 +964,6 @@ struct DayIntentEditor: View {
                 }
 
                 Section {
-                    TextField("Why? (free text)", text: $reasonText, axis: .vertical)
-                        .lineLimit(1...3)
-                    if let reason {
-                        HStack(spacing: 6) {
-                            Image(systemName: "sparkles").foregroundStyle(AppColor.special)
-                            Text("Tagged as \(reason.label)").font(.caption).foregroundStyle(.secondary)
-                        }
-                    }
-                } header: {
-                    Text("Reason")
-                } footer: {
-                    Text("Type it naturally — it's tagged automatically on save.")
-                }
-
-                Section {
                     if let holiday = Holidays.name(forDay: target.dayID) {
                         Label("High-demand holiday: \(holiday)", systemImage: "exclamationmark.triangle.fill")
                             .font(.caption.weight(.semibold)).foregroundStyle(BrickPalette.warning)
@@ -1043,14 +1026,12 @@ struct DayIntentEditor: View {
         ecbIsIOU = terms.availableDate != nil
         ecbAvailable = terms.availableDate ?? Date()
         if let n = intents.note(forDay: target.dayID) {
-            noteText = n.message; notePrivate = n.isPrivate; reason = n.reason
+            noteText = n.message; notePrivate = n.isPrivate
         }
     }
 
     private func save() async {
         saving = true
-        // Categorize the free-text reason with the on-device model.
-        reason = await ReasonClassifier.classify(reasonText)
         if target.isOff { intents.setOffIntent(off, forDay: target.dayID) }
         else { intents.setWorkingIntent(working, forDay: target.dayID) }
         intents.setTopology(significant ? .personalMilestone : nil, forDay: target.dayID)
@@ -1077,7 +1058,7 @@ struct DayIntentEditor: View {
         }
         let trimmed = noteText.trimmingCharacters(in: .whitespacesAndNewlines)
         intents.setNote(trimmed.isEmpty ? nil
-                        : DayNote(dayID: target.dayID, message: trimmed, reason: reason, isPrivate: notePrivate),
+                        : DayNote(dayID: target.dayID, message: trimmed, reason: nil, isPrivate: notePrivate),
                         forDay: target.dayID)
         saving = false
         dismiss()

@@ -505,30 +505,15 @@ struct MarkIntentsToolbar: View {
     private var availabilityPills: some View {
         // The pill tint tracks the mode so the selection reads the way it'll paint: gold = work, slate = ✕.
         let selColor = offMode == .work ? OffIntentState.wantToWork.brickColor : AppColor.locked
+        _ = selColor   // (per-shift AM/PM/MID pills removed — per-day shift availability is edited in the Info form)
         return VStack(spacing: 8) {
             DXSegmented(selection: $offMode, options: [
                 .init(OffPaintMode.blackout, "Blackout"),
                 .init(OffPaintMode.work, "Want to Work"),
             ], color: { $0 == .work ? OffIntentState.wantToWork.brickColor : AppColor.locked })
                 .padding(.horizontal)
-
-            HStack(spacing: 8) {
-                Text(offMode == .work ? "Work shifts" : "Blackout shifts")
-                    .font(.caption).foregroundStyle(.secondary)
-                ForEach(ShiftAvailabilityType.allCases, id: \.self) { type in
-                    let on = offBrushes.contains(type)
-                    Button { if on { offBrushes.remove(type) } else { offBrushes.insert(type) } } label: {
-                        Text(type.rawValue)
-                            .font(.subheadline.weight(.bold))
-                            .padding(.horizontal, 14).padding(.vertical, 7)
-                            .background(on ? selColor : Color(.tertiarySystemFill), in: Capsule())
-                            .foregroundStyle(on ? .white : .primary)
-                    }
-                    .buttonStyle(.plain)
-                }
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal)
+            // AM/PM/MID pill row removed — a whole-day paint now applies to all shifts; change individual
+            // shifts per day in the Info form instead.
         }
     }
 }
@@ -552,7 +537,7 @@ struct VisibilityToolbar: View {
         Menu {
             Toggle(isOn: $layers.notes) { Label("Notes", systemImage: "note.text") }
             Toggle(isOn: $layers.intentOverlays) { Label("Intent colors", systemImage: "paintpalette.fill") }
-            Toggle(isOn: $layers.availability) { Label("Shift availability", systemImage: "clock.badge.checkmark") }
+            // Shift-availability in-cell marks removed — per-day shift availability is set in the Info form.
             Toggle(isOn: $layers.shiftType) { Label("Shift type (AM/PM/MID)", systemImage: "clock") }
             Toggle(isOn: $layers.deskAssignments) { Label("Desk numbers", systemImage: "number") }
         } label: {
