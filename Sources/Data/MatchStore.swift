@@ -103,7 +103,7 @@ final class MatchStore {
         dayIndex = r.dayIndex
         var byDay: [String: [TradeRouter.RadarMatch]] = [:]
         for m in r.matches {
-            for d in Set(m.giveDayIDs + m.takeDayIDs) { byDay[d, default: []].append(m) }
+            for d in Set(m.giveDayIDs + m.takeDayIDs + m.ecbGiveDayIDs) { byDay[d, default: []].append(m) }
         }
         matchesByDay = byDay
         lastRefreshed = Date()
@@ -116,7 +116,7 @@ final class MatchStore {
         let out = DateFormatter(); out.dateFormat = "EEE, MMM d"
         var matchKeys = Set<String>(); var newMutual: [(peer: String, dayID: String, dayLabel: String)] = []
         for m in r.matches {
-            let days = (m.giveDayIDs + m.takeDayIDs).sorted()
+            let days = (m.giveDayIDs + m.takeDayIDs + m.ecbGiveDayIDs).sorted()
             let key = m.peerID + "|" + days.joined(separator: ",")
             matchKeys.insert(key)
             if hasBaselined, !seenMatchKeys.contains(key), let first = days.first {
@@ -151,16 +151,21 @@ final class MatchStore {
     /// Auto-Matches / Requests like any proposal.
     static let autoMatchCap = 3
     private func autoMatchFromMatches(_ matches: [TradeRouter.RadarMatch], firstRun: Bool) async {
-        // BOTH intents drive it: the give must be a day I marked Want to Trade (in the match already), and the
-        // take must be a day I marked Want to Work — so auto-send only ever gives days I offered and takes
-        // days I actually want. A day-for-day needs both, so marking either side alone won't auto-fire.
-        let wantToWork = DayIntentStore.shared.wantToWorkDayIDs
-        var byGive: [String: [(peer: TradeRouter.RadarMatch, take: String)]] = [:]
+        // A give day is a day I marked Want to Trade. Its KIND decides how it auto-sends:
+        //   • Day  → day-for-day only (needs a peer offering a reciprocal Want-to-Work day I'd take)
+        //   • ECB  → a one-way ECB (points) offer to a peer who'd cover it — no reciprocal needed
+        //   • Both → day-for-day WITH an ECB fallback the acceptor can choose, or ECB-only if no reciprocal
+        let intents = DayIntentStore.shared
+        let wantToWork = intents.wantToWorkDayIDs
+        var dfd: [String: [(peer: TradeRouter.RadarMatch, take: String)]] = [:]   // day-for-day candidates
+        var ecb: [String: [TradeRouter.RadarMatch]] = [:]                          // ECB (points) candidates
         for m in matches where TradeProfileStore.shared.isActiveAccount(m.peerID) {
-            guard let take = m.takeDayIDs.first(where: { wantToWork.contains($0) }) else { continue }
-            for give in m.giveDayIDs { byGive[give, default: []].append((peer: m, take: take)) }
+            if let take = m.takeDayIDs.first(where: { wantToWork.contains($0) }) {
+                for give in m.giveDayIDs { dfd[give, default: []].append((peer: m, take: take)) }
+            }
+            for give in m.ecbGiveDayIDs { ecb[give, default: []].append(m) }
         }
-        let matchable = Set(byGive.keys)
+        let matchable = Set(dfd.keys).union(ecb.keys)
         // First run, or toggle off → just record the baseline; never blast pre-existing matches.
         guard !firstRun, SettingsManager.shared.standingOfferAutoMatch else {
             autoSentGiveDays = matchable
@@ -169,18 +174,43 @@ final class MatchStore {
         }
         let priors = MessagingStore.shared.acceptancePriorMap()
         var alerts: [NotificationManager.StandingAlert] = []
-        for (give, cands) in byGive where !autoSentGiveDays.contains(give) {
-            let ranked = cands.sorted { (priors[$0.peer.peerID] ?? 0) > (priors[$1.peer.peerID] ?? 0) }.prefix(Self.autoMatchCap)
-            guard let lead = ranked.first else { continue }
-            let offerID = UUID().uuidString
-            for c in ranked {
-                await MessagingStore.shared.sendRequest(
-                    to: c.peer.peerID, toName: c.peer.peerName, note: "Auto-match trade.",
-                    take: [c.take], give: [give],
-                    offerID: ranked.count > 1 ? offerID : nil, origin: .intents)
+        for give in matchable where !autoSentGiveDays.contains(give) {
+            let kind = intents.tradeKind(forDay: give)
+            let amount = TradeRequest.clampECB(intents.ecbAmount(forDay: give))
+            let available = intents.ecbTerms(forDay: give).availableDate
+            let dayForDay = dfd[give] ?? []
+            if kind != .ecb, !dayForDay.isEmpty {
+                // Day-for-day (Day) or a dual offer (Both) — broadcast to the top reciprocal peers.
+                let ranked = dayForDay.sorted { (priors[$0.peer.peerID] ?? 0) > (priors[$1.peer.peerID] ?? 0) }.prefix(Self.autoMatchCap)
+                guard let lead = ranked.first else { continue }
+                let offerID = UUID().uuidString
+                let offerKind: TradeKind = (kind == .both) ? .both : .day   // Both carries the ECB option too
+                for c in ranked {
+                    await MessagingStore.shared.sendRequest(
+                        to: c.peer.peerID, toName: c.peer.peerName,
+                        note: offerKind == .both ? "Auto-match trade — swap or ECB." : "Auto-match trade.",
+                        take: [c.take], give: [give],
+                        ecbValue: offerKind == .both ? amount : nil,
+                        offerID: ranked.count > 1 ? offerID : nil, origin: .intents,
+                        offerKind: offerKind, ecbAvailableDate: offerKind == .both ? available : nil)
+                }
+                autoSentGiveDays.insert(give)
+                alerts.append(.init(getDayID: lead.take, giveDayID: give, peer: lead.peer.peerName, sentCount: ranked.count))
+            } else if kind != .day, let ecbCands = ecb[give], !ecbCands.isEmpty {
+                // ECB one-way: give this day for points to the top peers who'd cover it (first-accept-wins queue).
+                let ranked = ecbCands.sorted { (priors[$0.peerID] ?? 0) > (priors[$1.peerID] ?? 0) }.prefix(Self.autoMatchCap)
+                guard let lead = ranked.first else { continue }
+                let offerID = UUID().uuidString
+                for c in ranked {
+                    await MessagingStore.shared.sendRequest(
+                        to: c.peerID, toName: c.peerName, note: "Auto-match ECB trade.",
+                        take: [], give: [give], ecbValue: amount,
+                        offerID: ranked.count > 1 ? offerID : nil, origin: .intents,
+                        offerKind: .ecb, ecbAvailableDate: available)
+                }
+                autoSentGiveDays.insert(give)
+                alerts.append(.init(getDayID: give, giveDayID: give, peer: lead.peerName, sentCount: ranked.count))
             }
-            autoSentGiveDays.insert(give)
-            alerts.append(.init(getDayID: lead.take, giveDayID: give, peer: lead.peer.peerName, sentCount: ranked.count))
         }
         autoSentGiveDays.formIntersection(matchable)   // forget days that stopped matching, so they can re-arm
         UserDefaults.standard.set(Array(autoSentGiveDays), forKey: Keys.autoSent)

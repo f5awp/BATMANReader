@@ -739,8 +739,9 @@ enum TradeRouter {
     struct RadarMatch: Sendable, Hashable, Identifiable, Codable {
         let peerID: String
         let peerName: String
-        let giveDayIDs: [String]   // MY marked days the peer would take
+        let giveDayIDs: [String]   // MY marked days the peer would take (day-for-day)
         let takeDayIDs: [String]   // the peer's marked days I'd take
+        var ecbGiveDayIDs: [String] = []   // MY want-to-trade days (kind ECB/Both) the peer would cover for POINTS
         var kind: TradeKind = .both
         var id: String { peerID }
     }
@@ -833,17 +834,26 @@ enum TradeRouter {
                                 startHour: leg.startHour, kind: profile.tradeKindByDay?[leg.dayID] ?? .both,
                                 note: nil, tier: 0))
             }
-            for leg in plan.iGive where wtw.contains(leg.dayID) {
+            // A "taker" exists for any give-eligible working day (day-for-day OR ECB-capable) the peer wants
+            // to work — union so an ECB-only day (absent from iGive) still gets its taker star + detail row.
+            var seenGive = Set<String>()
+            for leg in (plan.iGive + plan.iGiveECB) where wtw.contains(leg.dayID) && seenGive.insert(leg.dayID).inserted {
                 out.takerDays.insert(leg.dayID)
                 out.dayIndex[leg.dayID, default: DayRadar()].wantToWork.append(
                     DayTradeRow(peerID: cand.workerID, peerName: cand.name, desk: leg.desk,
-                                startHour: leg.startHour, kind: profile.tradeKindByDay?[leg.dayID] ?? .both,
+                                startHour: leg.startHour, kind: myProfile.tradeKindByDay?[leg.dayID] ?? .both,
                                 note: nil, tier: 0))
             }
             let mutualGive = plan.iGive.filter { $0.wanted }.map(\.dayID)
-            if !mutualGive.isEmpty, !myTakeMarks.isEmpty {
+            // ECB one-way: my want-to-trade days (kind ECB/Both) this peer would cover for points — no
+            // reciprocal needed, so it stands alone even when there's no day-for-day give-back.
+            let ecbGive = plan.iGiveECB.filter { $0.wanted }.map(\.dayID)
+            let hasDayForDay = !mutualGive.isEmpty && !myTakeMarks.isEmpty
+            if hasDayForDay || !ecbGive.isEmpty {
                 out.matches.append(RadarMatch(peerID: cand.workerID, peerName: cand.name,
-                                              giveDayIDs: mutualGive, takeDayIDs: myTakeMarks, kind: .both))
+                                              giveDayIDs: hasDayForDay ? mutualGive : [],
+                                              takeDayIDs: hasDayForDay ? myTakeMarks : [],
+                                              ecbGiveDayIDs: ecbGive, kind: .both))
             }
         }
         return out

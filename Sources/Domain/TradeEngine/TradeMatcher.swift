@@ -363,6 +363,9 @@ struct TwoWayPlan: Sendable {
     let name: String
     let iGive: [TwoWayLeg]   // your work days they cover — bookend for THEM
     let iTake: [TwoWayLeg]   // their work days you cover — bookend for YOU
+    // Match Radar ECB: your work days they cover that you'd trade for POINTS (kind ECB or Both) — the one-way
+    // ECB candidates. Independent of `iGive` (day-for-day), so it can include an ECB-only day `iGive` excludes.
+    var iGiveECB: [TwoWayLeg] = []
     var isViable: Bool { !iGive.isEmpty && !iTake.isEmpty }
     var mutualWanted: Int { min(iGive.filter(\.wanted).count, iTake.filter(\.wanted).count) }
 }
@@ -547,6 +550,7 @@ enum TradeMatcher {
         // You give → your work days they can cover that pass THEIR full rules. Built FIRST so the accept-scope
         // prune below knows which days you'd actually give (a scope is "what you accept in return for a give").
         var iGive: [TwoWayLeg] = []
+        var iGiveECB: [TwoWayLeg] = []
         for me in myEntries where !me.isOff {
             // Never offer a working day you marked KEEP (SPEC S-ENG-9/10) — a give-side gate.
             if myProfile.keepDayIDs?.contains(me.day) == true { continue }
@@ -558,10 +562,13 @@ enum TradeMatcher {
                 coverMap: pMap, coverQuals: pe.quals, coverProfile: theirProfile,
                 options: .full, cal: cal)
             guard check.eligible else { continue }
-            // Match Radar: my ECB-only give days aren't offered for a day-for-day swap (see iTake note).
-            guard Self.allowsDayForDaySwap(myProfile.tradeKindByDay?[me.day]) else { continue }
-            iGive.append(TwoWayLeg(dayID: me.day, date: day, desk: me.desk, startHour: me.startHour,
-                                   bookend: check.isBookend, wanted: mySeeking.contains(me.day)))
+            let leg = TwoWayLeg(dayID: me.day, date: day, desk: me.desk, startHour: me.startHour,
+                                bookend: check.isBookend, wanted: mySeeking.contains(me.day))
+            let kind = myProfile.tradeKindByDay?[me.day] ?? .both
+            // Match Radar: my ECB-only give days aren't offered for a day-for-day swap (see iTake note); an
+            // ECB or Both day IS an ECB (one-way, points) candidate. Both lists share the eligibility above.
+            if Self.allowsDayForDaySwap(kind) { iGive.append(leg) }   // .day / .both
+            if kind != .day { iGiveECB.append(leg) }                  // .ecb / .both
         }
         let myGiveDayIDs = iGive.map(\.dayID)
 
@@ -601,8 +608,10 @@ enum TradeMatcher {
         }
 
         let order: (TwoWayLeg, TwoWayLeg) -> Bool = { ($0.wanted ? 0 : 1, $0.date) < ($1.wanted ? 0 : 1, $1.date) }
-        return TwoWayPlan(workerID: workerID, name: name,
-                          iGive: iGive.sorted(by: order), iTake: iTake.sorted(by: order))
+        var plan = TwoWayPlan(workerID: workerID, name: name,
+                              iGive: iGive.sorted(by: order), iTake: iTake.sorted(by: order))
+        plan.iGiveECB = iGiveECB.sorted(by: order)
+        return plan
     }
 
     /// Drives the 🔥×N one-way badge. N = A + B (any aligned trade move counts —

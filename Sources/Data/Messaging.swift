@@ -220,6 +220,11 @@ struct TradeRequest: Sendable, Codable, Identifiable, Hashable {
     var altTakeDayIDs: [String]? = nil
     // Match Radar: the standing offer this request fulfills (if any), so the offer auto-closes on accept.
     var standingOfferID: String? = nil
+    // Match Radar ECB: the offered method. `.both` lets the acceptor choose day-for-day OR ECB points in ONE
+    // card; `.ecb`/`.day`/nil behave as before. Set post-construction (frozen init). Optional ⇒ old records decode.
+    var offerKind: TradeKind? = nil
+    // Match Radar ECB: when the ECB will be paid — a FUTURE date makes it an IOU (posted then, not now).
+    var ecbAvailableDate: Date? = nil
 
     /// Where this request files in the inbox. ECB always wins; otherwise the stored origin, else Misc.
     var inboxOrigin: TradeOrigin { isECB ? .ecb : (origin ?? .manual) }
@@ -254,6 +259,15 @@ struct TradeRequest: Sendable, Codable, Identifiable, Hashable {
     var ecbAmount: Double? { ecbValue ?? ecb.map(Double.init) }
     /// A one-way ECB offer = sender gives days, takes nothing back, offers points.
     var isECB: Bool { ecbAmount != nil && takeDayIDs.isEmpty }
+
+    /// The acceptor may take this as ECB points — a pure one-way ECB, or a `.both` dual offer.
+    var offersECB: Bool { isECB || offerKind == .ecb || offerKind == .both }
+    /// The acceptor may take this as a day-for-day swap — there's a reciprocal day to give back.
+    var offersDayForDay: Bool { !takeDayIDs.isEmpty && offerKind != .ecb }
+    /// A genuine either/or: the acceptor chooses day-for-day OR ECB in one card.
+    var offersChoice: Bool { offersECB && offersDayForDay }
+    /// This ECB is an IOU — paid on a future date rather than on acceptance.
+    var isECBIOU: Bool { (ecbAvailableDate.map { $0 > Date() }) ?? false }
 
     /// ECB is offered in 0.5 steps, 5…25 (SPEC S-ENG-8).
     static func isValidECB(_ v: Double) -> Bool { v >= 5 && v <= 25 && (v * 2).rounded() == v * 2 }
@@ -990,7 +1004,8 @@ final class MessagingStore {
                      ecb: Int? = nil, ecbValue: Double? = nil, offerID: String? = nil,
                      chain: [TradeLeg]? = nil, qualSwap: QualSwapLegData? = nil,
                      origin: TradeOrigin = .manual, loopID: String? = nil,
-                     altGive: [String]? = nil, altTake: [String]? = nil, standingOfferID: String? = nil) async {
+                     altGive: [String]? = nil, altTake: [String]? = nil, standingOfferID: String? = nil,
+                     offerKind: TradeKind? = nil, ecbAvailableDate: Date? = nil) async {
         let now = Date()
         // Sender-side "Perfect Match": does this hit the recipient's published intents? (U6 push)
         let recipient = TradeProfileStore.shared.profile(forWorker: toID)
@@ -1039,6 +1054,8 @@ final class MessagingStore {
         req.altGiveDayIDs = ag.isEmpty ? nil : ag
         req.altTakeDayIDs = at.isEmpty ? nil : at
         req.standingOfferID = standingOfferID
+        req.offerKind = offerKind
+        req.ecbAvailableDate = ecbAvailableDate
         await service.sendRequest(req)
         MetricsStore.shared.log(.proposed)   // H1 #18 global tally
         requests = ([req] + requests.filter { $0.id != req.id })
