@@ -235,7 +235,7 @@ final class NotificationManager {
         guard await center.notificationSettings().authorizationStatus == .authorized else { return }
         for item in items {
             let content = UNMutableNotificationContent()
-            content.title = "It's a match!"
+            content.title = AppGuide.appName
             content.body = "You have a match on \(item.dayLabel)!"
             content.sound = .default
             content.userInfo = [Self.radarDayKey: item.dayID]
