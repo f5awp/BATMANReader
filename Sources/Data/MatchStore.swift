@@ -14,17 +14,22 @@ final class MatchStore {
 
     /// Direction-A opportunity: days where ≥1 peer's want-to-trade shift is legal for me → the STAR.
     private(set) var pickupAvailableDays: Set<String> = []
+    /// Direction-B opportunity: MY working days a want-to-work taker exists for (drives on-day notifications).
+    private(set) var takerAvailableDays: Set<String> = []
     /// Mutual matches indexed per day (give ∪ take) → the passive Matches lane + notifications.
     private(set) var matchesByDay: [String: [TradeRouter.RadarMatch]] = [:]
+    /// Precomputed per-day rows (both directions) so the day-detail Trade List is an O(1) lookup, not a scan.
+    private(set) var dayIndex: [String: TradeRouter.DayRadar] = [:]
     /// The Watch toggle (per day). Local v1 (cross-device sync is a later add).
     private(set) var watchedDays: Set<String> = []
-    /// Durable baseline = the pickup-days known as of the last recompute (persisted; `pickupAvailableDays`
-    /// is NOT). A pickup not in here is "newly gained" → notifies once, then joins the baseline.
+    /// Durable baselines = the opportunity-days known as of the last recompute (persisted; the live sets are
+    /// NOT). A day not in here is "newly gained" → notifies once, then joins the baseline.
     private(set) var seenPickupDays: Set<String> = []
+    private(set) var seenTakerDays: Set<String> = []
     private(set) var lastRefreshed: Date?
-    /// Whether we've established a baseline yet. The FIRST-EVER recompute records the current pickups
-    /// silently (so the user isn't spammed with an alert for every pre-existing opportunity); only later
-    /// recomputes fire new-pickup notifications.
+    /// True once a computed. The FIRST-EVER recompute records current opportunities silently (no spam for
+    /// pre-existing ones); only later recomputes notify. Also gates the day-detail cold-start compute.
+    var hasComputed: Bool { lastRefreshed != nil }
     private var hasBaselined: Bool
 
     enum Scope { case full, intentsOnly, local }
@@ -32,44 +37,56 @@ final class MatchStore {
     private init() {
         watchedDays    = Set(UserDefaults.standard.stringArray(forKey: Keys.watched) ?? [])
         seenPickupDays = Set(UserDefaults.standard.stringArray(forKey: Keys.seen) ?? [])
+        seenTakerDays  = Set(UserDefaults.standard.stringArray(forKey: Keys.seenTaker) ?? [])
         hasBaselined   = UserDefaults.standard.bool(forKey: Keys.baselined)
     }
 
-    /// PURE, testable: pickup-days that appeared since the last-seen baseline (a NEW star).
+    /// PURE, testable: opportunity-days that appeared since the last-seen baseline (a NEW alert).
     static func newlyGainedDays(old: Set<String>, new: Set<String>) -> Set<String> { new.subtracting(old) }
 
-    /// Recompute the radar. `.full`/`.intentsOnly` pull peer intents first; `.local` skips the network.
-    /// Returns the days that newly gained a pickup (for the caller to notify — Stage 10).
+    /// Recompute the radar in ONE off-main pass. `.full`/`.intentsOnly` pull peer intents first; `.local`
+    /// skips the network. Populates the star, takers, matches, and the per-day index; fires new-opportunity
+    /// notifications (both directions).
     @discardableResult
-    func recompute(scope: Scope = .intentsOnly) async -> Set<String> {
+    func recompute(scope: Scope = .intentsOnly) async -> (pickups: Set<String>, takers: Set<String>) {
         let me = SettingsManager.shared.username
-        guard !me.isEmpty else { return [] }
+        guard !me.isEmpty else { return ([], []) }
         if scope != .local { await TradeProfileStore.shared.refreshOthers() }
-        let (pickups, matches) = await TradeRouter.radarScan(excluding: me)
-        // gained = pickups NEW since the last recompute's baseline. First-ever run (no baseline) → none, so
-        // we never alert on opportunities that predate the feature going live.
-        let gained = hasBaselined ? Self.newlyGainedDays(old: seenPickupDays, new: pickups) : []
-        pickupAvailableDays = pickups
+        let r = await TradeRouter.radarScan(excluding: me)
+        // gained = opportunities NEW since baseline. First-ever run (no baseline) → none, so we never alert
+        // on opportunities that predate the feature going live.
+        let gainedPickups = hasBaselined ? Self.newlyGainedDays(old: seenPickupDays, new: r.pickupDays) : []
+        let gainedTakers  = hasBaselined ? Self.newlyGainedDays(old: seenTakerDays,  new: r.takerDays)  : []
+        pickupAvailableDays = r.pickupDays
+        takerAvailableDays  = r.takerDays
+        dayIndex = r.dayIndex
         var byDay: [String: [TradeRouter.RadarMatch]] = [:]
-        for m in matches {
+        for m in r.matches {
             for d in Set(m.giveDayIDs + m.takeDayIDs) { byDay[d, default: []].append(m) }
         }
         matchesByDay = byDay
         lastRefreshed = Date()
-        if !gained.isEmpty {
-            await NotificationManager.shared.notifyRadar(gained: gained, watched: watchedDays)
+        if !gainedPickups.isEmpty || !gainedTakers.isEmpty {
+            await NotificationManager.shared.notifyRadar(gainedPickups: gainedPickups, gainedTakers: gainedTakers,
+                                                         watched: watchedDays)
         }
-        // Record the CURRENT pickups as the baseline (persisted) so each opportunity notifies at most once —
-        // pickupAvailableDays isn't persisted across launches, so this is the durable "already-known" set.
-        seenPickupDays = pickups
-        UserDefaults.standard.set(Array(pickups), forKey: Keys.seen)
+        // Record the CURRENT opportunities as the baselines (persisted) so each notifies at most once.
+        seenPickupDays = r.pickupDays; seenTakerDays = r.takerDays
+        UserDefaults.standard.set(Array(r.pickupDays), forKey: Keys.seen)
+        UserDefaults.standard.set(Array(r.takerDays), forKey: Keys.seenTaker)
         if !hasBaselined { hasBaselined = true; UserDefaults.standard.set(true, forKey: Keys.baselined) }
-        return gained
+        return (r.pickupDays, r.takerDays)
     }
 
-    /// A day has a star (a legal pickup for me exists).
+    /// A day has a star (a legal pickup for me exists). (Star stays direction-A only, per spec.)
     func hasStar(_ dayID: String) -> Bool { pickupAvailableDays.contains(dayID) }
     func matches(on dayID: String) -> [TradeRouter.RadarMatch] { matchesByDay[dayID] ?? [] }
+
+    /// O(1) day-detail rows from the precomputed index, sorted for display.
+    func rows(forDay dayID: String) -> (pickups: [TradeRouter.DayTradeRow], wantToWork: [TradeRouter.DayTradeRow]) {
+        let d = dayIndex[dayID] ?? TradeRouter.DayRadar()
+        return (TradeRouter.sortDayRows(d.pickups), d.wantToWork.sorted { $0.peerName < $1.peerName })
+    }
 
     func setWatched(_ dayID: String, _ on: Bool) {
         if on { watchedDays.insert(dayID) } else { watchedDays.remove(dayID) }
@@ -80,6 +97,7 @@ final class MatchStore {
     private enum Keys {
         static let watched   = "batman.radar.watchedDays"
         static let seen      = "batman.radar.seenPickupDays"
+        static let seenTaker = "batman.radar.seenTakerDays"
         static let baselined = "batman.radar.baselined"
     }
 }

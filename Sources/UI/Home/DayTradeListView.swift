@@ -10,22 +10,26 @@ import SwiftUI
 /// NavigationStack, so their toolbars never collide.
 struct DayDetailSheet: View {
     let target: DayEditTarget
+    enum Tab { case info, tradeList }
+    @State private var tab: Tab = .info
 
     var body: some View {
-        TabView {
+        TabView(selection: $tab) {
             // Info is the default (left); Trade List is second (right) — for both working and off days.
             DayIntentEditor(target: target)
-                .tabItem { Label("Info", systemImage: "info.circle") }
-            DayTradeListPane(target: target)
-                .tabItem { Label("Trade List", systemImage: "arrow.left.arrow.right") }
+                .tabItem { Label("Info", systemImage: "info.circle") }.tag(Tab.info)
+            // Tab-gated: the Trade List only computes/loads once its tab is actually selected.
+            DayTradeListPane(target: target, isActive: tab == .tradeList)
+                .tabItem { Label("Trade List", systemImage: "arrow.left.arrow.right") }.tag(Tab.tradeList)
         }
     }
 }
 
-/// Section A + B for one date, computed on appear via `TradeRouter.dayTradeList`, plus the Watch Day
-/// toggle. Read-only in v1 — proposing from a row is Stage 9.
+/// Section A/B for one date, served O(1) from `MatchStore`'s precomputed day index (a cold start triggers
+/// one recompute with a spinner). Tap a person → the 2-way calendar.
 struct DayTradeListPane: View {
     let target: DayEditTarget
+    let isActive: Bool
 
     @Environment(\.dismiss) private var dismiss
     private let radar = MatchStore.shared
@@ -88,7 +92,8 @@ struct DayTradeListPane: View {
                         .disabled(loading)
                 }
             }
-            .task(id: target.dayID) { await reload(fullRadar: false) }
+            // Tab-gated: only load when the Trade List tab is active (keyed so it fires on activation + day change).
+            .task(id: "\(target.dayID)-\(isActive)") { if isActive { await reload(fullRadar: false) } }
             // Tap a person → the two-way calendar, seeded with this day (their shift on an off day, mine on
             // a working day) so both parties' alternates are visible.
             .sheet(item: $selectedCandidate) { cand in
@@ -125,14 +130,13 @@ struct DayTradeListPane: View {
         }
     }
 
-    /// Recompute this day's lists. `fullRadar` also refreshes the whole calendar star/matches (the manual
-    /// refresh button); the initial appear only needs this day's rows.
+    /// Load this day's rows from the precomputed index. A cold start (never computed) or the manual refresh
+    /// runs ONE recompute; otherwise it's an instant O(1) lookup.
     private func reload(fullRadar: Bool) async {
         loading = true
-        if fullRadar { await radar.recompute() }
-        let (p, w) = await TradeRouter.dayTradeList(dayID: target.dayID,
-                                                    excluding: SettingsManager.shared.username)
-        pickups = p; wantToWork = w; loading = false
+        if fullRadar || !radar.hasComputed { await radar.recompute(scope: .local) }
+        let r = radar.rows(forDay: target.dayID)
+        pickups = r.pickups; wantToWork = r.wantToWork; loading = false
     }
 }
 

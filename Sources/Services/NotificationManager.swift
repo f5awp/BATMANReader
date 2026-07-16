@@ -164,11 +164,13 @@ final class NotificationManager {
 
     private let radarPrefix = "batman.radar."
 
-    /// Alert for days that just gained a pickup. Each WATCHED day gets its own immediate alert; the rest
-    /// collapse into ONE batched summary so the user isn't spammed. No-op if nothing gained or if the user
-    /// hasn't authorized notifications (best-effort — never prompts here).
-    func notifyRadar(gained: Set<String>, watched: Set<String>) async {
-        guard !gained.isEmpty else { return }
+    /// Alert for days that just gained an opportunity, BOTH directions:
+    ///   • pickups — an OFF day where a shift you can pick up appeared.
+    ///   • takers  — a WORKING day where someone who'd take your shift appeared.
+    /// Each WATCHED day gets its own immediate alert; the rest collapse into one batched summary per
+    /// direction so the user isn't spammed. No-op if nothing gained or notifications aren't authorized.
+    func notifyRadar(gainedPickups: Set<String>, gainedTakers: Set<String>, watched: Set<String>) async {
+        guard !gainedPickups.isEmpty || !gainedTakers.isEmpty else { return }
         guard await center.notificationSettings().authorizationStatus == .authorized else { return }
 
         func fire(id: String, title: String, body: String) async {
@@ -178,17 +180,31 @@ final class NotificationManager {
             try? await center.add(UNNotificationRequest(identifier: id, content: content, trigger: trigger))
         }
 
-        for day in gained.intersection(watched).sorted() {
-            await fire(id: radarPrefix + "watch." + day,
+        // Watched days → individual immediate alerts.
+        for day in gainedPickups.intersection(watched).sorted() {
+            await fire(id: radarPrefix + "watch.pickup." + day,
                        title: "New match on a day you're watching",
                        body: "\(Self.prettyDay(day)) — a shift you can pick up just opened up.")
         }
-        let others = gained.subtracting(watched).sorted()
-        if !others.isEmpty {
-            await fire(id: radarPrefix + "batch",
-                       title: "New trade matches",
-                       body: others.count == 1 ? "\(Self.prettyDay(others[0])) has a shift you can pick up."
-                                               : "\(others.count) days now have shifts you can pick up.")
+        for day in gainedTakers.intersection(watched).sorted() {
+            await fire(id: radarPrefix + "watch.taker." + day,
+                       title: "Someone can take a shift you're watching",
+                       body: "\(Self.prettyDay(day)) — someone now wants to work it, so they could take your shift.")
+        }
+        // Unwatched → one batched summary per direction.
+        let pickups = gainedPickups.subtracting(watched).sorted()
+        if !pickups.isEmpty {
+            await fire(id: radarPrefix + "batch.pickup",
+                       title: "New shifts to pick up",
+                       body: pickups.count == 1 ? "\(Self.prettyDay(pickups[0])) has a shift you can pick up."
+                                                : "\(pickups.count) days now have shifts you can pick up.")
+        }
+        let takers = gainedTakers.subtracting(watched).sorted()
+        if !takers.isEmpty {
+            await fire(id: radarPrefix + "batch.taker",
+                       title: "Someone wants your shifts",
+                       body: takers.count == 1 ? "Someone wants to work your \(Self.prettyDay(takers[0])) shift."
+                                               : "\(takers.count) of your shifts now have someone who'd take them.")
         }
     }
 

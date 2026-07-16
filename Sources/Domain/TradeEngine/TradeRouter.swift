@@ -741,33 +741,67 @@ enum TradeRouter {
         return (pickups, mutualGive, pickups)                          // mutualTake == the marked pickups
     }
 
-    /// The radar scan: STAR pickup-days (direction A) + MUTUAL matches. Reuses `MatchContext` +
-    /// `twoWayExploreCore` (already eligibility/soft-gate filtered). Runs at launch/refresh (not the hot
-    /// foreground path); `Task.yield()` per peer keeps the main actor responsive. NO finalize/floor/cap/loops.
-    static func radarScan(excluding selfID: String) async -> (pickupDays: Set<String>, matches: [RadarMatch]) {
+    /// Per-day rows for the day-detail Trade List — precomputed in ONE scan so tapping a day is an O(1)
+    /// lookup, not a fresh per-tap scan.
+    struct DayRadar: Sendable {
+        var pickups: [DayTradeRow] = []      // OFF day: peers wanting to trade that day, legal for me
+        var wantToWork: [DayTradeRow] = []   // WORKING day: peers wanting to work it, able to cover my shift
+    }
+
+    /// Everything the radar produces in a single pass over the roster.
+    struct RadarResult: Sendable {
+        var pickupDays: Set<String> = []     // direction A — off-day pickups → the calendar STAR
+        var takerDays: Set<String> = []      // direction B — my working days a want-to-work taker exists for
+        var matches: [RadarMatch] = []       // mutual (both marked)
+        var dayIndex: [String: DayRadar] = [:]
+    }
+
+    /// The radar scan. Builds `MatchContext` once (its CPU derive is already off-main), then runs the whole
+    /// per-peer sweep OFF the main actor (`Task.detached` over Sendable snapshots) so neither the recompute
+    /// nor a day tap ever blocks the UI. One pass yields the stars, the takers, the mutual matches, AND the
+    /// per-day row index. NO finalize/floor/cap/loops.
+    static func radarScan(excluding selfID: String) async -> RadarResult {
         let ctx = await MatchContext.build(selfID: selfID)
         let mySeeking = DayIntentStore.shared.seekingDayIDs
         let myProfile = TradeProfileStore.shared.myProfile()
-        var pickupDays = Set<String>()
-        var matches: [RadarMatch] = []
-        for cand in ctx.universe.sorted(by: { $0.workerID < $1.workerID }) {   // deterministic order
-            if Task.isCancelled { break }
-            await Task.yield()
-            let profile = ctx.profile(for: cand.workerID, name: cand.name)
-            let plan = TradeMatcher.twoWayExploreCore(
-                withWorker: cand.workerID, name: cand.name,
-                windowStart: ctx.start, windowEnd: ctx.end,
-                mySeeking: mySeeking, theirSeeking: profile.seekingDayIDs,
-                myProfile: myProfile, theirProfile: profile, ignoreOwnBlacklist: false,
-                myEntries: ctx.mineEntries, peerEntries: Array((ctx.maps[cand.workerID] ?? [:]).values))
-            let c = radarPeerContribution(plan: plan)
-            pickupDays.formUnion(c.pickupDays)
-            if !c.mutualGive.isEmpty, !c.mutualTake.isEmpty {   // both sides marked → a mutual match
-                matches.append(RadarMatch(peerID: cand.workerID, peerName: cand.name,
-                                          giveDayIDs: c.mutualGive, takeDayIDs: c.mutualTake, kind: .both))
+        return await Task.detached(priority: .userInitiated) {
+            var out = RadarResult()
+            for cand in ctx.universe.sorted(by: { $0.workerID < $1.workerID }) {   // deterministic order
+                let profile = ctx.profile(for: cand.workerID, name: cand.name)
+                let plan = TradeMatcher.twoWayExploreCore(
+                    withWorker: cand.workerID, name: cand.name,
+                    windowStart: ctx.start, windowEnd: ctx.end,
+                    mySeeking: mySeeking, theirSeeking: profile.seekingDayIDs,
+                    myProfile: myProfile, theirProfile: profile, ignoreOwnBlacklist: false,
+                    myEntries: ctx.mineEntries, peerEntries: Array((ctx.maps[cand.workerID] ?? [:]).values))
+                let wtw = profile.wantToWorkDayIDs ?? []
+                // Direction A — the peer MARKED want-to-trade a day I can legally cover → a pickup/star.
+                var myTakeMarks: [String] = []
+                for leg in plan.iTake where leg.wanted {
+                    out.pickupDays.insert(leg.dayID); myTakeMarks.append(leg.dayID)
+                    out.dayIndex[leg.dayID, default: DayRadar()].pickups.append(
+                        DayTradeRow(peerID: cand.workerID, peerName: cand.name, desk: leg.desk,
+                                    startHour: leg.startHour, kind: profile.tradeKindByDay?[leg.dayID] ?? .both,
+                                    note: nil, tier: 0))
+                }
+                // Direction B — the peer MARKED want-to-work one of MY working days AND can cover my shift
+                // (an iGive leg exists) → a taker for that day.
+                for leg in plan.iGive where wtw.contains(leg.dayID) {
+                    out.takerDays.insert(leg.dayID)
+                    out.dayIndex[leg.dayID, default: DayRadar()].wantToWork.append(
+                        DayTradeRow(peerID: cand.workerID, peerName: cand.name, desk: leg.desk,
+                                    startHour: leg.startHour, kind: profile.tradeKindByDay?[leg.dayID] ?? .both,
+                                    note: nil, tier: 0))
+                }
+                // Mutual — I marked a give they'd take AND they marked a day I'd take.
+                let mutualGive = plan.iGive.filter { $0.wanted }.map(\.dayID)
+                if !mutualGive.isEmpty, !myTakeMarks.isEmpty {
+                    out.matches.append(RadarMatch(peerID: cand.workerID, peerName: cand.name,
+                                                  giveDayIDs: mutualGive, takeDayIDs: myTakeMarks, kind: .both))
+                }
             }
-        }
-        return (pickupDays, matches)
+            return out
+        }.value
     }
 
     /// One row in a day's Trade List. Section A rows carry the shift; section B rows are want-to-work peers.
@@ -788,40 +822,8 @@ enum TradeRouter {
         rows.sorted { $0.tier != $1.tier ? $0.tier < $1.tier : $0.peerName < $1.peerName }
     }
 
-    /// The tapped day's Trade List: (A) shifts I can legally pick up that day, tier-ranked; (B) peers who
-    /// marked want-to-work that day. Reuses `MatchContext` + `twoWayExploreCore`; single-day scoped, on-tap.
-    static func dayTradeList(dayID: String, excluding selfID: String) async -> (pickups: [DayTradeRow], wantToWork: [DayTradeRow]) {
-        let ctx = await MatchContext.build(selfID: selfID)
-        let mySeeking = DayIntentStore.shared.seekingDayIDs
-        let myProfile = TradeProfileStore.shared.myProfile()
-        var pickups: [DayTradeRow] = []
-        var wantToWork: [DayTradeRow] = []
-        for cand in ctx.universe {
-            if Task.isCancelled { break }
-            await Task.yield()
-            let profile = ctx.profile(for: cand.workerID, name: cand.name)
-            // Section B: this peer marked want-to-work for the tapped day (they'd take my shift).
-            if profile.wantToWorkDayIDs?.contains(dayID) == true {
-                wantToWork.append(DayTradeRow(peerID: cand.workerID, peerName: cand.name, desk: "", startHour: 0,
-                                              kind: profile.tradeKindByDay?[dayID] ?? .both, note: nil, tier: 0))
-            }
-            // Section A: a shift ACTUALLY ON OFFER that I can legally cover → a pickup for me. Only days the
-            // peer MARKED want-to-trade (`leg.wanted`) count — otherwise every coworker I'm merely eligible to
-            // cover would flood the list. This keeps Section A consistent with the calendar star.
-            let plan = TradeMatcher.twoWayExploreCore(
-                withWorker: cand.workerID, name: cand.name,
-                windowStart: ctx.start, windowEnd: ctx.end,
-                mySeeking: mySeeking, theirSeeking: profile.seekingDayIDs,
-                myProfile: myProfile, theirProfile: profile, ignoreOwnBlacklist: false,
-                myEntries: ctx.mineEntries, peerEntries: Array((ctx.maps[cand.workerID] ?? [:]).values))
-            if let leg = plan.iTake.first(where: { $0.dayID == dayID && $0.wanted }) {
-                pickups.append(DayTradeRow(peerID: cand.workerID, peerName: cand.name, desk: leg.desk,
-                                           startHour: leg.startHour, kind: profile.tradeKindByDay?[dayID] ?? .both,
-                                           note: nil, tier: 0))
-            }
-        }
-        return (sortDayRows(pickups), wantToWork.sorted { $0.peerName < $1.peerName })
-    }
+    // (The per-day Trade List is now served from `MatchStore`'s precomputed `dayIndex` — see `radarScan`'s
+    // RadarResult.dayIndex + `MatchStore.rows(forDay:)` — so tapping a day is an O(1) lookup, not a scan.)
 
     static func intentSolutions(excluding selfID: String, generation: SearchFilter = .fast,
                                 lucky: Bool = false, mutualOnly: Bool = true) async -> [TradePackage] {
