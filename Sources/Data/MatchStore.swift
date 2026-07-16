@@ -106,13 +106,19 @@ final class MatchStore {
         let firstRun = !hasBaselined
         if scope != .local { await TradeProfileStore.shared.refreshOthers() }
         let r = await TradeRouter.radarScan(excluding: me)
+        // GLOBAL FILTER: a day already locked in an accepted trade never surfaces (star/rows/matches/suggested).
+        // Keep, Must-Be-Off, past days, and relief-horizon are already excluded in the matcher; carryover
+        // vacation is resolved to a plain OFF day at ingest.
+        let committed = MessagingStore.shared.committedDayIDs()
+        let pickupDays = r.pickupDays.subtracting(committed)
+        let takerDays  = r.takerDays.subtracting(committed)
         // gained = opportunities NEW since baseline. First-ever run (no baseline) → none, so we never alert
         // on opportunities that predate the feature going live.
-        let gainedPickups = hasBaselined ? Self.newlyGainedDays(old: seenPickupDays, new: r.pickupDays) : []
-        let gainedTakers  = hasBaselined ? Self.newlyGainedDays(old: seenTakerDays,  new: r.takerDays)  : []
-        pickupAvailableDays = r.pickupDays
-        takerAvailableDays  = r.takerDays
-        dayIndex = r.dayIndex
+        let gainedPickups = hasBaselined ? Self.newlyGainedDays(old: seenPickupDays, new: pickupDays) : []
+        let gainedTakers  = hasBaselined ? Self.newlyGainedDays(old: seenTakerDays,  new: takerDays)  : []
+        pickupAvailableDays = pickupDays
+        takerAvailableDays  = takerDays
+        dayIndex = r.dayIndex.filter { !committed.contains($0.key) }
         // A match only surfaces as a passive "Suggested" card / mutual-match alert when it's an ACTIVE account
         // AND has day-for-day content to render. ECB-only matches (no give/take) still ride `r.matches` for
         // auto-send, but never show as an empty "give 0, get 0" card; inactive/inferred profiles never appear.
@@ -121,7 +127,7 @@ final class MatchStore {
         }
         var byDay: [String: [TradeRouter.RadarMatch]] = [:]
         for m in visibleMatches {
-            for d in Set(m.giveDayIDs + m.takeDayIDs) { byDay[d, default: []].append(m) }
+            for d in Set(m.giveDayIDs + m.takeDayIDs) where !committed.contains(d) { byDay[d, default: []].append(m) }
         }
         matchesByDay = byDay
         // v4 SUGGESTED (SSOT): classify each active peer's gives; keep the 3-/2-mutual bucket for manual propose.
@@ -132,9 +138,11 @@ final class MatchStore {
             let gives = Array(Set(m.giveDayIDs + m.ecbGiveDayIDs))
             let kinds = Dictionary(gives.map { ($0, DayIntentStore.shared.tradeKind(forDay: $0)) }, uniquingKeysWith: { a, _ in a })
             let split = TradeRouter.classifyGives(gives, takes: m.takeDayIDs, myWantToWork: wtwNow, kindOfGive: kinds)
-            if !split.suggested.isEmpty {
+            let suggestGives = split.suggested.filter { !committed.contains($0) }   // never suggest a locked day
+            if !suggestGives.isEmpty {
                 sugg.append(SuggestedMatch(peerID: m.peerID, peerName: m.peerName,
-                                           giveDayIDs: split.suggested.sorted(), takeDayIDs: m.takeDayIDs))
+                                           giveDayIDs: suggestGives.sorted(),
+                                           takeDayIDs: m.takeDayIDs.filter { !committed.contains($0) }))
             }
         }
         suggestedMatches = sugg.sorted { $0.peerName < $1.peerName }
@@ -161,9 +169,9 @@ final class MatchStore {
         seenMatchKeys = matchKeys
         UserDefaults.standard.set(Array(matchKeys), forKey: Keys.seenMatch)
         // Record the CURRENT opportunities as the baselines (persisted) so each notifies at most once.
-        seenPickupDays = r.pickupDays; seenTakerDays = r.takerDays
-        UserDefaults.standard.set(Array(r.pickupDays), forKey: Keys.seen)
-        UserDefaults.standard.set(Array(r.takerDays), forKey: Keys.seenTaker)
+        seenPickupDays = pickupDays; seenTakerDays = takerDays
+        UserDefaults.standard.set(Array(pickupDays), forKey: Keys.seen)
+        UserDefaults.standard.set(Array(takerDays), forKey: Keys.seenTaker)
         if !hasBaselined { hasBaselined = true; UserDefaults.standard.set(true, forKey: Keys.baselined) }
         saveCachedIndex()   // persist so the next cold launch shows this instantly
         return (r.pickupDays, r.takerDays)
@@ -189,6 +197,7 @@ final class MatchStore {
         //   • Both → day-for-day WITH an ECB fallback the acceptor can choose, or ECB-only if no reciprocal
         let intents = DayIntentStore.shared
         let wantToWork = intents.wantToWorkDayIDs
+        let committed = MessagingStore.shared.committedDayIDs()   // never auto-send a day locked in a trade
         // v4: ONLY 4-mutual swaps and ECB-only-kind days auto-send (no day choice needed). The classifier is
         // the single source of truth; 3-/2-mutual go to Suggested (computed for the UI, never auto-sent here).
         var dfd: [String: [(peer: TradeRouter.RadarMatch, take: String)]] = [:]   // give → peers with a 4-mutual (give,take)
@@ -197,8 +206,10 @@ final class MatchStore {
             let gives = Array(Set(m.giveDayIDs + m.ecbGiveDayIDs))
             let kindOfGive = Dictionary(gives.map { ($0, intents.tradeKind(forDay: $0)) }, uniquingKeysWith: { a, _ in a })
             let split = TradeRouter.classifyGives(gives, takes: m.takeDayIDs, myWantToWork: wantToWork, kindOfGive: kindOfGive)
-            for pair in split.autoSwaps { dfd[pair.give, default: []].append((peer: m, take: pair.take)) }
-            for give in split.autoECB { ecb[give, default: []].append(m) }
+            for pair in split.autoSwaps where !committed.contains(pair.give) && !committed.contains(pair.take) {
+                dfd[pair.give, default: []].append((peer: m, take: pair.take))
+            }
+            for give in split.autoECB where !committed.contains(give) { ecb[give, default: []].append(m) }
             // split.suggested is intentionally NOT auto-sent — the Suggested lane surfaces it for manual propose.
         }
         let matchable = Set(dfd.keys).union(ecb.keys)
