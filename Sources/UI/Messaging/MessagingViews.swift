@@ -198,6 +198,25 @@ struct MatchLaneRow: View {
     }
 }
 
+/// A Suggested match row — a real trade exists but needs you to pick day(s). Tap → the two-way calendar.
+struct SuggestedRow: View {
+    let match: MatchStore.SuggestedMatch
+    var body: some View {
+        HStack(spacing: 10) {
+            Avatar(name: match.peerName, id: match.peerID, size: 30)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(match.peerName).font(.dsCardTitle)
+                Text("Give \(match.giveDayIDs.count) · they'd trade \(match.takeDayIDs.count) — you pick")
+                    .font(.dsCardMeta).foregroundStyle(.secondary)
+            }
+            Spacer()
+            Image(systemName: "calendar.badge.plus").font(.subheadline).foregroundStyle(AppColor.primary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .dxCard()
+    }
+}
+
 /// A passive match's detail — and where you propose it. Pick the day you give + the day you get; the other
 /// days in the match travel with the request as ALTERNATES the recipient can counter with (§9b).
 struct MatchDetailView: View {
@@ -276,7 +295,8 @@ struct InboxView: View {
     private var ecb = ECBAccountingStore.shared
     private var radar = MatchStore.shared
     @Environment(\.dismiss) private var dismiss
-    @State private var topMode = 1  // 0 Auto-Matches (proposed + suggested) · 1 Requests (manual proposals)
+    @State private var topMode = 1  // 0 AUTO (proposed + suggested) · 1 Requests (manual proposals)
+    @State private var suggestedPick: MatchStore.SuggestedMatch?   // tapped Suggested → two-way calendar
     @State private var filter = 1   // 1 Search · 2 ECB (manual Finder) · 3 Qual Swap — auto-matches live in Auto-Matches
 
     private var myID: String { SettingsManager.shared.username }
@@ -304,7 +324,7 @@ struct InboxView: View {
             VStack(spacing: 0) {
                 // Top split: passive Matches (what the radar found for you) vs Requests (actual proposals).
                 DXSegmented(selection: $topMode, options: [
-                    .init(0, "Auto-Matches", badge: matchCount), .init(1, "Requests", badge: 0),
+                    .init(0, "AUTO", badge: matchCount), .init(1, "Requests", badge: 0),
                 ], color: { v in [0: AppColor.success, 1: AppColor.primary][v] })
                 .padding([.horizontal, .top])
 
@@ -355,10 +375,6 @@ struct InboxView: View {
         }
     }
 
-    /// Unique passive matches the radar found (a match can span several days, so dedupe across the per-day index).
-    private var uniqueMatches: [TradeRouter.RadarMatch] {
-        Array(Set(radar.matchesByDay.values.flatMap { $0 })).sorted { ($0.takeDayIDs.min() ?? "") < ($1.takeDayIDs.min() ?? "") }
-    }
     /// All active auto-match requests (sent or received) — the base for the Proposed section.
     private var allProposed: [TradeRequest] {
         MessagingStore.active(store.requests, archived: store.archivedRequestIDs).filter { $0.isAutoProposed }
@@ -376,15 +392,10 @@ struct InboxView: View {
         MessagingStore.dedupeLoops(allProposed.filter { !($0.isECB && $0.fromID == myID) })
             .sorted { $0.createdAt > $1.createdAt }
     }
-    /// SUGGESTED matches — radar found, no proposal yet (a proposed one lives in Proposed, never both places).
-    private var suggestedMatches: [TradeRouter.RadarMatch] {
-        let proposedKeys: Set<String> = Set(allProposed.flatMap { r -> [String] in
-            let peer = r.fromID == myID ? r.toID : r.fromID
-            return (r.giveDayIDs + r.takeDayIDs).map { "\(peer)|\($0)" }
-        })
-        return uniqueMatches.filter { m in
-            !(m.giveDayIDs + m.takeDayIDs + m.ecbGiveDayIDs).contains { proposedKeys.contains("\(m.peerID)|\($0)") }
-        }
+    /// SUGGESTED (SSOT from MatchStore) — 3-/2-mutual, minus any peer already in Proposed (one-section rule).
+    private var suggestedMatches: [MatchStore.SuggestedMatch] {
+        let proposedPeers = Set(allProposed.map { $0.fromID == myID ? $0.toID : $0.fromID })
+        return radar.suggestedMatches.filter { !proposedPeers.contains($0.peerID) }
     }
     private var matchCount: Int { proposedECBOffers.count + proposedOther.count + suggestedMatches.count }
 
@@ -411,12 +422,19 @@ struct InboxView: View {
                 if !suggested.isEmpty {
                     Section {
                         ForEach(suggested) { m in
-                            NavigationLink { MatchDetailView(match: m) } label: { MatchLaneRow(match: m) }
+                            Button { suggestedPick = m } label: { SuggestedRow(match: m) }
+                                .buttonStyle(.plain)
                         }
-                    } header: { Text("Suggested · radar found — open one to propose") }
+                    } header: { Text("Suggested · you pick the days — opens the two-way calendar") }
                 }
             }
             .refreshable { await radar.recompute() }
+            // Tap a Suggested match → the two-way calendar seeded with the days; propose files under Requests.
+            .sheet(item: $suggestedPick) { m in
+                TwoWaySheet(candidate: PlanCandidate(workerID: m.peerID, name: m.peerName, quals: [],
+                                                     coveredShiftIDs: [], bookendShiftIDs: [], week: []),
+                            initialGive: Set(m.giveDayIDs), initialTake: Set(m.takeDayIDs))
+            }
         }
     }
 
