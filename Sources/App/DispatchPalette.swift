@@ -233,7 +233,7 @@ enum AppLegend {
         ]),
         Section(title: "Markers", items: [
             Item(swatch: .icon("star.fill", AppColor.success), name: "Match available",
-                 meaning: "A shift you can legally pick up (or a mutual match) exists on this day"),
+                 meaning: "Someone wants to drop a shift you can work, or work a shift you want to trade, on this day"),
             Item(swatch: .icon("circle", AppColor.primary), name: "Watching",
                  meaning: "A ring around the star — you're watching this day for new matches"),
             Item(swatch: .icon("circle.fill", AppColor.heat), name: "High-demand date",

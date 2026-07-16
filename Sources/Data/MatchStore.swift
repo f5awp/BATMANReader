@@ -88,8 +88,9 @@ final class MatchStore {
         pickupAvailableDays.union(takerAvailableDays).subtracting(watchedDays).count
     }
 
-    /// A day has a star (a legal pickup for me exists). (Star stays direction-A only, per spec.)
-    func hasStar(_ dayID: String) -> Bool { pickupAvailableDays.contains(dayID) }
+    /// A day has a star — the SAME marker for both directions: an off-day pickup you can work, OR a working
+    /// day someone wants to work (a taker for your shift).
+    func hasStar(_ dayID: String) -> Bool { pickupAvailableDays.contains(dayID) || takerAvailableDays.contains(dayID) }
     func matches(on dayID: String) -> [TradeRouter.RadarMatch] { matchesByDay[dayID] ?? [] }
 
     /// O(1) day-detail rows from the precomputed index, sorted for display.
