@@ -1380,7 +1380,7 @@ struct TwoWaySheet: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(10)
-                    .background(themColor.opacity(0.10), in: RoundedRectangle(cornerRadius: 10))
+                    .background(themColor.opacity(0.10), in: RoundedRectangle(cornerRadius: DS.cardRadius))
                 }
                 scheduleGlance(geo.size)
                 Toggle(isOn: $ignoreMyBlacklist.animation()) {
@@ -1487,8 +1487,8 @@ struct TwoWaySheet: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(isSelected ? AppColor.primary.opacity(0.14)
                                : (leg.wanted ? seekingGold.opacity(0.12) : Color(.secondarySystemBackground)))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8)
+        .clipShape(RoundedRectangle(cornerRadius: DS.rowRadius))
+        .overlay(RoundedRectangle(cornerRadius: DS.rowRadius)
             .stroke(isSelected ? AppColor.primary : (leg.wanted ? seekingGold : .clear), lineWidth: 1.5))
     }
 
@@ -2276,7 +2276,7 @@ struct ECBAccountingView: View {
                     midStat("Owed to you", outstandingOwed, AppColor.success)
                 }
                 .padding(.horizontal, 12).padding(.vertical, 10)
-                .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
+                .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: DS.cardRadius))
             }
             if pendingCount > 0 {
                 Text("^[\(pendingCount) line](inflect: true) still awaiting confirmation — counts once confirmed and cleared.")
@@ -2329,7 +2329,7 @@ struct ECBAccountingView: View {
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(tint)
                 .frame(width: 26, height: 26)
-                .background(tint.opacity(0.15), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .background(tint.opacity(0.15), in: RoundedRectangle(cornerRadius: DS.controlRadius, style: .continuous))
             VStack(alignment: .leading, spacing: 1) {
                 Text(e.isShared ? "Trade · \(e.counterpartyName(myID: myID) ?? "dispatcher")" : e.category.label)
                     .font(.subheadline.weight(.semibold)).lineLimit(1)

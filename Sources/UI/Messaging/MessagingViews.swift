@@ -1032,15 +1032,23 @@ struct ThreadView: View {
                     // Match Radar: a Both offer lets you accept the day-for-day swap ABOVE, or take it for ECB
                     // points instead (no swap). One card, your choice.
                     if request.offersChoice {
-                        Divider()
-                        Text("…or take it for ECB instead").font(.subheadline.weight(.semibold))
-                        if let iou = ecbIOUNote { Label(iou, systemImage: "clock.badge.checkmark").font(.caption).foregroundStyle(AppColor.pending) }
-                        Button { Task { await store.acceptECB(request, days: request.giveDayIDs) } } label: {
-                            Label("Accept for \(ecbText(request.ecbAmount ?? 0)) ECB (no swap)", systemImage: "star.circle.fill")
-                                .frame(maxWidth: .infinity)
+                        VStack(alignment: .leading, spacing: 8) {
+                            Label("…or take it for ECB instead", systemImage: "star.circle.fill")
+                                .font(.subheadline.weight(.semibold)).foregroundStyle(AppColor.pending)
+                            if let iou = ecbIOUNote {
+                                Label(iou, systemImage: "clock.badge.checkmark").font(.caption).foregroundStyle(AppColor.pending)
+                            }
+                            Button { Task { await store.acceptECB(request, days: request.giveDayIDs) } } label: {
+                                Label("Accept for \(ecbText(request.ecbAmount ?? 0)) ECB (no swap)", systemImage: "checkmark.circle.fill")
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.borderedProminent).tint(AppColor.pending)
+                            .disabled(store.committedConflictDay(request) != nil)
                         }
-                        .buttonStyle(.bordered).tint(AppColor.pending)
-                        .disabled(store.committedConflictDay(request) != nil)
+                        .padding(DS.m)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(AppColor.pending.opacity(DS.pillFill), in: RoundedRectangle(cornerRadius: DS.cardRadius, style: .continuous))
+                        .padding(.top, DS.s)
                     }
                 }
             } else if !isIncoming && status == .pending {

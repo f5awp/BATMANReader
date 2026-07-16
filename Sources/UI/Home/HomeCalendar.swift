@@ -890,10 +890,11 @@ struct DayIntentEditor: View {
                 // Shown for a working day you're TRADING AWAY or an off day you WANT TO WORK.
                 if (!target.isOff && working == .dontWantToWork) || (target.isOff && off == .wantToWork) {
                     Section {
-                        Picker("Trade as", selection: $tradeKind) {
-                            Text("Either").tag(TradeKind.both)
-                            Text("Day-for-day").tag(TradeKind.day)
-                            Text("ECB points").tag(TradeKind.ecb)
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Trade as").font(.caption).foregroundStyle(.secondary)
+                            DXSegmented(selection: $tradeKind, options: [
+                                .init(TradeKind.both, "Either"), .init(TradeKind.day, "Day-for-day"), .init(TradeKind.ecb, "ECB"),
+                            ])
                         }
                         // ECB terms — shown when this day can trade for points (ECB or Either).
                         if tradeKind != .day {
