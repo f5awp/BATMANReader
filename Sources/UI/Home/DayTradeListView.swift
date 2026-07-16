@@ -159,6 +159,10 @@ private struct DayTradeRowView: View {
                     Text("\(Self.timeLabel(row.startHour)) · desk \(row.desk)")
                         .font(.dsCardMeta).foregroundStyle(.secondary)
                 }
+                if let note = row.note, !note.isEmpty {
+                    Label(note, systemImage: "quote.bubble")
+                        .font(.dsCardMeta).foregroundStyle(.secondary).lineLimit(2)
+                }
             }
             Spacer()
             KindChip(kind: row.kind)

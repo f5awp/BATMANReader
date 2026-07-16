@@ -832,7 +832,7 @@ enum TradeRouter {
                 out.dayIndex[leg.dayID, default: DayRadar()].pickups.append(
                     DayTradeRow(peerID: cand.workerID, peerName: cand.name, desk: leg.desk,
                                 startHour: leg.startHour, kind: profile.tradeKindByDay?[leg.dayID] ?? .both,
-                                note: nil, tier: 0))
+                                note: profile.dayNotes?[leg.dayID], tier: 0))
             }
             // A "taker" exists for any give-eligible working day (day-for-day OR ECB-capable) the peer wants
             // to work — union so an ECB-only day (absent from iGive) still gets its taker star + detail row.
@@ -842,7 +842,7 @@ enum TradeRouter {
                 out.dayIndex[leg.dayID, default: DayRadar()].wantToWork.append(
                     DayTradeRow(peerID: cand.workerID, peerName: cand.name, desk: leg.desk,
                                 startHour: leg.startHour, kind: myProfile.tradeKindByDay?[leg.dayID] ?? .both,
-                                note: nil, tier: 0))
+                                note: profile.dayNotes?[leg.dayID], tier: 0))
             }
             let mutualGive = plan.iGive.filter { $0.wanted }.map(\.dayID)
             // ECB one-way: my want-to-trade days (kind ECB/Both) this peer would cover for points — no

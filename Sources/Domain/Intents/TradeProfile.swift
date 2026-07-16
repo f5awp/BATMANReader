@@ -117,6 +117,10 @@ struct TradeProfile: Sendable, Hashable, Codable, Identifiable {
     // for want-to-work / day-for-day returns. Published so peers' match resolution respects both sides. Set post-init.
     var tradeKindByDay: [String: TradeKind]? = nil
     var acceptScopeByDay: [String: AcceptScope]? = nil
+    // Match Radar: per-day NOTE (message only) for a want-to-trade / want-to-work day, so a matcher can see
+    // why the other person is trading. Only NON-private notes are published. Set post-init; optional ⇒ old
+    // records decode.
+    var dayNotes: [String: String]? = nil
     // Cross-device-only PREFERENCES (never used by peers' matchers) — carried on the profile purely so a
     // user's own devices converge. Set post-init; all optional so old records decode.
     var opennessOverrides: [OpennessOverride]? = nil   // date-range openness overrides
@@ -425,6 +429,10 @@ final class TradeProfileStore {
         p.tradeKindByDay = kinds.isEmpty ? nil : kinds
         let scopes = DayIntentStore.shared.acceptScopeByDay
         p.acceptScopeByDay = scopes.isEmpty ? nil : scopes
+        // Match Radar: publish NON-private day-notes (message only) so a matcher sees why you're trading.
+        let noteMsgs = DayIntentStore.shared.notes.filter { !$0.value.isPrivate && !$0.value.message.isEmpty }
+            .mapValues { $0.message }
+        p.dayNotes = noteMsgs.isEmpty ? nil : noteMsgs
         // Cross-device-only prefs (carried so the user's own devices converge; peers ignore these).
         p.opennessOverrides    = s.opennessOverrides.isEmpty ? nil : s.opennessOverrides
         p.notificationLeadHours = s.notificationLeadHours

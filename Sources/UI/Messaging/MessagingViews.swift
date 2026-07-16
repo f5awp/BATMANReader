@@ -739,6 +739,11 @@ struct ThreadView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Label(cardKind, systemImage: cardIcon).font(.subheadline.bold())
+                if let m = methodBadge {
+                    Text(m.0).font(.dsBadge).padding(.horizontal, 8).padding(.vertical, 3)
+                        .background(m.1.opacity(DS.pillFill), in: RoundedRectangle(cornerRadius: DS.pillRadius, style: .continuous))
+                        .foregroundStyle(m.1)
+                }
                 Spacer()
                 StatusBadge(status: status)
             }
@@ -760,7 +765,32 @@ struct ThreadView: View {
                 Label("\(ecbText(ecb)) ECB offered", systemImage: "star.circle.fill")
                     .font(.subheadline.weight(.semibold)).foregroundStyle(AppColor.pending)
             }
+            // Each person's note for the day being traded, so the matcher sees WHY (their non-private note).
+            ForEach(dayNoteLines, id: \.day) { line in
+                Label("\(DayFmt.nice(line.day)) — \(line.note)", systemImage: "quote.bubble")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             if !request.note.isEmpty { Text(request.note).font(.subheadline) }
+        }
+    }
+    /// The trade's method indicator: Day, ECB, or Day + ECB (a Both offer shows both). nil for a multi-way loop.
+    private var methodBadge: (String, Color)? {
+        if request.chain != nil { return nil }
+        if request.offersChoice { return ("Day + ECB", AppColor.special) }
+        if request.isECB || request.offerKind == .ecb { return ("ECB", AppColor.pending) }
+        return ("Day", AppColor.primary)
+    }
+    /// The note each party wrote for a traded day — mine from my local store, the peer's from their published
+    /// (non-private) profile notes. Give-days are the sender's; take-days are the recipient's.
+    private var dayNoteLines: [(day: String, note: String)] {
+        let days = (request.giveDayIDs + request.takeDayIDs).sorted()
+        return days.compactMap { d in
+            let ownerID = request.giveDayIDs.contains(d) ? request.fromID : request.toID
+            let msg = ownerID == myID
+                ? DayIntentStore.shared.note(forDay: d)?.message
+                : TradeProfileStore.shared.profile(forWorker: ownerID)?.dayNotes?[d]
+            guard let m = msg, !m.isEmpty else { return nil }
+            return (d, m)
         }
     }
     private var cardKind: String {
