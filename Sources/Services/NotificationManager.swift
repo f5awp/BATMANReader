@@ -236,7 +236,7 @@ final class NotificationManager {
         for item in items {
             let content = UNMutableNotificationContent()
             content.title = AppGuide.appName
-            content.body = "You have a match on \(item.dayLabel)!"
+            content.body = "Match Found on \(item.dayLabel)"
             content.sound = .default
             content.userInfo = [Self.radarDayKey: item.dayID]
             let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
