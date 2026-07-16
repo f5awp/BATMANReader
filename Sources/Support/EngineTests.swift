@@ -765,6 +765,17 @@ enum TradeEngineTests {
                   "MATCH-STANDING: a paused offer never matches")
         }
 
+        // MARK: TRADE-DEDUPE — the duplicate key is direction-agnostic (A→B == B→A for the same days).
+        do {
+            let ab = MessagingStore.tradeKey("A", "B", dayIDs: ["2026-08-01", "2026-08-10"])
+            let ba = MessagingStore.tradeKey("B", "A", dayIDs: ["2026-08-10", "2026-08-01"])
+            check(ab == ba, "TRADE-DEDUPE: A→B and B→A over the same days share one key (reciprocal caught)")
+            check(ab != MessagingStore.tradeKey("A", "C", dayIDs: ["2026-08-01", "2026-08-10"]),
+                  "TRADE-DEDUPE: a different counterparty is a different key")
+            check(ab != MessagingStore.tradeKey("A", "B", dayIDs: ["2026-08-02"]),
+                  "TRADE-DEDUPE: different days are a different key")
+        }
+
         // MARK: CARRYOVER-SNAPSHOT — carryover-vacation days survive the intent snapshot round-trip;
         // an older snapshot without the key still decodes (back-compat). (#4 Stage 1)
         do {

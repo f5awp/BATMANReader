@@ -207,6 +207,23 @@ final class NotificationManager {
     static let radarDayKey = "batman.radar.dayID"
     static let radarIDPrefix = "batman.radar."
 
+    /// A newly-formed mutual match — fired on BOTH parties' devices (each detects it independently), so both
+    /// sides learn of the match, watched or not. Deep-links to the first involved day's Trade List.
+    func notifyMutualMatch(_ items: [(peer: String, dayID: String, dayLabel: String)]) async {
+        guard !items.isEmpty else { return }
+        guard await center.notificationSettings().authorizationStatus == .authorized else { return }
+        for item in items {
+            let content = UNMutableNotificationContent()
+            content.title = "It's a match!"
+            content.body = "You and \(item.peer) both want to trade \(item.dayLabel)."
+            content.sound = .default
+            content.userInfo = [Self.radarDayKey: item.dayID]
+            let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
+            try? await center.add(UNNotificationRequest(identifier: Self.radarIDPrefix + "mutual." + item.peer + "." + item.dayID,
+                                                        content: content, trigger: trigger))
+        }
+    }
+
     /// One newly-fillable standing offer.
     struct StandingAlert: Sendable { let getDayID: String; let giveDayID: String; let peer: String }
 

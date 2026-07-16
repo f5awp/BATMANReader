@@ -570,6 +570,10 @@ final class MessagingStore {
     /// observes this to show a "can't message" alert, then clears it.
     var blockedRecipient: String? = nil
 
+    /// Set when a proposal is blocked because an equivalent trade already exists (either direction). The UI
+    /// observes this to show a "duplicate — check your inbox" alert, then clears it.
+    var duplicateNotice: String? = nil
+
     /// When the user last OPENED the broadcast channel. Drives the UNREAD badge so it
     /// clears on read — the old badge showed total post count and never cleared (A2/S-SYNC-1).
     private static let lastSeenKey = "batman.msg.broadcastsLastSeen"
@@ -922,6 +926,16 @@ final class MessagingStore {
             return
         }
         let isECB = ecbValue != nil && take.isEmpty
+        // Duplicate guard: for a fresh two-way proposal (not a counter/loop leg, not ECB), block it if an
+        // active trade for the SAME days between the same two people already exists in EITHER direction —
+        // so when both sides of a match try to propose, the second is caught instead of creating a twin.
+        if loopID == nil, !isECB, !(take.isEmpty && give.isEmpty),
+           let dup = existingActiveTrade(with: toID, dayIDs: Set(take + give)) {
+            duplicateNotice = dup.fromID == myID
+                ? "You already have a pending trade with \(toName) for these days — check your inbox."
+                : "\(toName) already proposed this trade — reply to it in your inbox instead of sending a duplicate."
+            return
+        }
         let perfect = MessagingStore.requestPerfectMatch(
             give: give, take: take, isECB: isECB,
             recipientSeeking: recipient?.seekingDayIDs ?? [],
@@ -1135,6 +1149,23 @@ final class MessagingStore {
     /// Plain chat messages don't change accept/decline state.
     func status(of request: TradeRequest) -> TradeRequestStatus {
         responses(for: request.id).last { $0.statusValue != .message }?.statusValue ?? .pending
+    }
+
+    /// PURE, testable: a DIRECTION-AGNOSTIC key for "the same trade" — the unordered participant pair + the
+    /// set of days in play. A→B give G/take T and B→A give T/take G collapse to the same key.
+    static func tradeKey(_ a: String, _ b: String, dayIDs: Set<String>) -> String {
+        [a, b].sorted().joined(separator: "~") + "|" + dayIDs.sorted().joined(separator: ",")
+    }
+
+    /// An ACTIVE (pending/countered), non-ECB trade for `dayIDs` between me and `peerID`, either direction.
+    func existingActiveTrade(with peerID: String, dayIDs: Set<String>) -> TradeRequest? {
+        let key = Self.tradeKey(myID, peerID, dayIDs: dayIDs)
+        return Self.active(requests, archived: archivedRequestIDs).first { r in
+            guard !r.isECB else { return false }
+            let st = status(of: r)
+            guard st == .pending || st == .countered else { return false }
+            return Self.tradeKey(r.fromID, r.toID, dayIDs: Set(r.giveDayIDs + r.takeDayIDs)) == key
+        }
     }
 
     /// Post a free-form chat message on a request thread (either party, anytime).

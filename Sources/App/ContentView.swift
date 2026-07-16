@@ -128,6 +128,13 @@ struct ContentView: View {
         } message: {
             Text("\(messaging.blockedRecipient ?? "This dispatcher") doesn't have an active \(AppGuide.appName) profile, so they can't receive trade requests or messages yet. They still show in your matches — reach out another way, or wait until they set up trading in the app.")
         }
+        .alert("Trade already in progress", isPresented: Binding(
+            get: { messaging.duplicateNotice != nil },
+            set: { if !$0 { messaging.duplicateNotice = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(messaging.duplicateNotice ?? "")
+        }
         .sheet(isPresented: $showChangelog) {
             WhatsNewView {
                 settings.lastSeenChangelogBuild = AppInfo.build   // mark this build's notes seen

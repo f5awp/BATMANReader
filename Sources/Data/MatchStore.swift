@@ -29,6 +29,9 @@ final class MatchStore {
     /// NOT). A day not in here is "newly gained" → notifies once, then joins the baseline.
     private(set) var seenPickupDays: Set<String> = []
     private(set) var seenTakerDays: Set<String> = []
+    /// Baseline of mutual-match keys already alerted (a match key = peerID + its sorted days). A mutual match
+    /// alerts BOTH parties (each device detects it), regardless of watch.
+    private var seenMatchKeys: Set<String> = []
     private(set) var lastRefreshed: Date?
     /// True once a computed. The FIRST-EVER recompute records current opportunities silently (no spam for
     /// pre-existing ones); only later recomputes notify. Also gates the day-detail cold-start compute.
@@ -41,6 +44,7 @@ final class MatchStore {
         watchedDays    = Set(UserDefaults.standard.stringArray(forKey: Keys.watched) ?? [])
         seenPickupDays = Set(UserDefaults.standard.stringArray(forKey: Keys.seen) ?? [])
         seenTakerDays  = Set(UserDefaults.standard.stringArray(forKey: Keys.seenTaker) ?? [])
+        seenMatchKeys  = Set(UserDefaults.standard.stringArray(forKey: Keys.seenMatch) ?? [])
         hasBaselined   = UserDefaults.standard.bool(forKey: Keys.baselined)
         radarStateUpdatedAt = (UserDefaults.standard.object(forKey: Keys.stateUpdatedAt) as? Date) ?? .distantPast
     }
@@ -74,6 +78,22 @@ final class MatchStore {
             await NotificationManager.shared.notifyRadar(gainedPickups: gainedPickups, gainedTakers: gainedTakers,
                                                          watched: watchedDays)
         }
+        // Mutual matches alert BOTH parties (each device detects it), watched or not — once per match.
+        let df = DateFormatter(); df.dateFormat = "yyyy-MM-dd"
+        let out = DateFormatter(); out.dateFormat = "EEE, MMM d"
+        var matchKeys = Set<String>(); var newMutual: [(peer: String, dayID: String, dayLabel: String)] = []
+        for m in r.matches {
+            let days = (m.giveDayIDs + m.takeDayIDs).sorted()
+            let key = m.peerID + "|" + days.joined(separator: ",")
+            matchKeys.insert(key)
+            if hasBaselined, !seenMatchKeys.contains(key), let first = days.first {
+                let label = df.date(from: first).map { out.string(from: $0) } ?? first
+                newMutual.append((peer: m.peerName, dayID: first, dayLabel: label))
+            }
+        }
+        if !newMutual.isEmpty { await NotificationManager.shared.notifyMutualMatch(newMutual) }
+        seenMatchKeys = matchKeys
+        UserDefaults.standard.set(Array(matchKeys), forKey: Keys.seenMatch)
         // Record the CURRENT opportunities as the baselines (persisted) so each notifies at most once.
         seenPickupDays = r.pickupDays; seenTakerDays = r.takerDays
         UserDefaults.standard.set(Array(r.pickupDays), forKey: Keys.seen)
@@ -140,6 +160,7 @@ final class MatchStore {
         static let watched        = "batman.radar.watchedDays"
         static let seen           = "batman.radar.seenPickupDays"
         static let seenTaker      = "batman.radar.seenTakerDays"
+        static let seenMatch      = "batman.radar.seenMatchKeys"
         static let baselined      = "batman.radar.baselined"
         static let stateUpdatedAt = "batman.radar.stateUpdatedAt"
     }
