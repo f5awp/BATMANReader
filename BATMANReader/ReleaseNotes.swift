@@ -35,6 +35,25 @@ enum ReleaseNotes {
     static let all: [ReleaseNote] = [
 
         ReleaseNote(
+            version: "v2.4",
+            headline: "Match Radar, rebuilt around one simple idea — the app only auto-sends a trade when there's nothing for you to decide, and hands you the rest. Clearer AUTO vs Suggested, trade method now gates matches, ECB posts to your ledger on receipt, and one Find Trades screen for everything else.",
+            bullets: [
+                ReleaseBullet(icon: "⟳", color: violet, title: "AUTO — only sure things",
+                    body: "The Trade Inbox's AUTO tab now auto-sends a trade ONLY when there's no choice to make: a swap you and a coworker BOTH fully want, or an ECB where you shed a shift for points. Everything else no longer goes out on its own."),
+                ReleaseBullet(icon: "☰", color: blue, title: "Suggested — you pick the days",
+                    body: "Trades the radar found that need a decision now sit under Suggested. Tap one to open both calendars, pick the day(s), and send — it files with your other requests, not as an auto-match."),
+                ReleaseBullet(icon: "⇄", color: teal, title: "Method now filters matches",
+                    body: "Marking a day Day-for-day, ECB, or Either now decides who you match with. If you want a straight swap and the other person only wants ECB, that's no longer a match — the two have to line up."),
+                ReleaseBullet(icon: "✦", color: gold, title: "ECB posts to your ledger",
+                    body: "Accepting an ECB trade records it in ECB Accounting automatically — added to the taker, taken from the giver — the moment it's marked received. Offer it now or set a later date and it lands as an IOU."),
+                ReleaseBullet(icon: "»", color: green, title: "One Find Trades screen",
+                    body: "The old Intents and Trade Solutions tabs are now one Find Trades screen: search a date range, or switch to build from your marked days. Multi-person and qual-swap solutions live here."),
+                ReleaseBullet(icon: "▤", color: brand, title: "Clearer trade cards",
+                    body: "A trade card shows each person's note for the day, a Day / ECB / Day + ECB badge, and — when several coworkers respond to one offer — lets you choose who you actually trade with."),
+            ]
+        ),
+
+        ReleaseNote(
             version: "v2.3 (Build 2)",
             headline: "Meet Trade Radar — the app now checks the whole group's shifts and intents for you and stars any day a trade is possible, so matches come to you instead of searching — plus auto-matching that sends your trades for you, alerts to both sides, qual swaps fixed for every qualification, and a refreshed Trade Inbox and history.",
             bullets: [

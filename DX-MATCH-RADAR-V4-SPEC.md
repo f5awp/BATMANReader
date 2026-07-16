@@ -107,15 +107,42 @@ qual-swap bridges**) that AUTO's pairwise flow doesn't cover.
 
 ---
 
-## Residual micro-decisions (need a call before/at build)
+## Resolved decisions
 
-1. **AUTO "3-mutual (giver)"** implies proposing a return day the peer is *working but did NOT
-   mark Want-to-Trade* (¬M3). That means AUTO would ask someone to give up a day they never
-   offered. Options: **(a)** restrict AUTO to offered days only → the practical AUTO tiers are
-   4-mutual, 3-taker, 2/ECB (recommended, least aggressive); **(b)** allow AUTO to request
-   unmarked return days → enables true 3-giver but auto-asks for un-offered shifts.
-2. **AUTO scope** = pairwise (one giver ↔ one taker, ≤3 bidders). **Multi-person loops / N-way**
-   stay in *Find Trades*, not AUTO. (Recommended — keeps AUTO simple and auto-sendable.)
-3. **Taker side when giver's toggle is off:** the giver sees SEND. On the taker's side the same
-   mutual match shows as "matched — waiting on <giver>," with an optional **Send pickup** so it
-   never dead-ends if the giver never sends. (Recommended default; dedup covers the rare double.)
+1. **3-mutual never auto-sends.** AUTO restricts to offered days only, so the practical tiers
+   are 4-mutual → (Suggested: 3-taker → 2) with ECB alongside. 3-/2-mutual open the calendar for
+   a manual pick — no auto-asking for un-offered shifts.
+2. **AUTO scope = pairwise** (one giver ↔ ≤3 bidders). Multi-person loops / N-way / qual-swaps
+   live in *Find Trades*, not AUTO.
+3. **Taker side when the giver's toggle is off:** giver sees SEND; taker sees "matched — waiting
+   on \<giver\>" with an optional Send-pickup so it never dead-ends (mirror-dedup covers doubles).
+
+---
+
+## Code map — where v4 actually lives (as built)
+
+**Engine (pure / testable)**
+- `Sources/Domain/TradeEngine/TradeRouter.swift`
+  - `classifyGives(_:takes:myWantToWork:kindOfGive:)` → `MatchSplit {autoSwaps, autoECB, suggested}` — the AUTO/Suggested SSOT (G1).
+  - `radarScan` / `scanChunk` — per-peer sweep; builds `RadarMatch` (+ `ecbGiveDayIDs`) and the per-day `dayIndex`. Rows are BROAD (every eligible peer, `tier 1`=marked / `tier 0`=eligible); the star (`pickupDays`/`takerDays`) and match legs stay marked-only.
+- `Sources/Domain/TradeEngine/TradeMatcher.swift`
+  - `twoWayExploreCore` → `iGive` (day-for-day), `iGiveECB` (ECB-capable), `iTake`. Two-sided kind gate via `TradeKind.resolve`; excludes Keep / Must-Be-Off / relief / past (window starts today).
+
+**State / routing**
+- `Sources/Data/MatchStore.swift`
+  - `recompute` — global committed-day filter (same-day-lock); builds `matchesByDay`, `dayIndex`, `suggestedMatches` (SSOT); fires radar + mutual-match notifications (active-account, day-content only).
+  - `autoMatchFromMatches` — auto-sends ONLY 4-mutual swaps + ECB-only-kind days (via `classifyGives`); single-initiator (giver); toggle-off baselines; skips committed days.
+  - `suggestedMatches: [SuggestedMatch]` — 3/2-mutual, per active peer.
+- `Sources/Data/DayIntentStore.swift` — per-day `tradeKindByDay`, `acceptScopeByDay`, `ecbTermsByDay` (amount + IOU date), notes.
+- `Sources/Data/Messaging.swift` — `TradeRequest.offerKind` / `ecbAvailableDate` / `isAutoProposed`; `sendRequest`; `finalizeBroadcastPick` + `broadcastBids` (giver-picks); `reconcileMirrorDuplicates`; `committedDayIDs`; `TradeResponse.acceptedKind`.
+- `Sources/Data/TradeHistoryStore.swift` — `ECBAccountingStore.autoInsertAcceptedTrade` / `markReceived` (double-entry on receipt).
+
+**Surfaces**
+- `Sources/UI/Messaging/MessagingViews.swift` — Inbox: **AUTO** tab (Proposed = auto-sent + ECB folders + incoming; Suggested = `radar.suggestedMatches` → two-way calendar → Requests) and **Requests** tab (Search / manual ECB / Qual Swap). Package card = notes + Day/ECB/Day+ECB badge; giver-picks section.
+- `Sources/UI/Home/DayTradeListView.swift` — day detail (broad; marked→who-could / open→who-marked, tier-sorted).
+- `Sources/UI/Home/HomeCalendar.swift` — Info tab: kind pills + ECB amount/IOU + accept-scope; Trade Settings: `ecbDefault`.
+- `Sources/UI/Trades/TradesView.swift` — **Find Trades** (Search-a-range default / From-my-marks) + ECB; multi-person/qual-swap solutions here.
+
+**Tests** — `Sources/Support/EngineTests.swift`: `MATCH-SPLIT`, `MATCH-KIND-2SIDED`, `ECB-MODEL`, `ECB-LEDGER`, `AUTO-MATCH-TAB`, `INBOX-DEDUPE` (broadcast collapse).
+
+**CloudKit** — all v4 fields ride existing JSON payload blobs (TradeRequest, TradeProfile.dayNotes, PrivateState intent snapshot). **No schema deploy required.**

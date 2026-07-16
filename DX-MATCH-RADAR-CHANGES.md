@@ -76,3 +76,29 @@ New value types (both `Codable`, in `ShiftAvailability.swift`):
 5. Recipient device: incoming card shows the picked days **plus** "Or counter with an alternate"; countering
    with an alt sends back correctly; both cards show the "Alternates: …" line.
 6. Notifications: after a new match on a watched day, an alert fires (needs notification permission granted).
+
+---
+
+## v4 (2026-07) — AUTO / Suggested / Find Trades rebuild
+
+Match Radar reorganized around the intent ladder (see `DX-MATCH-RADAR-V4-SPEC.md`). Shipped:
+
+- **ECB support end-to-end** — per-day trade kind (Day/ECB/Both), `ecbDefault` setting, per-day
+  ECB amount + IOU pay date; matcher `iGiveECB`; unified proposal card (acceptor picks Day/ECB);
+  accept routes to ECB Accounting (immediate or IOU-dated); ledger double-entry auto-clears on
+  receipt; two-sided kind gate (`TradeKind.resolve`) — Day vs ECB no longer match.
+- **v4 classifier** (`TradeRouter.classifyGives`) — SSOT splitting each give into AUTO
+  (4-mutual swap / ECB-only) vs Suggested (3-/2-mutual). One bucket per candidate.
+- **AUTO** — auto-sends only zero-decision trades; single-initiator (giver); giver picks among
+  ≤3 bidders (`finalizeBroadcastPick`); SEND when toggle off. Renamed from "Proposed".
+- **Suggested** — 3/2-mutual (`MatchStore.suggestedMatches`); tap → two-way calendar → files
+  under Requests, not AUTO.
+- **Day detail** — broad discovery, tier-aware (marked → who-could / open → who-marked).
+- **Global filter** — Keep / Must-Be-Off / past / same-day-locked never surface; carryover
+  vacation = OFF. Day-notes publish (non-private) and show on cards + rows.
+- **Find Trades** — merged Intents + Trade Solutions (search-a-range default / from-my-marks);
+  multi-person + qual-swap solutions live here.
+- **Fixes** — mirror-duplicate reconcile; ECB match flood (require peer want-to-work); empty
+  "give 0/get 0" Suggested cards excluded (active-account + day-content).
+
+No CloudKit schema deploy — all fields ride existing JSON payload blobs.
