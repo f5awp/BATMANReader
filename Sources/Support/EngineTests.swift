@@ -696,6 +696,17 @@ enum TradeEngineTests {
             check(empty.pickupDays.isEmpty && empty.mutualGive.isEmpty, "MATCH-STAR: unmarked plan → no star / no mutual")
         }
 
+        // MARK: MATCH-DAYLIST — a day's pickup rows sort by tier (intent→bookend→split), then name. (Stage 4)
+        do {
+            func row(_ id: String, tier: Int) -> TradeRouter.DayTradeRow {
+                TradeRouter.DayTradeRow(peerID: id, peerName: id, desk: "30", startHour: 5, kind: .both, note: nil, tier: tier)
+            }
+            let sorted = TradeRouter.sortDayRows([row("split", tier: 2), row("intent", tier: 0), row("book", tier: 1)])
+            check(sorted.map(\.peerID) == ["intent", "book", "split"], "MATCH-DAYLIST: tier order intent→bookend→split")
+            let tie = TradeRouter.sortDayRows([row("Zed", tier: 1), row("Abe", tier: 1)])
+            check(tie.map(\.peerID) == ["Abe", "Zed"], "MATCH-DAYLIST: same tier → name tiebreak")
+        }
+
         // MARK: CARRYOVER-SNAPSHOT — carryover-vacation days survive the intent snapshot round-trip;
         // an older snapshot without the key still decodes (back-compat). (#4 Stage 1)
         do {

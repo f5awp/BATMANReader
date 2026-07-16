@@ -770,6 +770,57 @@ enum TradeRouter {
         return (pickupDays, matches)
     }
 
+    /// One row in a day's Trade List. Section A rows carry the shift; section B rows are want-to-work peers.
+    struct DayTradeRow: Sendable, Hashable, Identifiable {
+        let peerID: String
+        let peerName: String
+        let desk: String        // section A: the shift I'd pick up; section B: "" (they're off, want to work)
+        let startHour: Int
+        let kind: TradeKind
+        let note: String?
+        let tier: Int           // 0 = intent-marked · 1 = bookend · 2 = split (the normal ranking tiers)
+        var id: String { peerID }
+    }
+
+    /// PURE, testable: tier-then-name ordering for a single day's pickup rows (all rows share the date,
+    /// so recency isn't a factor — tier is the user's normal intent→bookend→split order; name breaks ties).
+    nonisolated static func sortDayRows(_ rows: [DayTradeRow]) -> [DayTradeRow] {
+        rows.sorted { $0.tier != $1.tier ? $0.tier < $1.tier : $0.peerName < $1.peerName }
+    }
+
+    /// The tapped day's Trade List: (A) shifts I can legally pick up that day, tier-ranked; (B) peers who
+    /// marked want-to-work that day. Reuses `MatchContext` + `twoWayExploreCore`; single-day scoped, on-tap.
+    static func dayTradeList(dayID: String, excluding selfID: String) async -> (pickups: [DayTradeRow], wantToWork: [DayTradeRow]) {
+        let ctx = await MatchContext.build(selfID: selfID)
+        let mySeeking = DayIntentStore.shared.seekingDayIDs
+        let myProfile = TradeProfileStore.shared.myProfile()
+        var pickups: [DayTradeRow] = []
+        var wantToWork: [DayTradeRow] = []
+        for cand in ctx.universe {
+            if Task.isCancelled { break }
+            await Task.yield()
+            let profile = ctx.profile(for: cand.workerID, name: cand.name)
+            // Section B: this peer marked want-to-work for the tapped day (they'd take my shift).
+            if profile.wantToWorkDayIDs?.contains(dayID) == true {
+                wantToWork.append(DayTradeRow(peerID: cand.workerID, peerName: cand.name, desk: "", startHour: 0,
+                                              kind: profile.tradeKindByDay?[dayID] ?? .both, note: nil, tier: 0))
+            }
+            // Section A: their working shift on the tapped day that I can legally cover → a pickup for me.
+            let plan = TradeMatcher.twoWayExploreCore(
+                withWorker: cand.workerID, name: cand.name,
+                windowStart: ctx.start, windowEnd: ctx.end,
+                mySeeking: mySeeking, theirSeeking: profile.seekingDayIDs,
+                myProfile: myProfile, theirProfile: profile, ignoreOwnBlacklist: false,
+                myEntries: ctx.mineEntries, peerEntries: Array((ctx.maps[cand.workerID] ?? [:]).values))
+            if let leg = plan.iTake.first(where: { $0.dayID == dayID }) {
+                pickups.append(DayTradeRow(peerID: cand.workerID, peerName: cand.name, desk: leg.desk,
+                                           startHour: leg.startHour, kind: profile.tradeKindByDay?[dayID] ?? .both,
+                                           note: nil, tier: leg.wanted ? 0 : (leg.bookend ? 1 : 2)))
+            }
+        }
+        return (sortDayRows(pickups), wantToWork.sorted { $0.peerName < $1.peerName })
+    }
+
     static func intentSolutions(excluding selfID: String, generation: SearchFilter = .fast,
                                 lucky: Bool = false, mutualOnly: Bool = true) async -> [TradePackage] {
         let ctx = await MatchContext.build(selfID: selfID)
