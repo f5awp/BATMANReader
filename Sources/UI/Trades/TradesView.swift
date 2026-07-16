@@ -12,32 +12,40 @@ struct TradesView: View {
     private var intents   = DayIntentStore.shared
     private var feedCache = TradeFeedCache.shared
 
-    @State private var segment = 1   // default to Trade Search (middle). S-UIUX U-TRADES-1
+    @State private var segment = 0    // 0 Find Trades · 1 ECB
+    @State private var findMode = 0   // within Find Trades: 0 Search a date range (default) · 1 From my marked days
     @State private var whatIf = false
     @State private var loading = true   // spinner on first entry so the tab never looks frozen
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                // The trade-status counters now live in the shared top bar (AppTopBar) on every tab.
-                // Badge = number of MUTUAL intent matches (not your raw intent count).
+                // "Find Trades" merges the old Intents + Trade Solutions (same engine, different input). ECB
+                // is the one-way points finder. Multi-person loops / N-way / qual-swaps live under Find Trades.
                 DXSegmented(selection: $segment, options: [
-                    .init(0, feedCache.intentMatchCount > 0 ? "Intents (\(feedCache.intentMatchCount))" : "Intents"),
-                    .init(1, "Trade Solutions"),
-                    .init(2, "ECB"),
-                ], color: { v in [0: AppColor.heat, 1: AppColor.primary, 2: AppColor.success][v] })
+                    .init(0, "Find Trades", badge: feedCache.intentMatchCount),
+                    .init(1, "ECB"),
+                ], color: { v in [0: AppColor.primary, 1: AppColor.success][v] })
                     .padding(.horizontal).padding(.top, 6).padding(.bottom, 8)   // cushion below the top bar
 
                 if segment == 0 {
-                    IntentTallyBar(centered: true)   // color-coded per-intent counts — Intents tab only (D2a)
+                    Picker("Find mode", selection: $findMode) {
+                        Text("Search a date range").tag(0)
+                        Text("From my marked days").tag(1)
+                    }
+                    .pickerStyle(.segmented)
+                    .padding(.horizontal).padding(.bottom, 6)
+                    if findMode == 1 { IntentTallyBar(centered: true) }   // per-intent counts, marks mode only
                 }
 
                 Divider()
 
-                switch segment {
-                case 0: TradeByIntentsFeed(whatIf: $whatIf)
-                case 1: FindCandidatesSection(whatIf: $whatIf) { loading = false }   // drop spinner when cold load settles
-                default: ECBTradesView()
+                if segment == 1 {
+                    ECBTradesView()
+                } else if findMode == 0 {
+                    FindCandidatesSection(whatIf: $whatIf) { loading = false }   // drop spinner when cold load settles
+                } else {
+                    TradeByIntentsFeed(whatIf: $whatIf)
                 }
             }
             .loadingOverlay(loading, label: "Loading trades…")
@@ -46,11 +54,13 @@ struct TradesView: View {
             .toolbar(.hidden, for: .navigationBar)   // the shared AppTopBar is the header now
             .task {
                 await messaging.refresh()
-                // Safety net: if the landing segment isn't the one that reports readiness, still
-                // drop the spinner after the first frame so it can never get stuck on.
+                // Safety net: only the date-range search reports readiness; drop the spinner otherwise.
                 await Task.yield()
-                if segment != 1 { loading = false }
+                if !(segment == 0 && findMode == 0) { loading = false }
             }
+            // Switching INTO the search mode re-arms the spinner until FindCandidatesSection reports ready.
+            .onChange(of: findMode) { _, m in loading = (segment == 0 && m == 0) }
+            .onChange(of: segment) { _, s in if s != 0 || findMode != 0 { loading = false } }
         }
     }
 }
