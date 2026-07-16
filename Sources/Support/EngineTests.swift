@@ -780,6 +780,10 @@ enum TradeEngineTests {
                   "MATCH-BROADCAST: still-live beats a declined leg")
             check(MessagingStore.broadcastStatus([.declined, .cancelled]) == .declined,
                   "MATCH-BROADCAST: all settled → declined over cancelled")
+            // The concurrent-scan chunker must cover every peer exactly once, in order (no loss/dup).
+            check(TradeRouter.chunk(Array(1...10)).flatMap { $0 } == Array(1...10),
+                  "MATCH-CHUNK: chunks cover all items in order")
+            check(TradeRouter.chunk([Int]()).isEmpty, "MATCH-CHUNK: empty input → no chunks")
         }
 
         // MARK: TRADE-DEDUPE — the duplicate key is direction-agnostic (A→B == B→A for the same days).
