@@ -666,6 +666,13 @@ enum TradeEngineTests {
             } else { check(false, "MATCH-MODEL: TradeProfile with radar fields failed to round-trip") }
         }
 
+        // MARK: MATCH-KIND — an ECB-only day is excluded from a day-for-day swap; day/both/absent allowed.
+        // (Match Radar Stage 2 — inert until kinds are set, since absent defaults to .both.)
+        check(TradeMatcher.allowsDayForDaySwap(nil), "MATCH-KIND: absent kind → allows swap (default .both)")
+        check(TradeMatcher.allowsDayForDaySwap(.both), "MATCH-KIND: .both allows swap")
+        check(TradeMatcher.allowsDayForDaySwap(.day), "MATCH-KIND: .day allows swap")
+        check(!TradeMatcher.allowsDayForDaySwap(.ecb), "MATCH-KIND: .ecb-only excluded from day-for-day swap")
+
         // MARK: CARRYOVER-SNAPSHOT — carryover-vacation days survive the intent snapshot round-trip;
         // an older snapshot without the key still decodes (back-compat). (#4 Stage 1)
         do {

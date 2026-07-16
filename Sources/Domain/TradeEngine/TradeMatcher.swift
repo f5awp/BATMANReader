@@ -520,6 +520,11 @@ enum TradeMatcher {
 
     /// PURE two-way exploration over PRELOADED schedules — no `.shared` access, so it runs off the main
     /// actor (the intent loop calls this directly inside `Task.detached`). Logic identical to before.
+    /// Match Radar: does a day's trade-kind permit a DAY-FOR-DAY (reciprocal) swap? `.day`/`.both` yes;
+    /// `.ecb` (points, one-way) no. Absent kind (nobody set one) defaults to `.both` → yes, so the two-way
+    /// matcher is unchanged until kinds are actually marked.
+    nonisolated static func allowsDayForDaySwap(_ kind: TradeKind?) -> Bool { (kind ?? .both) != .ecb }
+
     nonisolated static func twoWayExploreCore(withWorker workerID: String, name: String,
                               windowStart: Date, windowEnd: Date,
                               mySeeking: Set<String>, theirSeeking: Set<String>,
@@ -549,6 +554,10 @@ enum TradeMatcher {
                 coverMap: myMap, coverQuals: myQuals, coverProfile: myProfile,
                 options: EligibilityOptions(applySoftGates: !ignoreOwnBlacklist), cal: cal)
             guard check.eligible else { continue }
+            // Match Radar: a day the giver marked ECB-only is offered for POINTS, not a day-for-day swap
+            // (ECB is the separate one-way flow) — so it's excluded from the reciprocal two-way match.
+            // Absent kind defaults to `.both` (allows a swap), so this is inert until kinds are set.
+            guard Self.allowsDayForDaySwap(theirProfile.tradeKindByDay?[pe.day]) else { continue }
             // GIVER-side bookend: don't ask a bookends-only peer to give away a mid-week day that would
             // leave them an isolated day off (unless they explicitly marked it trade-away). Symmetric to
             // the pickup bookend rule — fixes "random inconvenient give-back" (e.g. a peer's mid-week Sep 15).
@@ -572,6 +581,8 @@ enum TradeMatcher {
                 coverMap: pMap, coverQuals: pe.quals, coverProfile: theirProfile,
                 options: .full, cal: cal)
             guard check.eligible else { continue }
+            // Match Radar: my ECB-only give days aren't offered for a day-for-day swap (see iTake note).
+            guard Self.allowsDayForDaySwap(myProfile.tradeKindByDay?[me.day]) else { continue }
             iGive.append(TwoWayLeg(dayID: me.day, date: day, desk: me.desk, startHour: me.startHour,
                                    bookend: check.isBookend, wanted: mySeeking.contains(me.day)))
         }
