@@ -845,9 +845,10 @@ enum TradeRouter {
                                 note: profile.dayNotes?[leg.dayID], tier: 0))
             }
             let mutualGive = plan.iGive.filter { $0.wanted }.map(\.dayID)
-            // ECB one-way: my want-to-trade days (kind ECB/Both) this peer would cover for points — no
-            // reciprocal needed, so it stands alone even when there's no day-for-day give-back.
-            let ecbGive = plan.iGiveECB.filter { $0.wanted }.map(\.dayID)
+            // ECB one-way: my want-to-trade days (kind ECB/Both) that this peer ACTIVELY WANTS TO WORK
+            // (`wtw`) — same intent bar as a day-for-day taker, so only real, opted-in peers match (an
+            // inactive/inferred profile has no want-to-work marks, so it never produces an ECB match).
+            let ecbGive = plan.iGiveECB.filter { $0.wanted && wtw.contains($0.dayID) }.map(\.dayID)
             let hasDayForDay = !mutualGive.isEmpty && !myTakeMarks.isEmpty
             if hasDayForDay || !ecbGive.isEmpty {
                 out.matches.append(RadarMatch(peerID: cand.workerID, peerName: cand.name,

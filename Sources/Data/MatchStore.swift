@@ -101,9 +101,15 @@ final class MatchStore {
         pickupAvailableDays = r.pickupDays
         takerAvailableDays  = r.takerDays
         dayIndex = r.dayIndex
+        // A match only surfaces as a passive "Suggested" card / mutual-match alert when it's an ACTIVE account
+        // AND has day-for-day content to render. ECB-only matches (no give/take) still ride `r.matches` for
+        // auto-send, but never show as an empty "give 0, get 0" card; inactive/inferred profiles never appear.
+        let visibleMatches = r.matches.filter {
+            TradeProfileStore.shared.isActiveAccount($0.peerID) && !($0.giveDayIDs.isEmpty && $0.takeDayIDs.isEmpty)
+        }
         var byDay: [String: [TradeRouter.RadarMatch]] = [:]
-        for m in r.matches {
-            for d in Set(m.giveDayIDs + m.takeDayIDs + m.ecbGiveDayIDs) { byDay[d, default: []].append(m) }
+        for m in visibleMatches {
+            for d in Set(m.giveDayIDs + m.takeDayIDs) { byDay[d, default: []].append(m) }
         }
         matchesByDay = byDay
         lastRefreshed = Date()
@@ -115,8 +121,8 @@ final class MatchStore {
         let df = DateFormatter(); df.dateFormat = "yyyy-MM-dd"
         let out = DateFormatter(); out.dateFormat = "EEE, MMM d"
         var matchKeys = Set<String>(); var newMutual: [(peer: String, dayID: String, dayLabel: String)] = []
-        for m in r.matches {
-            let days = (m.giveDayIDs + m.takeDayIDs + m.ecbGiveDayIDs).sorted()
+        for m in visibleMatches {
+            let days = (m.giveDayIDs + m.takeDayIDs).sorted()
             let key = m.peerID + "|" + days.joined(separator: ",")
             matchKeys.insert(key)
             if hasBaselined, !seenMatchKeys.contains(key), let first = days.first {
