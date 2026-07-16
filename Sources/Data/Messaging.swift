@@ -726,7 +726,26 @@ final class MessagingStore {
         // ECB maintenance (sender side): auto-complete ledger on receipt.
         reconcileECBLedger()
         await reconcileBroadcastOffers()   // first-accept-wins: cancel losing legs of a broadcast I sent
+        await reconcileMirrorDuplicates()  // both sides auto-sent the same swap → collapse to one
         await refreshInvalidRequests()
+    }
+
+    /// When BOTH parties auto-match the same swap at once, A→B and B→A can both be written before either
+    /// syncs (past the send-time dedup guard). This collapses each such mirror pair to ONE pending request —
+    /// deterministically keeping the one whose SENDER id sorts first, so every device agrees and cancels the
+    /// same duplicate. (Direction-agnostic `tradeKey`; non-ECB pending only.)
+    func reconcileMirrorDuplicates() async {
+        var byKey: [String: [TradeRequest]] = [:]
+        for r in Self.active(requests, archived: archivedRequestIDs) where !r.isECB && status(of: r) == .pending {
+            byKey[Self.tradeKey(r.fromID, r.toID, dayIDs: Set(r.giveDayIDs + r.takeDayIDs)), default: []].append(r)
+        }
+        for (_, group) in byKey where group.count > 1 {
+            guard let keep = group.min(by: { $0.fromID < $1.fromID }) else { continue }
+            for r in group where r.id != keep.id && (r.fromID == myID || r.toID == myID) {
+                if r.fromID == myID { await service.deleteRequest(id: r.id); requests.removeAll { $0.id == r.id } }
+                else { await respond(to: r, status: .cancelled, note: "Consolidated — this matches a trade already in progress.") }
+            }
+        }
     }
 
     /// FIRST-ACCEPT-WINS for a day-for-day broadcast (a standing-offer fan-out): for each shared-`offerID`
