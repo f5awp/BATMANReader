@@ -151,9 +151,13 @@ final class MatchStore {
     /// Auto-Matches / Requests like any proposal.
     static let autoMatchCap = 3
     private func autoMatchFromMatches(_ matches: [TradeRouter.RadarMatch], firstRun: Bool) async {
+        // BOTH intents drive it: the give must be a day I marked Want to Trade (in the match already), and the
+        // take must be a day I marked Want to Work — so auto-send only ever gives days I offered and takes
+        // days I actually want. A day-for-day needs both, so marking either side alone won't auto-fire.
+        let wantToWork = DayIntentStore.shared.wantToWorkDayIDs
         var byGive: [String: [(peer: TradeRouter.RadarMatch, take: String)]] = [:]
         for m in matches where TradeProfileStore.shared.isActiveAccount(m.peerID) {
-            guard let take = m.takeDayIDs.first else { continue }
+            guard let take = m.takeDayIDs.first(where: { wantToWork.contains($0) }) else { continue }
             for give in m.giveDayIDs { byGive[give, default: []].append((peer: m, take: take)) }
         }
         let matchable = Set(byGive.keys)
