@@ -428,17 +428,18 @@ struct IntentCalendarView: View {
         VStack(spacing: 1) {
             ZStack {
                 // §Match-Radar: a SIGNIFICANT day (high-demand holiday / personal milestone) is marked by a
-                // DISC drawn AROUND the date number in the topology accent (orange / pink) — not a corner dot.
-                // The star (matches) + note dot live in the corners; "today" is the inset tile ring.
+                // FILLED disc behind the date number in the topology accent (orange / pink); the number turns
+                // white for contrast. The star (matches) + note dot live in the corners; "today" is the inset
+                // tile ring (a different radius), so they never collide.
                 let topo = intents.topology(forDay: dayID)
-                if topo != .standard {
-                    Circle()
-                        .stroke(topo.accent, lineWidth: 1.5)
-                        .frame(width: 24, height: 24)
+                let sig  = topo != .standard
+                if sig {
+                    Circle().fill(topo.accent).frame(width: 24, height: 24)
                 }
                 Text("\(cal.component(.day, from: date))")
                     .font(isToday ? DXFont.dayNumber.weight(.heavy) : DXFont.dayNumber)
-                    .foregroundStyle(numberColor(dayID: dayID, isWorking: isWorking, hasShift: hasShift, date: date, shift: shift))
+                    .foregroundStyle(sig ? Color.white
+                                     : numberColor(dayID: dayID, isWorking: isWorking, hasShift: hasShift, date: date, shift: shift))
             }
             .frame(height: DXSpace.cellNumberH)
             .contentShape(Circle())
