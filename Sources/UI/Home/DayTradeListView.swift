@@ -74,19 +74,34 @@ struct DayTradeListPane: View {
                         }
                     } header: {
                         Label("Wants to work this day", systemImage: "hand.raised")
+                    } footer: {
+                        if let t = radar.lastRefreshed {
+                            Text("Radar updated \(t.formatted(.relative(presentation: .named)))")
+                        }
                     }
                 }
             }
             .navigationTitle(prettyDate)
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
-            .task(id: target.dayID) {
-                loading = true
-                let (p, w) = await TradeRouter.dayTradeList(dayID: target.dayID,
-                                                            excluding: SettingsManager.shared.username)
-                pickups = p; wantToWork = w; loading = false
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button { Task { await reload(fullRadar: true) } } label: { Image(systemName: "arrow.clockwise") }
+                        .disabled(loading)
+                }
             }
+            .task(id: target.dayID) { await reload(fullRadar: false) }
         }
+    }
+
+    /// Recompute this day's lists. `fullRadar` also refreshes the whole calendar star/matches (the manual
+    /// refresh button); the initial appear only needs this day's rows.
+    private func reload(fullRadar: Bool) async {
+        loading = true
+        if fullRadar { await radar.recompute() }
+        let (p, w) = await TradeRouter.dayTradeList(dayID: target.dayID,
+                                                    excluding: SettingsManager.shared.username)
+        pickups = p; wantToWork = w; loading = false
     }
 }
 

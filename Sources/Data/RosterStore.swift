@@ -239,6 +239,9 @@ final class RosterStore {
             // the existing personal schedule rather than wiping it, but flag it so it's diagnosable.
             print("⚠️ RosterStore: employee \(myID) not found in the new master — kept existing personal schedule.")
         }
+        // Match Radar: a new master changes everyone's shifts → recompute the star/matches off the new roster
+        // (peers' published intents are still valid, so no extra network fetch).
+        await MatchStore.shared.recompute(scope: .local)
         return rows
     }
 

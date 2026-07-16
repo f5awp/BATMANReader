@@ -150,6 +150,8 @@ struct HomeView: View {
                 await TradeProfileStore.shared.refreshOthers()
                 await PrivateStateStore.shared.syncIntentsOnLaunch()
                 await TradeProfileStore.shared.syncMyPreferences()
+                // Match Radar: recompute the star/matches off the just-synced peers + roster (no extra fetch).
+                await MatchStore.shared.recompute(scope: .local)
             }
             .onChange(of: mode) { _, new in
                 overwriteConfirmed = false   // #10: new marking session re-asks once
