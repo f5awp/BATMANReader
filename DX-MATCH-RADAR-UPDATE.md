@@ -28,8 +28,8 @@ Auto-match standing offers**, default ON):
 - **Auto-match ON + exactly one peer fits →** the app **auto-sends** the trade to that coworker (a real 1:1
   request — they get the incoming-request push and can accept). You're told: **"Standing offer sent —
   auto-sent to Blake…"**
-- **Auto-match ON but several peers fit →** the app does NOT guess; you're notified **"…can be filled…"** and
-  pick who to propose to in the offer's detail.
+- **Auto-match ON + several peers fit →** the app **broadcasts** the offer to the **top 3** (ranked by who's
+  most likely to accept) as one **first-accept-wins** offer — whoever accepts first wins, the rest auto-cancel.
 - **Auto-match OFF →** it never sends on its own; you just get the heads-up and send manually.
 
 Other behavior:
