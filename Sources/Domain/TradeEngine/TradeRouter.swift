@@ -718,6 +718,58 @@ enum TradeRouter {
         !mutualOnly || isActiveAccount
     }
 
+    // MARK: - Match Radar (DX-MATCH-RADAR-SPEC v3.1)
+
+    /// One mutual radar match with a specific peer — both of us marked compatible days.
+    struct RadarMatch: Sendable, Hashable, Identifiable {
+        let peerID: String
+        let peerName: String
+        let giveDayIDs: [String]   // MY marked days the peer would take
+        let takeDayIDs: [String]   // the peer's marked days I'd take
+        var kind: TradeKind = .both
+        var id: String { peerID }
+    }
+
+    /// PURE, testable core: from one peer's `TwoWayPlan`, derive (a) the STAR pickups — the peer's
+    /// want-to-trade days I can legally cover (direction A, no intent required from me), and (b) the MUTUAL
+    /// legs — my marked give days they'd take + their marked days I'd take. `TwoWayLeg.wanted` already means
+    /// "this day was marked" (iGive→my seeking, iTake→their seeking), so this is a filter, not a re-derive.
+    nonisolated static func radarPeerContribution(plan: TwoWayPlan)
+        -> (pickupDays: [String], mutualGive: [String], mutualTake: [String]) {
+        let pickups    = plan.iTake.filter { $0.wanted }.map(\.dayID)   // peer marked want-to-trade + I can cover
+        let mutualGive = plan.iGive.filter { $0.wanted }.map(\.dayID)   // I marked want-to-trade + they'd take
+        return (pickups, mutualGive, pickups)                          // mutualTake == the marked pickups
+    }
+
+    /// The radar scan: STAR pickup-days (direction A) + MUTUAL matches. Reuses `MatchContext` +
+    /// `twoWayExploreCore` (already eligibility/soft-gate filtered). Runs at launch/refresh (not the hot
+    /// foreground path); `Task.yield()` per peer keeps the main actor responsive. NO finalize/floor/cap/loops.
+    static func radarScan(excluding selfID: String) async -> (pickupDays: Set<String>, matches: [RadarMatch]) {
+        let ctx = await MatchContext.build(selfID: selfID)
+        let mySeeking = DayIntentStore.shared.seekingDayIDs
+        let myProfile = TradeProfileStore.shared.myProfile()
+        var pickupDays = Set<String>()
+        var matches: [RadarMatch] = []
+        for cand in ctx.universe.sorted(by: { $0.workerID < $1.workerID }) {   // deterministic order
+            if Task.isCancelled { break }
+            await Task.yield()
+            let profile = ctx.profile(for: cand.workerID, name: cand.name)
+            let plan = TradeMatcher.twoWayExploreCore(
+                withWorker: cand.workerID, name: cand.name,
+                windowStart: ctx.start, windowEnd: ctx.end,
+                mySeeking: mySeeking, theirSeeking: profile.seekingDayIDs,
+                myProfile: myProfile, theirProfile: profile, ignoreOwnBlacklist: false,
+                myEntries: ctx.mineEntries, peerEntries: Array((ctx.maps[cand.workerID] ?? [:]).values))
+            let c = radarPeerContribution(plan: plan)
+            pickupDays.formUnion(c.pickupDays)
+            if !c.mutualGive.isEmpty, !c.mutualTake.isEmpty {   // both sides marked → a mutual match
+                matches.append(RadarMatch(peerID: cand.workerID, peerName: cand.name,
+                                          giveDayIDs: c.mutualGive, takeDayIDs: c.mutualTake, kind: .both))
+            }
+        }
+        return (pickupDays, matches)
+    }
+
     static func intentSolutions(excluding selfID: String, generation: SearchFilter = .fast,
                                 lucky: Bool = false, mutualOnly: Bool = true) async -> [TradePackage] {
         let ctx = await MatchContext.build(selfID: selfID)

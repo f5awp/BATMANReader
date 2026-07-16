@@ -673,6 +673,29 @@ enum TradeEngineTests {
         check(TradeMatcher.allowsDayForDaySwap(.day), "MATCH-KIND: .day allows swap")
         check(!TradeMatcher.allowsDayForDaySwap(.ecb), "MATCH-KIND: .ecb-only excluded from day-for-day swap")
 
+        // MARK: MATCH-STAR / MATCH-DETERMINISM — radar per-peer contribution (Match Radar Stage 3).
+        do {
+            func leg(_ d: String, wanted: Bool) -> TwoWayLeg {
+                TwoWayLeg(dayID: d, date: Date(timeIntervalSince1970: 1), desk: "30", startHour: 5,
+                          bookend: false, wanted: wanted)
+            }
+            let plan = TwoWayPlan(workerID: "p", name: "P",
+                                  iGive: [leg("g1", wanted: true), leg("g2", wanted: false)],
+                                  iTake: [leg("t1", wanted: true), leg("t2", wanted: false)])
+            let c = TradeRouter.radarPeerContribution(plan: plan)
+            check(c.pickupDays == ["t1"], "MATCH-STAR: peer's MARKED day I can cover → pickup (star); unmarked excluded")
+            check(c.mutualGive == ["g1"], "MATCH-STAR: mutual give = my marked give-days they'd take")
+            check(c.mutualTake == ["t1"], "MATCH-STAR: mutual take = peer's marked days I'd take")
+            let c2 = TradeRouter.radarPeerContribution(plan: plan)
+            check(c.pickupDays == c2.pickupDays && c.mutualGive == c2.mutualGive,
+                  "MATCH-DETERMINISM: same plan → identical contribution")
+            // No marks either side → no star, no mutual.
+            let empty = TradeRouter.radarPeerContribution(plan: TwoWayPlan(workerID: "p", name: "P",
+                                                                           iGive: [leg("x", wanted: false)],
+                                                                           iTake: [leg("y", wanted: false)]))
+            check(empty.pickupDays.isEmpty && empty.mutualGive.isEmpty, "MATCH-STAR: unmarked plan → no star / no mutual")
+        }
+
         // MARK: CARRYOVER-SNAPSHOT — carryover-vacation days survive the intent snapshot round-trip;
         // an older snapshot without the key still decodes (back-compat). (#4 Stage 1)
         do {
