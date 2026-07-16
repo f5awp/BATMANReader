@@ -90,13 +90,16 @@ final class NotificationManager {
     func scheduleDailyDigest(enabled: Bool, hour: Int, pending: Int, unread: Int) async {
         center.removePendingNotificationRequests(withIdentifiers: [digestID])
         guard enabled else { return }
-        // Fold in unwatched radar matches so they surface daily (delivery is on-open until push lands).
-        let matches = await MainActor.run { MatchStore.shared.unwatchedOpportunityCount }
+        // Fold in unwatched radar matches + trades that went invalid so everything surfaces daily
+        // (delivery is on-open until push lands).
+        let (matches, invalid) = await MainActor.run {
+            (MatchStore.shared.unwatchedOpportunityCount, MessagingStore.shared.actionableInvalidCount)
+        }
         let content = UNMutableNotificationContent()
         content.title = "\(AppGuide.appName) — daily check-in"
-        content.body = Self.digestBody(pending: pending, unread: unread, matches: matches)
+        content.body = Self.digestBody(pending: pending, unread: unread, matches: matches, invalid: invalid)
         content.sound = .default
-        let total = pending + unread + matches
+        let total = pending + unread + matches + invalid
         if total > 0 { content.badge = NSNumber(value: total) }
         var comps = DateComponents(); comps.hour = max(0, min(23, hour)); comps.minute = 0
         let trigger = UNCalendarNotificationTrigger(dateMatching: comps, repeats: true)
@@ -146,12 +149,13 @@ final class NotificationManager {
     }
 
     /// PURE, testable: the digest sentence for the given counts.
-    static func digestBody(pending: Int, unread: Int, matches: Int = 0) -> String {
+    static func digestBody(pending: Int, unread: Int, matches: Int = 0, invalid: Int = 0) -> String {
         func plural(_ n: Int, _ noun: String) -> String { "\(n) \(noun)\(n == 1 ? "" : "s")" }
         var parts: [String] = []
         if pending > 0 { parts.append(plural(pending, "pending trade")) }
         if unread > 0  { parts.append(plural(unread, "unread message")) }
         if matches > 0 { parts.append("\(matches) trade match\(matches == 1 ? "" : "es") you haven't watched") }
+        if invalid > 0 { parts.append("\(plural(invalid, "trade")) to fix (a day changed)") }
         if parts.isEmpty { return "Nothing needs you right now — tap to browse your matches." }
         return "You have " + parts.joined(separator: " and ") + ". Tap to review."
     }

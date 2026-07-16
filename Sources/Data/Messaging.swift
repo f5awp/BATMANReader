@@ -769,6 +769,13 @@ final class MessagingStore {
     /// Whether this request is currently invalid (a traded day is no longer worked).
     func isInvalid(_ request: TradeRequest) -> Bool { invalidRequestIDs.contains(request.id) }
 
+    /// Active trades of MINE that are invalid (a day changed) and still need action — for the daily digest.
+    var actionableInvalidCount: Int {
+        Self.active(requests, archived: archivedRequestIDs)
+            .filter { ($0.fromID == myID || $0.toID == myID) && invalidRequestIDs.contains($0.id) }
+            .count
+    }
+
     /// Replies visible to YOU on a post: public ones, plus private ones you wrote
     /// or that are on your own post — minus anything an admin has hidden.
     func visibleReplies(for post: BroadcastPost) -> [BroadcastReply] {
