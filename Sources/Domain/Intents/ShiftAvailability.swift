@@ -129,6 +129,15 @@ struct AcceptScope: Codable, Sendable, Hashable {
     }
 }
 
+/// ECB offer terms for a want-to-trade / want-to-work day: how many points to offer and, optionally, the
+/// date the ECB can be paid. A future `availableDate` makes the trade an IOU (paid then, not now). All-nil =
+/// use the global `ecbDefault` and pay on acceptance. (Match Radar ECB support.)
+struct ECBTerms: Codable, Sendable, Hashable {
+    var amount: Double? = nil          // points offered; nil = fall back to SettingsManager.ecbDefault
+    var availableDate: Date? = nil     // when the ECB can be paid; nil/past = pay now, future = IOU
+    var isEmpty: Bool { amount == nil && availableDate == nil }
+}
+
 // MARK: - Standing conditional offer (Build 6 MUST-have)
 
 /// A persistent "trade X to get Y" offer that keeps standing: give away one of `giveDayIDs` (days you work)

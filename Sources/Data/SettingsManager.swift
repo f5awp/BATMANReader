@@ -277,6 +277,11 @@ final class SettingsManager {
     var standingOfferAutoMatch: Bool {
         didSet { defaults.set(standingOfferAutoMatch, forKey: Keys.standingOfferAutoMatch) }
     }
+    /// Default ECB points offered on an ECB trade — the starting amount for an ECB offer or auto-match, and
+    /// the per-day Info override falls back to this. Clamped to the valid 5–25 (0.5-step) range. Default 9.
+    var ecbDefault: Double {
+        didSet { defaults.set(ecbDefault, forKey: Keys.ecbDefault); markPrefsChanged() }
+    }
     /// Private 2000-char scratch notes — synced privately across YOUR devices (A3).
     var privateNotes: String {
         didSet { defaults.set(String(privateNotes.prefix(2000)), forKey: Keys.privateNotes) }
@@ -338,6 +343,7 @@ final class SettingsManager {
         dailyDigestEnabled       = (defaults.object(forKey: Keys.dailyDigestEnabled) as? Bool) ?? true   // default ON
         dailyDigestHour          = (defaults.object(forKey: Keys.dailyDigestHour) as? Int) ?? 8
         standingOfferAutoMatch   = (defaults.object(forKey: Keys.standingOfferAutoMatch) as? Bool) ?? true   // default ON
+        ecbDefault               = (defaults.object(forKey: Keys.ecbDefault) as? Double) ?? 9   // default 9 ECB
         normalMaxPeople          = (defaults.object(forKey: Keys.normalMaxPeople) as? Int) ?? 3   // default: pairs + 3-way
         isMercenaryMode          = defaults.bool(forKey: Keys.isMercenaryMode)
         statusBroadcast          = defaults.string(forKey: Keys.statusBroadcast) ?? ""
@@ -378,6 +384,7 @@ final class SettingsManager {
         static let dailyDigestEnabled = "batman.dailyDigestEnabled"
         static let dailyDigestHour = "batman.dailyDigestHour"
         static let standingOfferAutoMatch = "batman.standingOfferAutoMatch"
+        static let ecbDefault   = "batman.ecbDefault"
         static let normalMaxPeople = "batman.normalMaxPeople"
         static let isMercenaryMode = "batman.isMercenaryMode"
         static let statusBroadcast = "batman.statusBroadcast"

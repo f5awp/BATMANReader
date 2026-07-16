@@ -854,6 +854,9 @@ struct DayIntentEditor: View {
     @State private var limitDates = false                    // restrict the return to specific dates
     @State private var acceptDates: Set<DateComponents> = []  // the accepted return dates (when limitDates)
     @State private var acceptQuals: Set<String> = []          // accept a return only on desks needing these quals
+    @State private var ecbAmount: Double = 9                   // ECB points offered (Day/ECB/Both days)
+    @State private var ecbIsIOU = false                        // pay the ECB on a future date (IOU) rather than now
+    @State private var ecbAvailable = Date()                   // the IOU pay date (when ecbIsIOU)
 
     init(target: DayEditTarget) { self.target = target }
 
@@ -891,6 +894,16 @@ struct DayIntentEditor: View {
                             Text("Either").tag(TradeKind.both)
                             Text("Day-for-day").tag(TradeKind.day)
                             Text("ECB points").tag(TradeKind.ecb)
+                        }
+                        // ECB terms — shown when this day can trade for points (ECB or Either).
+                        if tradeKind != .day {
+                            Stepper(value: $ecbAmount, in: 5...25, step: 0.5) {
+                                LabeledContent("ECB offered") { Text("\(ecbText(ecbAmount)) ECB").bold() }
+                            }
+                            Toggle("Pay on a later date (IOU)", isOn: $ecbIsIOU.animation())
+                            if ecbIsIOU {
+                                DatePicker("Available", selection: $ecbAvailable, in: Date()..., displayedComponents: .date)
+                            }
                         }
                         if tradeKind != .ecb {
                             VStack(alignment: .leading, spacing: 6) {
@@ -1024,6 +1037,10 @@ struct DayIntentEditor: View {
         let isoDates = scope.dates ?? []
         limitDates = !isoDates.isEmpty
         acceptDates = Self.componentsFromISO(isoDates)
+        let terms = intents.ecbTerms(forDay: target.dayID)
+        ecbAmount = terms.amount ?? SettingsManager.shared.ecbDefault
+        ecbIsIOU = terms.availableDate != nil
+        ecbAvailable = terms.availableDate ?? Date()
         if let n = intents.note(forDay: target.dayID) {
             noteText = n.message; notePrivate = n.isPrivate; reason = n.reason
         }
@@ -1046,6 +1063,16 @@ struct DayIntentEditor: View {
             let iso = (limitDates && !acceptDates.isEmpty) ? Self.isoFromComponents(acceptDates) : nil
             scope.dates = (iso?.isEmpty ?? true) ? nil : iso
             intents.setAcceptScope(scope, forDay: target.dayID)
+            // ECB terms only matter when this day can be traded for points (ECB or Both).
+            if tradeKind != .day {
+                let amount = TradeRequest.clampECB(ecbAmount)
+                var terms = ECBTerms()
+                terms.amount = (amount == SettingsManager.shared.ecbDefault) ? nil : amount   // store only an override
+                terms.availableDate = ecbIsIOU ? ecbAvailable : nil
+                intents.setECBTerms(terms, forDay: target.dayID)
+            } else {
+                intents.setECBTerms(ECBTerms(), forDay: target.dayID)
+            }
         }
         let trimmed = noteText.trimmingCharacters(in: .whitespacesAndNewlines)
         intents.setNote(trimmed.isEmpty ? nil
@@ -1338,10 +1365,15 @@ struct TradeSettingsSheet: View {
             Toggle("Auto-match my intents", isOn: Binding(
                 get: { settings.standingOfferAutoMatch },
                 set: { settings.standingOfferAutoMatch = $0 }))
+            Stepper(value: Binding(get: { settings.ecbDefault },
+                                   set: { settings.ecbDefault = TradeRequest.clampECB($0) }),
+                    in: 5...25, step: 0.5) {
+                LabeledContent("Default ECB") { Text("\(ecbText(settings.ecbDefault)) ECB").bold() }
+            }
         } header: {
             Text("Match Radar")
         } footer: {
-            Text("When on, a day you mark Want to Trade auto-sends the swap to matching coworkers as soon as one fits — up to three at once, first to accept wins. Turn off to just be notified and send it yourself.")
+            Text("When on, a day you mark Want to Trade auto-sends the swap to matching coworkers as soon as one fits — up to three at once, first to accept wins. Turn off to just be notified and send it yourself. Default ECB is the points offered on an ECB trade — override it per day on that day's Info tab.")
         }
 
         Section {

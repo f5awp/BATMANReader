@@ -43,15 +43,17 @@ final class DayIntentStore {
         var carryover: Set<String>
         var tradeKind: [String: TradeKind]
         var acceptScope: [String: AcceptScope]
+        var ecbTerms: [String: ECBTerms]
         static let empty = Baseline(working: [:], off: [:], topologies: [:],
                                     notes: [:], availability: [:], wanted: [:], manualOff: [], carryover: [],
-                                    tradeKind: [:], acceptScope: [:])
+                                    tradeKind: [:], acceptScope: [:], ecbTerms: [:])
     }
 
     private func captureBaseline() -> Baseline {
         Baseline(working: workingIntents, off: offIntents, topologies: topologies,
                  notes: notes, availability: offAvailability, wanted: offWanted, manualOff: manualOffDays,
-                 carryover: carryoverVacationDays, tradeKind: tradeKindByDay, acceptScope: acceptScopeByDay)
+                 carryover: carryoverVacationDays, tradeKind: tradeKindByDay, acceptScope: acceptScopeByDay,
+                 ecbTerms: ecbTermsByDay)
     }
 
     private func markDirty() { hasUnsavedChanges = true }
@@ -77,6 +79,7 @@ final class DayIntentStore {
         carryoverVacationDays = savedBaseline.carryover
         tradeKindByDay  = savedBaseline.tradeKind
         acceptScopeByDay = savedBaseline.acceptScope
+        ecbTermsByDay   = savedBaseline.ecbTerms
         hasUnsavedChanges = false
     }
 
@@ -102,6 +105,15 @@ final class DayIntentStore {
         markDirty()
     }
     func acceptScope(forDay dayID: String) -> AcceptScope { acceptScopeByDay[dayID] ?? AcceptScope() }
+
+    /// Match Radar ECB: the per-day ECB offer terms (points + optional pay date). Empty terms stored as absence.
+    func setECBTerms(_ terms: ECBTerms, forDay dayID: String) {
+        if terms.isEmpty { ecbTermsByDay[dayID] = nil } else { ecbTermsByDay[dayID] = terms }
+        markDirty()
+    }
+    func ecbTerms(forDay dayID: String) -> ECBTerms { ecbTermsByDay[dayID] ?? ECBTerms() }
+    /// The ECB points to offer for a day: the per-day override if set, else the global default.
+    func ecbAmount(forDay dayID: String) -> Double { ecbTermsByDay[dayID]?.amount ?? SettingsManager.shared.ecbDefault }
 
     // MARK: Stored state (the single source of truth)
 
@@ -149,6 +161,10 @@ final class DayIntentStore {
     /// pickup OR a day-for-day return. Absent/open = defer to global trade prefs.
     private(set) var acceptScopeByDay: [String: AcceptScope] {
         didSet { persist(acceptScopeByDay, Keys.acceptScope) }
+    }
+    /// Match Radar ECB: per-day ECB offer terms (points override + optional pay/IOU date). Absent = default.
+    private(set) var ecbTermsByDay: [String: ECBTerms] {
+        didSet { persist(ecbTermsByDay, Keys.ecbTerms) }
     }
     /// B4-2: last time the intents were SAVED locally — the LWW clock for cross-device sync.
     private(set) var intentsUpdatedAt: Date {
@@ -206,6 +222,7 @@ final class DayIntentStore {
         carryoverVacationDays = Set(UserDefaults.standard.stringArray(forKey: Keys.carryover) ?? [])
         tradeKindByDay  = Self.load(Keys.tradeKind) ?? [:]
         acceptScopeByDay = Self.load(Keys.acceptScope) ?? [:]
+        ecbTermsByDay   = Self.load(Keys.ecbTerms) ?? [:]
         intentsUpdatedAt = (UserDefaults.standard.object(forKey: Keys.updatedAt) as? Date) ?? .distantPast
         migrateFromTradeIntentStoreIfNeeded()
         migrateAutoVacationBlackoutsIfNeeded()
@@ -508,6 +525,7 @@ final class DayIntentStore {
         var carryover: Set<String>?   // OPTIONAL → tolerant of older snapshots (no key)
         var tradeKind: [String: TradeKind]?   // OPTIONAL → tolerant of older snapshots
         var acceptScope: [String: AcceptScope]?   // OPTIONAL → tolerant of older snapshots
+        var ecbTerms: [String: ECBTerms]?   // OPTIONAL → tolerant of older snapshots
     }
 
     /// Current state as a JSON blob for publishing.
@@ -515,7 +533,8 @@ final class DayIntentStore {
         let snap = IntentSnapshot(working: workingIntents, off: offIntents, topologies: topologies,
                                   notes: notes, availability: offAvailability, wanted: offWanted,
                                   manualOff: manualOffDays, carryover: carryoverVacationDays,
-                                  tradeKind: tradeKindByDay, acceptScope: acceptScopeByDay)
+                                  tradeKind: tradeKindByDay, acceptScope: acceptScopeByDay,
+                                  ecbTerms: ecbTermsByDay)
         guard let data = try? JSONEncoder().encode(snap) else { return nil }
         return String(data: data, encoding: .utf8)
     }
@@ -539,6 +558,7 @@ final class DayIntentStore {
         carryoverVacationDays = snap.carryover ?? []
         tradeKindByDay  = snap.tradeKind ?? [:]
         acceptScopeByDay = snap.acceptScope ?? [:]
+        ecbTermsByDay   = snap.ecbTerms ?? [:]
         intentsUpdatedAt = at
         savedBaseline = captureBaseline()
         return true
@@ -557,6 +577,7 @@ final class DayIntentStore {
         static let carryover = "batman.v2.carryoverVacationDays"
         static let tradeKind = "batman.v2.tradeKindByDay"
         static let acceptScope = "batman.v2.acceptScopeByDay"
+        static let ecbTerms = "batman.v2.ecbTermsByDay"
         static let migrated = "batman.v2.intentMigrated"
         static let migratedAutoVacation = "batman.v2.migratedAutoVacation"
         static let updatedAt = "batman.v2.intentsUpdatedAt"
