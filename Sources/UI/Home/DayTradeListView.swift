@@ -26,13 +26,14 @@ struct DayDetailSheet: View {
     }
 
     var body: some View {
-        if protectedDay {
+        // The Info tab is always present (stable identity, so its editor keeps its in-progress state); the
+        // Trade List tab is conditional on the LIVE intent. Because the intent pickers write to the store
+        // immediately, changing a Keep/Blackout day to a tradeable intent makes the Trade List tab appear
+        // right away — no Save, no dismiss, no re-entering.
+        TabView(selection: $tab) {
             DayIntentEditor(target: target)
-        } else {
-            TabView(selection: $tab) {
-                // Info is the default (left); Trade List is second (right) — for both working and off days.
-                DayIntentEditor(target: target)
-                    .tabItem { Label("Info", systemImage: "info.circle") }.tag(Tab.info)
+                .tabItem { Label("Info", systemImage: "info.circle") }.tag(Tab.info)
+            if !protectedDay {
                 // Tab-gated: the Trade List only computes/loads once its tab is actually selected.
                 DayTradeListPane(target: target, isActive: tab == .tradeList)
                     .tabItem { Label("Trade List", systemImage: "arrow.left.arrow.right") }.tag(Tab.tradeList)

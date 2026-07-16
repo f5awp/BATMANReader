@@ -870,13 +870,15 @@ struct DayIntentEditor: View {
                     if target.isOff {
                         Picker("Day off", selection: Binding(
                             get: { off ?? .neutralOpen },
-                            set: { off = $0 })) {
+                            // Write the intent to the store LIVE (only fires on a user pick, not on load) so the
+                            // Trade List tab appears/hides immediately when you switch to/from Blackout.
+                            set: { off = $0; intents.setOffIntent($0, forDay: target.dayID) })) {
                             ForEach(OffIntentState.allCases) { Text($0.label).tag($0) }
                         }
                     } else {
                         Picker("Working shift", selection: Binding(
                             get: { working == .wantToWork ? .mustWork : (working ?? .neutralOpen) },
-                            set: { working = $0 })) {
+                            set: { working = $0; intents.setWorkingIntent($0, forDay: target.dayID) })) {
                             ForEach(WorkingIntentState.allCases.filter { $0 != .wantToWork }) {
                                 Text($0.label).tag($0)   // .mustWork label = "Keep" (working-day protect; green)
                             }
