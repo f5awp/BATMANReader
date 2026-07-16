@@ -50,7 +50,7 @@ struct DayTradeListPane: View {
                         Label("Watch Day", systemImage: "star")
                     }
                 } footer: {
-                    Text("Get notified the moment a new match appears for this day.")
+                    Text("Get an alert when a new shift you can pick up appears on this day — checked each time you open the app.")
                 }
 
                 if loading {
