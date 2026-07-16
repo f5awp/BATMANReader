@@ -11,7 +11,12 @@ import SwiftUI
 struct DayDetailSheet: View {
     let target: DayEditTarget
     enum Tab { case info, tradeList }
-    @State private var tab: Tab = .info
+    @State private var tab: Tab
+
+    init(target: DayEditTarget, initialTab: Tab = .info) {
+        self.target = target
+        _tab = State(initialValue: initialTab)
+    }
 
     var body: some View {
         TabView(selection: $tab) {

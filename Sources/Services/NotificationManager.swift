@@ -173,40 +173,33 @@ final class NotificationManager {
         guard !gainedPickups.isEmpty || !gainedTakers.isEmpty else { return }
         guard await center.notificationSettings().authorizationStatus == .authorized else { return }
 
-        func fire(id: String, title: String, body: String) async {
+        // One alert PER day so each names its exact date and deep-links to that date's Trade List. `dayID`
+        // rides in userInfo; the tap handler (RadarNotificationRouter) routes to the day.
+        func fire(id: String, body: String, day: String) async {
             let content = UNMutableNotificationContent()
-            content.title = title; content.body = body; content.sound = .default
+            content.title = AppGuide.appName; content.body = body; content.sound = .default
+            content.userInfo = [Self.radarDayKey: day]
             let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
             try? await center.add(UNNotificationRequest(identifier: id, content: content, trigger: trigger))
         }
 
-        // Watched days → individual immediate alerts.
+        // Alerts fire only for WATCHED days (Watch Day = "notify me about this day"); unwatched
+        // opportunities stay visible silently via the calendar star.
+        // OFF day (you want to work it) — someone is looking to drop that day.
         for day in gainedPickups.intersection(watched).sorted() {
-            await fire(id: radarPrefix + "watch.pickup." + day,
-                       title: "New match on a day you're watching",
-                       body: "\(Self.prettyDay(day)) — a shift you can pick up just opened up.")
+            await fire(id: radarPrefix + "pickup." + day,
+                       body: "Someone is looking to drop \(Self.prettyDay(day)) you want to work!", day: day)
         }
+        // WORKING day (you want to trade it) — someone is looking to work that day.
         for day in gainedTakers.intersection(watched).sorted() {
-            await fire(id: radarPrefix + "watch.taker." + day,
-                       title: "Someone can take a shift you're watching",
-                       body: "\(Self.prettyDay(day)) — someone now wants to work it, so they could take your shift.")
-        }
-        // Unwatched → one batched summary per direction.
-        let pickups = gainedPickups.subtracting(watched).sorted()
-        if !pickups.isEmpty {
-            await fire(id: radarPrefix + "batch.pickup",
-                       title: "New shifts to pick up",
-                       body: pickups.count == 1 ? "\(Self.prettyDay(pickups[0])) has a shift you can pick up."
-                                                : "\(pickups.count) days now have shifts you can pick up.")
-        }
-        let takers = gainedTakers.subtracting(watched).sorted()
-        if !takers.isEmpty {
-            await fire(id: radarPrefix + "batch.taker",
-                       title: "Someone wants your shifts",
-                       body: takers.count == 1 ? "Someone wants to work your \(Self.prettyDay(takers[0])) shift."
-                                               : "\(takers.count) of your shifts now have someone who'd take them.")
+            await fire(id: radarPrefix + "taker." + day,
+                       body: "Someone is looking to work on \(Self.prettyDay(day)) you want to trade!", day: day)
         }
     }
+
+    /// userInfo key carrying the ISO day a radar alert refers to (drives notification-tap deep-linking).
+    static let radarDayKey = "batman.radar.dayID"
+    static let radarIDPrefix = "batman.radar."
 
     static func prettyDay(_ id: String) -> String {
         let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"
@@ -225,5 +218,23 @@ final class NotificationManager {
         if let lc = shift.leaveCode, !lc.isEmpty { parts.append("Leave: \(lc)") }
         parts.append("starts in \(leadHours)h")
         return parts.joined(separator: " · ")
+    }
+}
+
+/// Routes radar notifications: shows their banner even in the foreground (they fire ~1s after an in-app
+/// recompute), and on tap deep-links to the day's Trade List via `MatchStore.pendingDayID`. Non-radar
+/// notifications keep the system default. Set as `UNUserNotificationCenter.delegate` at launch.
+final class RadarNotificationRouter: NSObject, UNUserNotificationCenterDelegate {
+    static let shared = RadarNotificationRouter()
+
+    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification)
+        async -> UNNotificationPresentationOptions {
+        notification.request.identifier.hasPrefix(NotificationManager.radarIDPrefix) ? [.banner, .sound, .list] : []
+    }
+
+    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
+        guard let day = response.notification.request.content.userInfo[NotificationManager.radarDayKey] as? String
+        else { return }
+        await MainActor.run { MatchStore.shared.pendingDayID = day }
     }
 }

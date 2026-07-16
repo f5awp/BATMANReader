@@ -5,6 +5,7 @@ import SwiftUI
 import AppIntents
 import SwiftData
 import UIKit
+import UserNotifications
 
 @main
 struct BATMANReaderApp: App {
@@ -13,6 +14,8 @@ struct BATMANReaderApp: App {
         Self.stripBarHairlines()
         // MUST register the background-refresh handler before launch completes (live daily digest).
         NotificationManager.shared.registerDigestRefresh()
+        // Radar notification tap-routing + foreground presentation.
+        UNUserNotificationCenter.current().delegate = RadarNotificationRouter.shared
         Task { @MainActor in
             // Both requests run concurrently — iOS shows one dialog at a time.
             async let notif    = NotificationManager.shared.requestPermission()

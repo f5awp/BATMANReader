@@ -84,6 +84,8 @@ struct ContentView: View {
             AppTabBar(current: selectedTab, selection: tabSelection)
         }
         .onChange(of: selectedTab) { _, t in if t == 1 { tradesLoaded = true } }
+        // Radar-notification deep-link arrives → bring Home (tab 0) forward so its day-detail sheet presents.
+        .onChange(of: MatchStore.shared.pendingDayID) { _, day in if day != nil { selectedTab = 0 } }
         // Developer mode: a thick red border so it's obvious you have moderation powers.
         .overlay {
             if dev.unlocked {

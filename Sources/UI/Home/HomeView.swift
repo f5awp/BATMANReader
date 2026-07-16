@@ -117,11 +117,19 @@ struct HomeView: View {
             .toolbar(.hidden, for: .navigationBar)   // the shared AppTopBar is the header now
             .sheet(item: $editTarget) { target in
                 Group {
-                    if target.showTradeList { DayDetailSheet(target: target) }
-                    else { DayIntentEditor(target: target) }
+                    if target.showTradeList {
+                        DayDetailSheet(target: target, initialTab: target.startOnTradeList ? .tradeList : .info)
+                    } else { DayIntentEditor(target: target) }
                 }
                 .magnifiable()
                 .presentationDetents([.large])
+            }
+            // Radar-notification deep-link: open the tapped day straight on its Trade List tab.
+            .onChange(of: MatchStore.shared.pendingDayID) { _, day in
+                guard let day else { return }
+                let isOff = store.shifts.first { $0.id == day }?.isOff ?? true
+                editTarget = DayEditTarget(dayID: day, isOff: isOff, showTradeList: true, startOnTradeList: true)
+                MatchStore.shared.pendingDayID = nil
             }
             .sheet(isPresented: $showColorKey) { IntentKeySheet() }
             .alert("Overwrite existing marks?", isPresented: Binding(
@@ -551,6 +559,8 @@ struct DayEditTarget: Identifiable {
     /// A Main-View tap opens the 2-tab day detail (Trade List + Info); a Mark-Intents long-press opens the
     /// plain intent editor. Same target type, two presentations.
     var showTradeList = false
+    /// A radar-notification deep-link opens the sheet straight on the Trade List tab (else Info is default).
+    var startOnTradeList = false
     var id: String { dayID }
 }
 

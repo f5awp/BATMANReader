@@ -22,6 +22,9 @@ final class MatchStore {
     private(set) var dayIndex: [String: TradeRouter.DayRadar] = [:]
     /// The Watch toggle (per day). Local v1 (cross-device sync is a later add).
     private(set) var watchedDays: Set<String> = []
+    /// Deep-link target: set when the user taps a radar notification; the UI opens that day's Trade List
+    /// then clears it. (Observed by ContentView + HomeView.)
+    var pendingDayID: String?
     /// Durable baselines = the opportunity-days known as of the last recompute (persisted; the live sets are
     /// NOT). A day not in here is "newly gained" → notifies once, then joins the baseline.
     private(set) var seenPickupDays: Set<String> = []
