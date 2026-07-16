@@ -53,6 +53,7 @@ struct HomeView: View {
     @State private var offBrushes: Set<ShiftAvailabilityType> = []   // shift types to paint (multi-select)
     @State private var offMode: OffPaintMode = .blackout             // do those shifts mean blackout or want-to-work?
     @State private var workBrush: WorkingIntentState = .dontWantToWork
+    @State private var kindBrush: TradeKind = .both   // Day/ECB/Both applied when painting want-to-trade / want-to-work
     @State private var noteBrush = ""   // F2: when set, each tapped day also gets this note
     @State private var eraseMode = false   // when on, tapping a day ERASES its intent + note (cleared state)
     @State private var showColorKey = false    // color key / legend (its own button, left of the layers toggle)
@@ -86,7 +87,7 @@ struct HomeView: View {
                 }
                 homeNotesBar
                 MarkIntentsToolbar(mode: $mode, offBrushes: $offBrushes, offMode: $offMode, workBrush: $workBrush,
-                                   noteBrush: $noteBrush,
+                                   kindBrush: $kindBrush, noteBrush: $noteBrush,
                                    eraseMode: $eraseMode, layers: $layers,
                                    onSave: saveIntents, onDone: attemptLeaveEditing)
                 Divider()
@@ -298,6 +299,7 @@ struct HomeView: View {
             guard !isOff else { return }
             stampNote(day)
             applyWorking(workBrush, on: day)
+            if workBrush == .dontWantToWork { intents.setTradeKind(kindBrush, forDay: day) }   // Day/ECB/Both
         case .daysOff:
             guard isOff else { return }
             stampNote(day)
@@ -309,6 +311,7 @@ struct HomeView: View {
                 intents.setShiftBlackout(types, forDay: day, legal: legal)        // ✕ the chosen shifts
             case .work:
                 intents.setShiftWantToWork(types, forDay: day, legal: legal)      // gold — want-to-work (overrides blackout)
+                intents.setTradeKind(kindBrush, forDay: day)                      // Day/ECB/Both
             }
         }
     }
@@ -360,6 +363,7 @@ struct MarkIntentsToolbar: View {
     @Binding var offBrushes: Set<ShiftAvailabilityType>
     @Binding var offMode: OffPaintMode
     @Binding var workBrush: WorkingIntentState
+    @Binding var kindBrush: TradeKind
     @Binding var noteBrush: String
     @Binding var eraseMode: Bool       // when on, tapping a day clears its note
     @Binding var layers: LayerVisibility   // layers menu rides in the top row while editing
@@ -369,9 +373,11 @@ struct MarkIntentsToolbar: View {
 
     init(mode: Binding<IntentMode>, offBrushes: Binding<Set<ShiftAvailabilityType>>,
          offMode: Binding<OffPaintMode>, workBrush: Binding<WorkingIntentState>,
+         kindBrush: Binding<TradeKind>,
          noteBrush: Binding<String>, eraseMode: Binding<Bool>, layers: Binding<LayerVisibility>,
          onSave: @escaping () -> Void, onDone: @escaping () -> Void) {
         _mode = mode; _offBrushes = offBrushes; _offMode = offMode; _workBrush = workBrush
+        _kindBrush = kindBrush
         _noteBrush = noteBrush; _eraseMode = eraseMode; _layers = layers
         self.onSave = onSave; self.onDone = onDone
     }
@@ -413,8 +419,10 @@ struct MarkIntentsToolbar: View {
 
             if mode == .workingShifts {
                 workingPills
+                if workBrush == .dontWantToWork { kindPills }   // how a traded-away day is offered
             } else if mode == .daysOff {
                 availabilityPills
+                if offMode == .work { kindPills }               // how a want-to-work pickup is offered
             }
             // F2: optional note stamped onto every day you tap.
             HStack(spacing: 8) {
@@ -466,6 +474,14 @@ struct MarkIntentsToolbar: View {
                     options: IntentBrushes.working.map { .init($0, $0.label) },
                     color: { $0.brickColor })
             .padding(.horizontal)
+    }
+
+    /// Day / ECB / Both — how a marked trade is offered; applied to each day you paint.
+    private var kindPills: some View {
+        DXSegmented(selection: $kindBrush, options: [
+            .init(TradeKind.both, "Both"), .init(TradeKind.day, "Day"), .init(TradeKind.ecb, "ECB"),
+        ])
+        .padding(.horizontal)
     }
 
     private func brushPill(on: Bool, label: String, color: Color, _ action: @escaping () -> Void) -> some View {

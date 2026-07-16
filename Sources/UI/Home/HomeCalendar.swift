@@ -853,6 +853,7 @@ struct DayIntentEditor: View {
     @State private var acceptTypes: Set<ShiftAvailabilityType> = []  // shift types accepted in return
     @State private var limitDates = false                    // restrict the return to specific dates
     @State private var acceptDates: Set<DateComponents> = []  // the accepted return dates (when limitDates)
+    @State private var acceptQuals: Set<String> = []          // accept a return only on desks needing these quals
 
     init(target: DayEditTarget) { self.target = target }
 
@@ -882,9 +883,9 @@ struct DayIntentEditor: View {
                     }
                 }
 
-                // Match Radar: how a trade-away day is offered + what you'll take back. Only shown for a
-                // working day you're trading away — irrelevant otherwise, so it never adds noise.
-                if !target.isOff, working == .dontWantToWork {
+                // Match Radar: how a marked day is offered + a 1-time scope override of what you'll accept.
+                // Shown for a working day you're TRADING AWAY or an off day you WANT TO WORK.
+                if (!target.isOff && working == .dontWantToWork) || (target.isOff && off == .wantToWork) {
                     Section {
                         Picker("Trade as", selection: $tradeKind) {
                             Text("Either").tag(TradeKind.both)
@@ -893,7 +894,7 @@ struct DayIntentEditor: View {
                         }
                         if tradeKind != .ecb {
                             VStack(alignment: .leading, spacing: 6) {
-                                Text("Accept in return").font(.caption).foregroundStyle(.secondary)
+                                Text("Accept only these shift types").font(.caption).foregroundStyle(.secondary)
                                 HStack(spacing: 8) {
                                     ForEach(ShiftAvailabilityType.allCases, id: \.self) { t in
                                         let on = acceptTypes.contains(t)
@@ -912,17 +913,41 @@ struct DayIntentEditor: View {
                                     }
                                 }
                             }
-                            // Optional date scope — a multi-select calendar of the return dates you'll accept.
+                            // Optional qual scope — accept a return only on desks needing these quals.
+                            let quals = SettingsManager.shared.cachedQuals.sorted()
+                            if !quals.isEmpty {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Text("Accept only these quals").font(.caption).foregroundStyle(.secondary)
+                                    ScrollView(.horizontal, showsIndicators: false) {
+                                        HStack(spacing: 8) {
+                                            ForEach(quals, id: \.self) { q in
+                                                let on = acceptQuals.contains(q)
+                                                Button {
+                                                    if on { acceptQuals.remove(q) } else { acceptQuals.insert(q) }
+                                                } label: {
+                                                    Text(q).font(.dsBadge)
+                                                        .padding(.horizontal, 10).padding(.vertical, 6)
+                                                        .background(on ? AppColor.primary.opacity(DS.pillFill) : Color(.tertiarySystemFill),
+                                                                    in: RoundedRectangle(cornerRadius: DS.pillRadius, style: .continuous))
+                                                        .foregroundStyle(on ? AppColor.primary : Color.secondary)
+                                                }
+                                                .buttonStyle(.plain)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            // Optional date scope — a multi-select calendar of the dates you'll accept.
                             Toggle("Only on certain dates", isOn: $limitDates.animation())
                             if limitDates {
-                                MultiDatePicker("Accepted return dates", selection: $acceptDates, in: Date()...)
+                                MultiDatePicker("Accepted dates", selection: $acceptDates, in: Date()...)
                                     .frame(minHeight: 320)
                             }
                         }
                     } header: {
                         Text("Trade options")
                     } footer: {
-                        Text("Day-for-day swaps another shift onto you; ECB trades the day for points. \"Accept in return\" limits which shift types you'll take back (leave all off for any) — and, optionally, which dates.")
+                        Text("Day-for-day swaps a shift; ECB trades for points. The scope pills are optional 1-time overrides of your defaults — limit what you'll accept by shift type, qual, or date (leave off for any).")
                     }
                 }
 
@@ -995,6 +1020,7 @@ struct DayIntentEditor: View {
         tradeKind = intents.tradeKind(forDay: target.dayID)
         let scope = intents.acceptScope(forDay: target.dayID)
         acceptTypes = scope.shiftTypes
+        acceptQuals = scope.quals
         let isoDates = scope.dates ?? []
         limitDates = !isoDates.isEmpty
         acceptDates = Self.componentsFromISO(isoDates)
@@ -1011,11 +1037,12 @@ struct DayIntentEditor: View {
         else { intents.setWorkingIntent(working, forDay: target.dayID) }
         intents.setTopology(significant ? .personalMilestone : nil, forDay: target.dayID)
         if carryover != intents.isCarryoverVacation(target.dayID) { intents.toggleCarryoverVacation(target.dayID) }
-        // Match Radar: persist trade kind + accept-scope (only meaningful for a trade-away working day).
-        if !target.isOff, working == .dontWantToWork {
+        // Match Radar: persist trade kind + accept-scope for a trade-away working day OR a want-to-work off day.
+        if (!target.isOff && working == .dontWantToWork) || (target.isOff && off == .wantToWork) {
             intents.setTradeKind(tradeKind, forDay: target.dayID)
             var scope = intents.acceptScope(forDay: target.dayID)
             scope.shiftTypes = acceptTypes
+            scope.quals = acceptQuals
             let iso = (limitDates && !acceptDates.isEmpty) ? Self.isoFromComponents(acceptDates) : nil
             scope.dates = (iso?.isEmpty ?? true) ? nil : iso
             intents.setAcceptScope(scope, forDay: target.dayID)
@@ -1308,13 +1335,13 @@ struct TradeSettingsSheet: View {
 
     @ViewBuilder private var tradeSettings: some View {
         Section {
-            Toggle("Auto-match standing offers", isOn: Binding(
+            Toggle("Auto-match my intents", isOn: Binding(
                 get: { settings.standingOfferAutoMatch },
                 set: { settings.standingOfferAutoMatch = $0 }))
         } header: {
             Text("Match Radar")
         } footer: {
-            Text("When on, a standing \"trade X to get Y\" offer AUTO-SENDS the trade to a coworker the moment exactly one fits (a real 1:1 request — they can accept). If several fit, you're notified to pick. Turn off to only be notified and send every offer yourself.")
+            Text("When on, a day you mark Want to Trade auto-sends the swap to matching coworkers as soon as one fits — up to three at once, first to accept wins. Turn off to just be notified and send it yourself.")
         }
 
         Section {

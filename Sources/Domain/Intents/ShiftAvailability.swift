@@ -111,6 +111,8 @@ struct AcceptScope: Codable, Sendable, Hashable {
         if isOpen { return true }
         if let dates, !dates.isEmpty, !dates.contains(dayID) { return false }
         if !shiftTypes.isEmpty, !shiftTypes.contains(shiftType) { return false }
+        // Qual scope: the return desk must need one of the chosen quals (desks with no specific qual pass).
+        if !quals.isEmpty, let dq = DeskRules.requiredQual(forDesk: desk), !quals.contains(dq) { return false }
         if let desks, !desks.isEmpty, !desks.contains(desk) { return false }
         return true
     }
