@@ -88,6 +88,21 @@ final class DayIntentStore {
     }
     func isCarryoverVacation(_ dayID: String) -> Bool { carryoverVacationDays.contains(dayID) }
 
+    /// Match Radar: how this day is offered — Day (swap), ECB (points), or Both. `.both` (the default) is
+    /// stored as absence, so an unset day behaves exactly as today.
+    func setTradeKind(_ kind: TradeKind, forDay dayID: String) {
+        if kind == .both { tradeKindByDay[dayID] = nil } else { tradeKindByDay[dayID] = kind }
+        markDirty()
+    }
+    func tradeKind(forDay dayID: String) -> TradeKind { tradeKindByDay[dayID] ?? .both }
+
+    /// Match Radar: the acceptance scope for this day. An OPEN scope is stored as absence.
+    func setAcceptScope(_ scope: AcceptScope, forDay dayID: String) {
+        if scope.isOpen { acceptScopeByDay[dayID] = nil } else { acceptScopeByDay[dayID] = scope }
+        markDirty()
+    }
+    func acceptScope(forDay dayID: String) -> AcceptScope { acceptScopeByDay[dayID] ?? AcceptScope() }
+
     // MARK: Stored state (the single source of truth)
 
     /// ISO day → intent for a day the user works.

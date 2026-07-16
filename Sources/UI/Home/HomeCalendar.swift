@@ -867,6 +867,8 @@ struct DayIntentEditor: View {
     @State private var noteText = ""
     @State private var notePrivate = false
     @State private var saving = false
+    @State private var tradeKind: TradeKind = .both          // Match Radar: how this day is offered
+    @State private var acceptTypes: Set<ShiftAvailabilityType> = []  // shift types accepted in return
 
     init(target: DayEditTarget) { self.target = target }
 
@@ -893,6 +895,44 @@ struct DayIntentEditor: View {
                                 Text($0.label).tag($0)   // .mustWork label = "Keep" (working-day protect; green)
                             }
                         }
+                    }
+                }
+
+                // Match Radar: how a trade-away day is offered + what you'll take back. Only shown for a
+                // working day you're trading away — irrelevant otherwise, so it never adds noise.
+                if !target.isOff, working == .dontWantToWork {
+                    Section {
+                        Picker("Trade as", selection: $tradeKind) {
+                            Text("Either").tag(TradeKind.both)
+                            Text("Day-for-day").tag(TradeKind.day)
+                            Text("ECB points").tag(TradeKind.ecb)
+                        }
+                        if tradeKind != .ecb {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("Accept in return").font(.caption).foregroundStyle(.secondary)
+                                HStack(spacing: 8) {
+                                    ForEach(ShiftAvailabilityType.allCases, id: \.self) { t in
+                                        let on = acceptTypes.contains(t)
+                                        Button {
+                                            if on { acceptTypes.remove(t) } else { acceptTypes.insert(t) }
+                                        } label: {
+                                            Text(t.rawValue)
+                                                .font(.dsBadge)
+                                                .frame(maxWidth: .infinity)
+                                                .padding(.vertical, 6)
+                                                .background(on ? AppColor.primary.opacity(DS.pillFill) : Color(.tertiarySystemFill),
+                                                            in: RoundedRectangle(cornerRadius: DS.pillRadius, style: .continuous))
+                                                .foregroundStyle(on ? AppColor.primary : Color.secondary)
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
+                                }
+                            }
+                        }
+                    } header: {
+                        Text("Trade options")
+                    } footer: {
+                        Text("Day-for-day swaps another shift onto you; ECB trades the day for points. \"Accept in return\" limits which shift types you'll take back — leave all off for any.")
                     }
                 }
 
@@ -962,6 +1002,8 @@ struct DayIntentEditor: View {
         off = intents.offIntent(forDay: target.dayID)
         significant = intents.topology(forDay: target.dayID) != .standard
         carryover = intents.isCarryoverVacation(target.dayID)
+        tradeKind = intents.tradeKind(forDay: target.dayID)
+        acceptTypes = intents.acceptScope(forDay: target.dayID).shiftTypes
         if let n = intents.note(forDay: target.dayID) {
             noteText = n.message; notePrivate = n.isPrivate; reason = n.reason
         }
@@ -975,6 +1017,13 @@ struct DayIntentEditor: View {
         else { intents.setWorkingIntent(working, forDay: target.dayID) }
         intents.setTopology(significant ? .personalMilestone : nil, forDay: target.dayID)
         if carryover != intents.isCarryoverVacation(target.dayID) { intents.toggleCarryoverVacation(target.dayID) }
+        // Match Radar: persist trade kind + accept-scope (only meaningful for a trade-away working day).
+        if !target.isOff, working == .dontWantToWork {
+            intents.setTradeKind(tradeKind, forDay: target.dayID)
+            var scope = intents.acceptScope(forDay: target.dayID)
+            scope.shiftTypes = acceptTypes
+            intents.setAcceptScope(scope, forDay: target.dayID)
+        }
         let trimmed = noteText.trimmingCharacters(in: .whitespacesAndNewlines)
         intents.setNote(trimmed.isEmpty ? nil
                         : DayNote(dayID: target.dayID, message: trimmed, reason: reason, isPrivate: notePrivate),

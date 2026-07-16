@@ -544,31 +544,8 @@ enum TradeMatcher {
         // You take ← their work days you can cover. The unified predicate applies the
         // hard physical gates + your cap + your rules (soft gates skipped when you're
         // overriding your own restrictions). (U1 — delegates to TradeEligibility.canCover.)
-        var iTake: [TwoWayLeg] = []
-        for pe in pEntries where !pe.isOff {
-            guard let day = dateFromISO(pe.day), inWindow(day) else { continue }
-            // Their working shift isn't real past THEIR relief horizon — don't offer it.
-            if theirProfile.scheduleUnknown(on: day, cal: cal) { continue }
-            let check = TradeEligibility.canCover(
-                coverDayID: pe.day, coverDay: day, desk: pe.desk, startHour: pe.startHour,
-                coverMap: myMap, coverQuals: myQuals, coverProfile: myProfile,
-                options: EligibilityOptions(applySoftGates: !ignoreOwnBlacklist), cal: cal)
-            guard check.eligible else { continue }
-            // Match Radar: a day the giver marked ECB-only is offered for POINTS, not a day-for-day swap
-            // (ECB is the separate one-way flow) — so it's excluded from the reciprocal two-way match.
-            // Absent kind defaults to `.both` (allows a swap), so this is inert until kinds are set.
-            guard Self.allowsDayForDaySwap(theirProfile.tradeKindByDay?[pe.day]) else { continue }
-            // GIVER-side bookend: don't ask a bookends-only peer to give away a mid-week day that would
-            // leave them an isolated day off (unless they explicitly marked it trade-away). Symmetric to
-            // the pickup bookend rule — fixes "random inconvenient give-back" (e.g. a peer's mid-week Sep 15).
-            if theirProfile.opennessLevel == .bookends,
-               !theirSeeking.contains(pe.day),
-               !TradeMatcher.isCleanGiveAway(day: day, map: pMap, cal: cal) { continue }
-            iTake.append(TwoWayLeg(dayID: pe.day, date: day, desk: pe.desk, startHour: pe.startHour,
-                                   bookend: check.isBookend, wanted: theirSeeking.contains(pe.day)))
-        }
-
-        // You give → your work days they can cover that pass THEIR full rules.
+        // You give → your work days they can cover that pass THEIR full rules. Built FIRST so the accept-scope
+        // prune below knows which days you'd actually give (a scope is "what you accept in return for a give").
         var iGive: [TwoWayLeg] = []
         for me in myEntries where !me.isOff {
             // Never offer a working day you marked KEEP (SPEC S-ENG-9/10) — a give-side gate.
@@ -585,6 +562,42 @@ enum TradeMatcher {
             guard Self.allowsDayForDaySwap(myProfile.tradeKindByDay?[me.day]) else { continue }
             iGive.append(TwoWayLeg(dayID: me.day, date: day, desk: me.desk, startHour: me.startHour,
                                    bookend: check.isBookend, wanted: mySeeking.contains(me.day)))
+        }
+        let myGiveDayIDs = iGive.map(\.dayID)
+
+        // You take ← their work days you can cover (off + qualified + rested) that
+        // pass YOUR rules (availability/openness/bookend/blacklist/mercenary/cap).
+        // You take ← their work days you can cover. The unified predicate applies the
+        // hard physical gates + your cap + your rules (soft gates skipped when you're
+        // overriding your own restrictions). (U1 — delegates to TradeEligibility.canCover.)
+        var iTake: [TwoWayLeg] = []
+        for pe in pEntries where !pe.isOff {
+            guard let day = dateFromISO(pe.day), inWindow(day) else { continue }
+            // Their working shift isn't real past THEIR relief horizon — don't offer it.
+            if theirProfile.scheduleUnknown(on: day, cal: cal) { continue }
+            let check = TradeEligibility.canCover(
+                coverDayID: pe.day, coverDay: day, desk: pe.desk, startHour: pe.startHour,
+                coverMap: myMap, coverQuals: myQuals, coverProfile: myProfile,
+                options: EligibilityOptions(applySoftGates: !ignoreOwnBlacklist), cal: cal)
+            guard check.eligible else { continue }
+            // Match Radar: a day the giver marked ECB-only is offered for POINTS, not a day-for-day swap
+            // (ECB is the separate one-way flow) — so it's excluded from the reciprocal two-way match.
+            // Absent kind defaults to `.both` (allows a swap), so this is inert until kinds are set.
+            guard Self.allowsDayForDaySwap(theirProfile.tradeKindByDay?[pe.day]) else { continue }
+            // Match Radar §8: your per-give-day ACCEPT-SCOPE prunes returns you wouldn't take. Inert unless you
+            // scoped a give day (then a received leg must satisfy some give's scope). Skipped when overriding.
+            if !ignoreOwnBlacklist,
+               !AcceptScope.acceptsUnderAny(myProfile.acceptScopeByDay, giveDayIDs: myGiveDayIDs,
+                                            shiftType: .infer(fromStartHour: pe.startHour),
+                                            desk: pe.desk, dayID: pe.day) { continue }
+            // GIVER-side bookend: don't ask a bookends-only peer to give away a mid-week day that would
+            // leave them an isolated day off (unless they explicitly marked it trade-away). Symmetric to
+            // the pickup bookend rule — fixes "random inconvenient give-back" (e.g. a peer's mid-week Sep 15).
+            if theirProfile.opennessLevel == .bookends,
+               !theirSeeking.contains(pe.day),
+               !TradeMatcher.isCleanGiveAway(day: day, map: pMap, cal: cal) { continue }
+            iTake.append(TwoWayLeg(dayID: pe.day, date: day, desk: pe.desk, startHour: pe.startHour,
+                                   bookend: check.isBookend, wanted: theirSeeking.contains(pe.day)))
         }
 
         let order: (TwoWayLeg, TwoWayLeg) -> Bool = { ($0.wanted ? 0 : 1, $0.date) < ($1.wanted ? 0 : 1, $1.date) }

@@ -103,6 +103,28 @@ struct AcceptScope: Codable, Sendable, Hashable {
     var quals: Set<String> = []                      // empty = any qual
     var desks: Set<String>? = nil                    // nil = any desk
     var isOpen: Bool { (dates?.isEmpty ?? true) && shiftTypes.isEmpty && quals.isEmpty && (desks?.isEmpty ?? true) }
+
+    /// Does this scope accept a return/pickup leg with the given shift type, desk, and date? An OPEN scope
+    /// (nothing set) accepts anything; otherwise every SET facet must match (AND across facets). Qual scoping
+    /// is enforced upstream by desk eligibility, so it isn't re-checked at the leg level here.
+    func accepts(shiftType: ShiftAvailabilityType, desk: String, dayID: String) -> Bool {
+        if isOpen { return true }
+        if let dates, !dates.isEmpty, !dates.contains(dayID) { return false }
+        if !shiftTypes.isEmpty, !shiftTypes.contains(shiftType) { return false }
+        if let desks, !desks.isEmpty, !desks.contains(desk) { return false }
+        return true
+    }
+
+    /// Given ALL of a user's per-give-day accept-scopes and the days they'd give, would SOME give accept this
+    /// return leg? A give day WITHOUT an explicit scope is OPEN (accepts anything) → never prunes. Only prunes
+    /// when every scoped give rejects the leg. Inert (returns true) when no scopes are set — so unset behaves
+    /// exactly as today. (#Match-Radar §8 — the deferred accept-scope prune.)
+    static func acceptsUnderAny(_ scopes: [String: AcceptScope]?, giveDayIDs: [String],
+                                shiftType: ShiftAvailabilityType, desk: String, dayID: String) -> Bool {
+        guard let scopes, !scopes.isEmpty, !giveDayIDs.isEmpty else { return true }
+        if giveDayIDs.contains(where: { scopes[$0] == nil }) { return true }   // an unscoped give is open
+        return giveDayIDs.contains { scopes[$0]?.accepts(shiftType: shiftType, desk: desk, dayID: dayID) ?? true }
+    }
 }
 
 // MARK: - Your availability entry for a single day

@@ -715,6 +715,23 @@ enum TradeEngineTests {
                   "MATCH-SEEN: an already-seen pickup does not re-notify")
         }
 
+        // MARK: MATCH-SCOPE — per-give-day accept-scope prunes returns you wouldn't take. (Stage 8)
+        do {
+            var amOnly = AcceptScope(); amOnly.shiftTypes = [.am]
+            check(amOnly.accepts(shiftType: .am, desk: "30", dayID: "2026-08-01"), "MATCH-SCOPE: AM scope accepts AM")
+            check(!amOnly.accepts(shiftType: .pm, desk: "30", dayID: "2026-08-01"), "MATCH-SCOPE: AM scope rejects PM")
+            check(AcceptScope().accepts(shiftType: .pm, desk: "1", dayID: "x"), "MATCH-SCOPE: open scope accepts anything")
+            let scopes = ["2026-08-05": amOnly]
+            check(!AcceptScope.acceptsUnderAny(scopes, giveDayIDs: ["2026-08-05"], shiftType: .pm, desk: "30", dayID: "d"),
+                  "MATCH-SCOPE: sole scoped give rejects a PM return")
+            check(AcceptScope.acceptsUnderAny(scopes, giveDayIDs: ["2026-08-05"], shiftType: .am, desk: "30", dayID: "d"),
+                  "MATCH-SCOPE: sole scoped give accepts an AM return")
+            check(AcceptScope.acceptsUnderAny(scopes, giveDayIDs: ["2026-08-05", "2026-08-06"], shiftType: .pm, desk: "30", dayID: "d"),
+                  "MATCH-SCOPE: an unscoped give day is open → no prune")
+            check(AcceptScope.acceptsUnderAny(nil, giveDayIDs: ["x"], shiftType: .pm, desk: "1", dayID: "d"),
+                  "MATCH-SCOPE: no scopes → inert (accepts everything)")
+        }
+
         // MARK: CARRYOVER-SNAPSHOT — carryover-vacation days survive the intent snapshot round-trip;
         // an older snapshot without the key still decodes (back-compat). (#4 Stage 1)
         do {
