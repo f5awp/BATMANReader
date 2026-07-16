@@ -830,6 +830,16 @@ enum TradeRouter {
         return StandingMatch(offerID: offer.id, peerID: peerID, peerName: peerName, giveDayIDs: give, getDayIDs: get)
     }
 
+    /// PURE, testable: rank standing-offer matches by acceptance prior (most likely to say yes first),
+    /// tie-broken by peerID for determinism, then cap. Drives the broadcast fan-out (top N).
+    nonisolated static func rankStandingMatches(_ matches: [StandingMatch], priors: [String: Double], cap: Int) -> [StandingMatch] {
+        let sorted = matches.sorted { a, b in
+            let pa = priors[a.peerID] ?? 0, pb = priors[b.peerID] ?? 0
+            return pa != pb ? pa > pb : a.peerID < b.peerID
+        }
+        return Array(sorted.prefix(max(0, cap)))
+    }
+
     /// Evaluate STANDING OFFERS ("trade X to get Y"). For each active, complete offer, find peers who can
     /// satisfy BOTH sides right now: they'd take one of my give-days (an iGive leg) AND they've marked one of
     /// my get-days want-to-trade that I can cover (an iTake.wanted leg). Reuses the cached `MatchContext` +

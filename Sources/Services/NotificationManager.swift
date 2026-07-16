@@ -224,23 +224,28 @@ final class NotificationManager {
         }
     }
 
-    /// One newly-fillable standing offer. `autoSent` = the app already sent the trade to this peer (1:1
-    /// auto-match); otherwise it's just a heads-up for the owner to propose manually.
-    struct StandingAlert: Sendable { let getDayID: String; let giveDayID: String; let peer: String; let autoSent: Bool }
+    /// One newly-fillable standing offer. `sentCount`: 0 = heads-up only (owner proposes manually); 1 = auto-
+    /// sent to one peer; >1 = auto-broadcast to N peers (first to accept wins).
+    struct StandingAlert: Sendable { let getDayID: String; let giveDayID: String; let peer: String; let sentCount: Int }
 
-    /// Alert when a STANDING OFFER becomes fillable. One per offer, naming both dates + the peer; taps
-    /// deep-link to the get-day's Trade List (reuses the radar router).
+    /// Alert when a STANDING OFFER becomes fillable. One per offer, naming both dates; taps deep-link to the
+    /// get-day's Trade List (reuses the radar router).
     func notifyStanding(_ items: [StandingAlert]) async {
         guard !items.isEmpty else { return }
         guard await center.notificationSettings().authorizationStatus == .authorized else { return }
         for item in items {
             let content = UNMutableNotificationContent()
-            if item.autoSent {
-                content.title = "Standing offer sent"
-                content.body = "Auto-sent your offer to \(item.peer) — give \(Self.prettyDay(item.giveDayID)), get \(Self.prettyDay(item.getDayID))."
-            } else {
+            let days = "give \(Self.prettyDay(item.giveDayID)), get \(Self.prettyDay(item.getDayID))"
+            switch item.sentCount {
+            case 0:
                 content.title = "Your standing offer can be filled"
                 content.body = "Give \(Self.prettyDay(item.giveDayID)), get \(Self.prettyDay(item.getDayID)) with \(item.peer)."
+            case 1:
+                content.title = "Standing offer sent"
+                content.body = "Auto-sent to \(item.peer) — \(days)."
+            default:
+                content.title = "Standing offer sent"
+                content.body = "Auto-sent to \(item.sentCount) coworkers — first to accept wins (\(days))."
             }
             content.sound = .default
             content.userInfo = [Self.radarDayKey: item.getDayID]

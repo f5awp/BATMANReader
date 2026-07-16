@@ -703,7 +703,21 @@ final class MessagingStore {
         replies    = FetchMerge.keepCacheOnEmpty(existing: replies, fetched: reps.sorted { $0.createdAt < $1.createdAt })
         // ECB maintenance (sender side): auto-complete ledger on receipt.
         reconcileECBLedger()
+        await reconcileBroadcastOffers()   // first-accept-wins: cancel losing legs of a broadcast I sent
         await refreshInvalidRequests()
+    }
+
+    /// FIRST-ACCEPT-WINS for a day-for-day broadcast (a standing-offer fan-out): for each shared-`offerID`
+    /// group I SENT, once one leg is accepted, cancel the still-pending siblings so only one trade goes
+    /// through. Owner-side (I own every leg), runs on refresh. (ECB offers are a points queue — skipped.)
+    func reconcileBroadcastOffers() async {
+        let mine = requests.filter { $0.fromID == myID && $0.offerID != nil && !$0.isECB }
+        for (_, legs) in Dictionary(grouping: mine, by: { $0.offerID! }) {
+            guard legs.count > 1, legs.contains(where: { status(of: $0) == .accepted }) else { continue }
+            for leg in legs where status(of: leg) == .pending {
+                await respond(to: leg, status: .cancelled, note: "This trade was filled by another dispatcher.")
+            }
+        }
     }
 
     /// S-VALID: recompute which active (non-ECB) requests are stale against the live roster.

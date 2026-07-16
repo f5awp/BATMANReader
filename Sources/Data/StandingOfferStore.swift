@@ -12,6 +12,9 @@ import Observation
 final class StandingOfferStore {
     static let shared = StandingOfferStore()
 
+    /// Max coworkers a standing offer auto-broadcasts to at once (first to accept wins).
+    static let broadcastCap = 3
+
     private(set) var offers: [StandingOffer] = []
     /// Current satisfying peers per offer (from the last evaluate).
     private(set) var matchesByOffer: [String: [StandingMatch]] = [:]
@@ -83,26 +86,34 @@ final class StandingOfferStore {
             // trade to them (a real 1:1 request — they get the incoming-request push; the dedup guard stops a
             // double-send). Multiple peers, or toggle OFF → just notify the owner to pick manually.
             let auto = SettingsManager.shared.standingOfferAutoMatch
+            let priors = MessagingStore.shared.acceptancePriorMap()
             var alerts: [NotificationManager.StandingAlert] = []
             for id in newly {
                 guard let offer = offers.first(where: { $0.id == id }), let peers = result[id], !peers.isEmpty else { continue }
-                let m = peers[0]
-                let give = m.giveDayIDs.first ?? offer.giveDayIDs.first ?? ""
-                let get  = m.getDayIDs.first ?? offer.getDayIDs.first ?? ""
-                // Auto-send only for a single fitting peer who is a REAL on-app account (a match can include
-                // roster peers with only an inferred profile — never auto-send to them). Otherwise notify.
-                let canAutoSend = auto && peers.count == 1 && TradeProfileStore.shared.isActiveAccount(m.peerID)
-                if canAutoSend {
+                // Only REAL on-app accounts can receive (a match can include inferred-only roster peers).
+                let claimed = peers.filter { TradeProfileStore.shared.isActiveAccount($0.peerID) }
+                // Auto-send to the top few (ranked by who's most likely to accept), capped, sharing ONE
+                // offerID → a single first-accept-wins broadcast. Toggle off, or no claimed peer → notify only.
+                let targets = auto ? TradeRouter.rankStandingMatches(claimed, priors: priors, cap: Self.broadcastCap) : []
+                let lead = peers[0]  // for the heads-up label when we don't auto-send
+                let give = (targets.first ?? lead).giveDayIDs.first ?? offer.giveDayIDs.first ?? ""
+                let get  = (targets.first ?? lead).getDayIDs.first ?? offer.getDayIDs.first ?? ""
+                if targets.isEmpty {
+                    alerts.append(.init(getDayID: get, giveDayID: give, peer: lead.peerName, sentCount: 0))
+                    continue
+                }
+                let offerID = UUID().uuidString
+                for m in targets {
                     await MessagingStore.shared.sendRequest(
                         to: m.peerID, toName: m.peerName,
                         note: "Standing offer: give \(StandingFmt.list(m.giveDayIDs)), get \(StandingFmt.list(m.getDayIDs)).",
-                        take: m.getDayIDs, give: m.giveDayIDs, origin: .intents,
-                        altGive: offer.giveDayIDs, altTake: offer.getDayIDs,   // the rest of the offer = alternates
+                        take: m.getDayIDs, give: m.giveDayIDs,
+                        offerID: targets.count > 1 ? offerID : nil,   // shared id only when broadcasting to >1
+                        origin: .intents,
+                        altGive: offer.giveDayIDs, altTake: offer.getDayIDs,
                         standingOfferID: offer.id)
-                    alerts.append(.init(getDayID: get, giveDayID: give, peer: m.peerName, autoSent: true))
-                } else {
-                    alerts.append(.init(getDayID: get, giveDayID: give, peer: m.peerName, autoSent: false))
                 }
+                alerts.append(.init(getDayID: get, giveDayID: give, peer: targets[0].peerName, sentCount: targets.count))
             }
             await NotificationManager.shared.notifyStanding(alerts)
         }

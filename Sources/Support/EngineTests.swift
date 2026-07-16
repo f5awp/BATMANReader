@@ -765,6 +765,14 @@ enum TradeEngineTests {
             check(TradeRouter.standingMatch(offer: paused, peerID: "p", peerName: "P",
                                             peerWouldTake: ["2026-08-01"], peerOffersToMe: ["2026-08-10"]) == nil,
                   "MATCH-STANDING: a paused offer never matches")
+
+            // MATCH-BROADCAST: fan-out ranks by acceptance prior (desc), ties by peerID, caps at N.
+            func sm(_ p: String) -> StandingMatch { StandingMatch(offerID: "o", peerID: p, peerName: p, giveDayIDs: ["g"], getDayIDs: ["t"]) }
+            let ranked = TradeRouter.rankStandingMatches([sm("low"), sm("high"), sm("mid")],
+                                                         priors: ["high": 2.0, "mid": 1.0, "low": 0.0], cap: 3)
+            check(ranked.map(\.peerID) == ["high", "mid", "low"], "MATCH-BROADCAST: ranked by acceptance prior desc")
+            check(TradeRouter.rankStandingMatches([sm("a"), sm("b"), sm("c"), sm("d")], priors: [:], cap: 3).count == 3,
+                  "MATCH-BROADCAST: capped at 3")
         }
 
         // MARK: TRADE-DEDUPE — the duplicate key is direction-agnostic (A→B == B→A for the same days).
