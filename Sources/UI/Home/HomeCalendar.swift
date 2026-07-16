@@ -519,6 +519,9 @@ struct IntentCalendarView: View {
             }
         }
         .overlay(alignment: .topTrailing) { noteDot(dayID).padding(3) }
+        // Match Radar: green star = a legal pickup/match exists for you here; blue ring = you're watching
+        // this day. Bottom-trailing corner so it never crowds the number, the intent pill, or the note dot.
+        .overlay(alignment: .bottomTrailing) { matchMarker(dayID).padding(3) }
         .opacity(faded ? 0.3 : (isPast ? 0.45 : 1))
         .contentShape(Rectangle())
         .onTapGesture {
@@ -629,6 +632,33 @@ struct IntentCalendarView: View {
         } else if topo == .highDemand {
             EventMarker(name: Holidays.name(forDay: dayID) ?? "High-demand day",
                         color: BrickPalette.highImpact, icon: "star.fill")
+        } else {
+            Color.clear.frame(height: 9)
+        }
+    }
+
+    /// Match Radar corner marker. A filled STAR (success green) means ≥1 legal pickup/match exists for you
+    /// on this day; a hollow RING (primary blue) means you're watching it. Both can show at once (star inside
+    /// the ring). Reads off `MatchStore` — accessing its properties here registers Observation, so the cell
+    /// re-renders when the radar recomputes. White casing keeps the star legible on any tile fill.
+    @ViewBuilder private func matchMarker(_ dayID: String) -> some View {
+        let radar   = MatchStore.shared
+        let star    = radar.hasStar(dayID)
+        let watched = radar.isWatched(dayID)
+        if star || watched {
+            ZStack {
+                if watched {
+                    Circle().stroke(AppColor.primary, lineWidth: 1.5).frame(width: 15, height: 15)
+                }
+                if star {
+                    Image(systemName: "star.fill")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(AppColor.success)
+                        .shadow(color: .black.opacity(0.35), radius: 0.5)
+                        .accessibilityLabel("Pickup available")
+                }
+            }
+            .frame(height: 15)
         } else {
             Color.clear.frame(height: 9)
         }
