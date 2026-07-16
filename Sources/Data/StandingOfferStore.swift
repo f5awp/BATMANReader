@@ -67,6 +67,13 @@ final class StandingOfferStore {
     func evaluate() async {
         let me = SettingsManager.shared.username
         guard !me.isEmpty else { return }
+        // Auto-close any offer whose linked trade has been accepted — it's fulfilled, stop watching.
+        let fulfilled = MessagingStore.shared.acceptedStandingOfferIDs()
+        if !fulfilled.isEmpty {
+            var changed = false
+            for i in offers.indices where offers[i].active && fulfilled.contains(offers[i].id) { offers[i].active = false; changed = true }
+            if changed { updatedAt = Date(); persistLocal(); Task { await PrivateStateStore.shared.publishLocalStandingOffers() } }
+        }
         let result = await TradeRouter.evaluateStandingOffers(offers, excluding: me)
         matchesByOffer = result
         let satisfied = Set(result.compactMap { $0.value.isEmpty ? nil : $0.key })
@@ -82,11 +89,16 @@ final class StandingOfferStore {
                 let m = peers[0]
                 let give = m.giveDayIDs.first ?? offer.giveDayIDs.first ?? ""
                 let get  = m.getDayIDs.first ?? offer.getDayIDs.first ?? ""
-                if auto, peers.count == 1 {
+                // Auto-send only for a single fitting peer who is a REAL on-app account (a match can include
+                // roster peers with only an inferred profile — never auto-send to them). Otherwise notify.
+                let canAutoSend = auto && peers.count == 1 && TradeProfileStore.shared.isActiveAccount(m.peerID)
+                if canAutoSend {
                     await MessagingStore.shared.sendRequest(
                         to: m.peerID, toName: m.peerName,
                         note: "Standing offer: give \(StandingFmt.list(m.giveDayIDs)), get \(StandingFmt.list(m.getDayIDs)).",
-                        take: m.getDayIDs, give: m.giveDayIDs, origin: .intents)
+                        take: m.getDayIDs, give: m.giveDayIDs, origin: .intents,
+                        altGive: offer.giveDayIDs, altTake: offer.getDayIDs,   // the rest of the offer = alternates
+                        standingOfferID: offer.id)
                     alerts.append(.init(getDayID: get, giveDayID: give, peer: m.peerName, autoSent: true))
                 } else {
                     alerts.append(.init(getDayID: get, giveDayID: give, peer: m.peerName, autoSent: false))

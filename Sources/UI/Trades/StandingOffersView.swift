@@ -96,12 +96,13 @@ private struct StandingOfferEditor: View {
     }
 }
 
-/// A standing offer's current matches — propose to any satisfying peer.
+/// A standing offer's current matches — tap a peer to open the two-way calendar (see the days, alternates,
+/// and propose / counter there), consistent with the rest of the app.
 private struct StandingOfferDetail: View {
     let offer: StandingOffer
     private let store = StandingOfferStore.shared
-    private let messaging = MessagingStore.shared
-    @State private var sentPeers: Set<String> = []
+    @State private var selectedCandidate: PlanCandidate?
+    @State private var seed: (give: Set<String>, take: Set<String>) = ([], [])
 
     var body: some View {
         List {
@@ -113,34 +114,34 @@ private struct StandingOfferDetail: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
             } else {
-                Section("Fillable with") {
+                Section("Fillable with — tap to view calendars & propose") {
                     ForEach(matches) { m in
-                        VStack(alignment: .leading, spacing: 6) {
-                            HStack { Avatar(name: m.peerName, id: m.peerID, size: 30); Text(m.peerName).font(.dsCardTitle); Spacer() }
-                            Text("You give \(StandingFmt.list(m.giveDayIDs)) → get \(StandingFmt.list(m.getDayIDs))")
-                                .font(.dsCardMeta).foregroundStyle(.secondary)
-                            Button {
-                                Task {
-                                    await messaging.sendRequest(to: m.peerID, toName: m.peerName,
-                                        note: "Standing offer: give \(StandingFmt.list(m.giveDayIDs)), get \(StandingFmt.list(m.getDayIDs)).",
-                                        take: m.getDayIDs, give: m.giveDayIDs, origin: .intents)
-                                    sentPeers.insert(m.peerID)
+                        Button {
+                            seed = (Set(m.giveDayIDs), Set(m.getDayIDs))
+                            selectedCandidate = PlanCandidate(workerID: m.peerID, name: m.peerName, quals: [],
+                                                              coveredShiftIDs: [], bookendShiftIDs: [], week: [])
+                        } label: {
+                            HStack(spacing: 10) {
+                                Avatar(name: m.peerName, id: m.peerID, size: 30)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(m.peerName).font(.dsCardTitle)
+                                    Text("You give \(StandingFmt.list(m.giveDayIDs)) → get \(StandingFmt.list(m.getDayIDs))")
+                                        .font(.dsCardMeta).foregroundStyle(.secondary)
                                 }
-                            } label: {
-                                Label(sentPeers.contains(m.peerID) ? "Proposed" : "Propose",
-                                      systemImage: sentPeers.contains(m.peerID) ? "checkmark.circle.fill" : "paperplane.fill")
-                                    .frame(maxWidth: .infinity)
+                                Spacer()
+                                Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
                             }
-                            .buttonStyle(.borderedProminent).tint(AppColor.success)
-                            .disabled(sentPeers.contains(m.peerID))
                         }
-                        .padding(.vertical, 2)
+                        .buttonStyle(.plain)
                     }
                 }
             }
         }
         .navigationTitle("Offer")
         .navigationBarTitleDisplayMode(.inline)
+        .sheet(item: $selectedCandidate) { cand in
+            TwoWaySheet(candidate: cand, initialGive: seed.give, initialTake: seed.take)
+        }
     }
 }
 

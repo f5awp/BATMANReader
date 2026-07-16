@@ -218,6 +218,8 @@ struct TradeRequest: Sendable, Codable, Identifiable, Hashable {
     // take; altTake = other of YOUR days I'd take). Optional ⇒ old records decode; set post-construction.
     var altGiveDayIDs: [String]? = nil
     var altTakeDayIDs: [String]? = nil
+    // Match Radar: the standing offer this request fulfills (if any), so the offer auto-closes on accept.
+    var standingOfferID: String? = nil
 
     /// Where this request files in the inbox. ECB always wins; otherwise the stored origin, else Misc.
     var inboxOrigin: TradeOrigin { isECB ? .ecb : (origin ?? .manual) }
@@ -914,7 +916,7 @@ final class MessagingStore {
                      ecb: Int? = nil, ecbValue: Double? = nil, offerID: String? = nil,
                      chain: [TradeLeg]? = nil, qualSwap: QualSwapLegData? = nil,
                      origin: TradeOrigin = .manual, loopID: String? = nil,
-                     altGive: [String]? = nil, altTake: [String]? = nil) async {
+                     altGive: [String]? = nil, altTake: [String]? = nil, standingOfferID: String? = nil) async {
         let now = Date()
         // Sender-side "Perfect Match": does this hit the recipient's published intents? (U6 push)
         let recipient = TradeProfileStore.shared.profile(forWorker: toID)
@@ -954,6 +956,7 @@ final class MessagingStore {
         let at = (altTake ?? []).filter { !take.contains($0) }
         req.altGiveDayIDs = ag.isEmpty ? nil : ag
         req.altTakeDayIDs = at.isEmpty ? nil : at
+        req.standingOfferID = standingOfferID
         await service.sendRequest(req)
         MetricsStore.shared.log(.proposed)   // H1 #18 global tally
         requests = ([req] + requests.filter { $0.id != req.id })
@@ -1155,6 +1158,14 @@ final class MessagingStore {
     /// set of days in play. A→B give G/take T and B→A give T/take G collapse to the same key.
     static func tradeKey(_ a: String, _ b: String, dayIDs: Set<String>) -> String {
         [a, b].sorted().joined(separator: "~") + "|" + dayIDs.sorted().joined(separator: ",")
+    }
+
+    /// Standing-offer IDs whose linked trade has been ACCEPTED — so the offer can auto-close.
+    func acceptedStandingOfferIDs() -> Set<String> {
+        Set(requests.compactMap { r in
+            guard let oid = r.standingOfferID else { return nil }
+            return status(of: r) == .accepted ? oid : nil
+        })
     }
 
     /// An ACTIVE (pending/countered), non-ECB trade for `dayIDs` between me and `peerID`, either direction.

@@ -554,10 +554,12 @@ enum TradeEngineTests {
             // MATCH-ALT: §9b alternates survive the JSON payload round-trip, and an old record (no alt keys)
             // decodes to nil — the frozen-init/optional back-compat guarantee for the synced schema.
             var alt = mkReq("alt"); alt.altGiveDayIDs = ["2026-08-05"]; alt.altTakeDayIDs = ["2026-08-12", "2026-08-19"]
+            alt.standingOfferID = "offer-42"
             if let data = try? JSONEncoder().encode(alt),
                let back = try? JSONDecoder().decode(TradeRequest.self, from: data) {
                 check(back.altGiveDayIDs == ["2026-08-05"], "MATCH-ALT: altGiveDayIDs survives round-trip")
                 check(back.altTakeDayIDs == ["2026-08-12", "2026-08-19"], "MATCH-ALT: altTakeDayIDs survives round-trip")
+                check(back.standingOfferID == "offer-42", "MATCH-ALT: standingOfferID survives round-trip")
             } else {
                 check(false, "MATCH-ALT: TradeRequest with alternates failed to round-trip")
             }
