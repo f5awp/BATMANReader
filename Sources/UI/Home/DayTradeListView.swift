@@ -13,10 +13,11 @@ struct DayDetailSheet: View {
 
     var body: some View {
         TabView {
-            DayTradeListPane(target: target)
-                .tabItem { Label("Trade List", systemImage: "arrow.left.arrow.right") }
+            // Info is the default (left); Trade List is second (right) — for both working and off days.
             DayIntentEditor(target: target)
                 .tabItem { Label("Info", systemImage: "info.circle") }
+            DayTradeListPane(target: target)
+                .tabItem { Label("Trade List", systemImage: "arrow.left.arrow.right") }
         }
     }
 }
@@ -32,6 +33,7 @@ struct DayTradeListPane: View {
     @State private var pickups: [TradeRouter.DayTradeRow] = []
     @State private var wantToWork: [TradeRouter.DayTradeRow] = []
     @State private var loading = true
+    @State private var selectedCandidate: PlanCandidate?   // tapped person → 2-way calendar
 
     private var prettyDate: String {
         guard let d = TradeMatcher.dayDate(fromISO: target.dayID) else { return target.dayID }
@@ -57,10 +59,9 @@ struct DayTradeListPane: View {
                     // OFF day → people looking to have this day off (shifts I could pick up).
                     Section {
                         if pickups.isEmpty {
-                            Text("Nobody working this day has marked it to trade away.")
-                                .font(.caption).foregroundStyle(.secondary)
+                            emptyRow("Nobody working this day has marked it to trade away.")
                         } else {
-                            ForEach(pickups) { DayTradeRowView(row: $0, showsShift: true) }
+                            ForEach(pickups) { personCard($0, showsShift: true) }
                         }
                     } header: {
                         Label("Shifts you can pick up", systemImage: "tray.and.arrow.down")
@@ -69,10 +70,9 @@ struct DayTradeListPane: View {
                     // WORKING day → people looking to work this day (they'd take my shift).
                     Section {
                         if wantToWork.isEmpty {
-                            Text("Nobody has marked wanting to work this day.")
-                                .font(.caption).foregroundStyle(.secondary)
+                            emptyRow("Nobody has marked wanting to work this day.")
                         } else {
-                            ForEach(wantToWork) { DayTradeRowView(row: $0, showsShift: false) }
+                            ForEach(wantToWork) { personCard($0, showsShift: false) }
                         }
                     } header: {
                         Label("Wants to work this day", systemImage: "hand.raised")
@@ -89,7 +89,34 @@ struct DayTradeListPane: View {
                 }
             }
             .task(id: target.dayID) { await reload(fullRadar: false) }
+            // Tap a person → the two-way calendar, seeded with this day (their shift on an off day, mine on
+            // a working day) so both parties' alternates are visible.
+            .sheet(item: $selectedCandidate) { cand in
+                TwoWaySheet(candidate: cand,
+                            initialGive: target.isOff ? [] : [target.dayID],
+                            initialTake: target.isOff ? [target.dayID] : [])
+            }
         }
+    }
+
+    /// A tappable person, styled as an app card (ECB / qual-swap format) → opens the 2-way calendar.
+    @ViewBuilder private func personCard(_ row: TradeRouter.DayTradeRow, showsShift: Bool) -> some View {
+        Button {
+            selectedCandidate = PlanCandidate(workerID: row.peerID, name: row.peerName, quals: [],
+                                              coveredShiftIDs: [], bookendShiftIDs: [], week: [])
+        } label: {
+            DayTradeRowView(row: row, showsShift: showsShift)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .dxCard()
+        }
+        .buttonStyle(.plain)
+        .listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
+        .listRowBackground(Color.clear)
+        .listRowSeparator(.hidden)
+    }
+
+    @ViewBuilder private func emptyRow(_ text: String) -> some View {
+        Text(text).font(.caption).foregroundStyle(.secondary)
     }
 
     @ViewBuilder private var radarStamp: some View {
@@ -126,6 +153,7 @@ private struct DayTradeRowView: View {
             }
             Spacer()
             KindChip(kind: row.kind)
+            Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
         }
     }
 
