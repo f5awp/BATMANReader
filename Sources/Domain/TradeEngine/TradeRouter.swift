@@ -870,22 +870,27 @@ enum TradeRouter {
                 myEntries: ctx.mineEntries, peerEntries: Array((ctx.maps[cand.workerID] ?? [:]).values))
             let wtw = profile.wantToWorkDayIDs ?? []
             var myTakeMarks: [String] = []
-            for leg in plan.iTake where leg.wanted {
-                out.pickupDays.insert(leg.dayID); myTakeMarks.append(leg.dayID)
+            // OFF-day direction — every peer WORKING this day whose shift I could cover (broad discovery for
+            // the day detail). The STAR + a match leg only count when the peer MARKED want-to-trade (tier 1).
+            for leg in plan.iTake {
+                let marked = leg.wanted   // peer marked this working day Want-to-Trade
+                if marked { out.pickupDays.insert(leg.dayID); myTakeMarks.append(leg.dayID) }
                 out.dayIndex[leg.dayID, default: DayRadar()].pickups.append(
                     DayTradeRow(peerID: cand.workerID, peerName: cand.name, desk: leg.desk,
                                 startHour: leg.startHour, kind: profile.tradeKindByDay?[leg.dayID] ?? .both,
-                                note: profile.dayNotes?[leg.dayID], tier: 0))
+                                note: profile.dayNotes?[leg.dayID], tier: marked ? 1 : 0))
             }
-            // A "taker" exists for any give-eligible working day (day-for-day OR ECB-capable) the peer wants
-            // to work — union so an ECB-only day (absent from iGive) still gets its taker star + detail row.
+            // WORKING-day direction — every peer who COULD work my shift this day (broad). The taker STAR only
+            // counts when the peer MARKED want-to-work (tier 1). Union iGive+iGiveECB so an ECB-capable day
+            // still appears; dedupe per day so a Both day isn't listed twice for the same peer.
             var seenGive = Set<String>()
-            for leg in (plan.iGive + plan.iGiveECB) where wtw.contains(leg.dayID) && seenGive.insert(leg.dayID).inserted {
-                out.takerDays.insert(leg.dayID)
+            for leg in (plan.iGive + plan.iGiveECB) where seenGive.insert(leg.dayID).inserted {
+                let marked = wtw.contains(leg.dayID)   // peer actively wants to work it → a real taker
+                if marked { out.takerDays.insert(leg.dayID) }
                 out.dayIndex[leg.dayID, default: DayRadar()].wantToWork.append(
                     DayTradeRow(peerID: cand.workerID, peerName: cand.name, desk: leg.desk,
                                 startHour: leg.startHour, kind: myProfile.tradeKindByDay?[leg.dayID] ?? .both,
-                                note: profile.dayNotes?[leg.dayID], tier: 0))
+                                note: profile.dayNotes?[leg.dayID], tier: marked ? 1 : 0))
             }
             let mutualGive = plan.iGive.filter { $0.wanted }.map(\.dayID)
             // ECB one-way: my want-to-trade days (kind ECB/Both) that this peer ACTIVELY WANTS TO WORK

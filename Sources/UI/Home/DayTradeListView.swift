@@ -141,7 +141,22 @@ struct DayTradeListPane: View {
         loading = true
         if fullRadar || !radar.hasComputed { await radar.recompute(scope: .local) }
         let r = radar.rows(forDay: target.dayID)
-        pickups = r.pickups; wantToWork = r.wantToWork; loading = false
+        let di = DayIntentStore.shared
+        func sorted(_ rows: [TradeRouter.DayTradeRow]) -> [TradeRouter.DayTradeRow] {
+            rows.sorted { $0.tier != $1.tier ? $0.tier > $1.tier : $0.peerName < $1.peerName }   // marked first
+        }
+        // Broad discovery (everyone who COULD work it / whose shift I COULD pick up) when I've marked this day;
+        // otherwise just the peers who actively marked the complementary intent (tier 1). (Match Radar v4.)
+        if target.isOff {
+            let broad = di.offIntent(forDay: target.dayID) == .wantToWork
+            pickups = sorted(broad ? r.pickups : r.pickups.filter { $0.tier >= 1 })
+            wantToWork = []
+        } else {
+            let broad = di.workingIntent(forDay: target.dayID) == .dontWantToWork
+            wantToWork = sorted(broad ? r.wantToWork : r.wantToWork.filter { $0.tier >= 1 })
+            pickups = []
+        }
+        loading = false
     }
 }
 
