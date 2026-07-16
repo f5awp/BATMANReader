@@ -18,8 +18,8 @@ final class MatchStore {
     private(set) var matchesByDay: [String: [TradeRouter.RadarMatch]] = [:]
     /// The Watch toggle (per day). Local v1 (cross-device sync is a later add).
     private(set) var watchedDays: Set<String> = []
-    /// Baseline of pickup-days the user has already seen — a day NOT in here but in `pickupAvailableDays`
-    /// is "new" (drives the batched notification + a subtle new-emphasis).
+    /// Durable baseline = the pickup-days known as of the last recompute (persisted; `pickupAvailableDays`
+    /// is NOT). A pickup not in here is "newly gained" → notifies once, then joins the baseline.
     private(set) var seenPickupDays: Set<String> = []
     private(set) var lastRefreshed: Date?
     /// Whether we've established a baseline yet. The FIRST-EVER recompute records the current pickups
@@ -46,7 +46,9 @@ final class MatchStore {
         guard !me.isEmpty else { return [] }
         if scope != .local { await TradeProfileStore.shared.refreshOthers() }
         let (pickups, matches) = await TradeRouter.radarScan(excluding: me)
-        let gained = Self.newlyGainedDays(old: seenPickupDays.union(pickupAvailableDays), new: pickups)
+        // gained = pickups NEW since the last recompute's baseline. First-ever run (no baseline) → none, so
+        // we never alert on opportunities that predate the feature going live.
+        let gained = hasBaselined ? Self.newlyGainedDays(old: seenPickupDays, new: pickups) : []
         pickupAvailableDays = pickups
         var byDay: [String: [TradeRouter.RadarMatch]] = [:]
         for m in matches {
@@ -54,28 +56,19 @@ final class MatchStore {
         }
         matchesByDay = byDay
         lastRefreshed = Date()
-        if hasBaselined {
+        if !gained.isEmpty {
             await NotificationManager.shared.notifyRadar(gained: gained, watched: watchedDays)
-        } else {
-            // First-ever run: adopt the current pickups as the seen baseline so we don't alert on
-            // opportunities that already existed before the feature was live.
-            seenPickupDays.formUnion(pickups)
-            UserDefaults.standard.set(Array(seenPickupDays), forKey: Keys.seen)
-            hasBaselined = true
-            UserDefaults.standard.set(true, forKey: Keys.baselined)
         }
+        // Record the CURRENT pickups as the baseline (persisted) so each opportunity notifies at most once —
+        // pickupAvailableDays isn't persisted across launches, so this is the durable "already-known" set.
+        seenPickupDays = pickups
+        UserDefaults.standard.set(Array(pickups), forKey: Keys.seen)
+        if !hasBaselined { hasBaselined = true; UserDefaults.standard.set(true, forKey: Keys.baselined) }
         return gained
     }
 
-    func markSeen(_ dayID: String) {
-        guard !seenPickupDays.contains(dayID) else { return }
-        seenPickupDays.insert(dayID)
-        UserDefaults.standard.set(Array(seenPickupDays), forKey: Keys.seen)
-    }
     /// A day has a star (a legal pickup for me exists).
     func hasStar(_ dayID: String) -> Bool { pickupAvailableDays.contains(dayID) }
-    /// A star that the user hasn't seen yet (drives the subtle new-emphasis).
-    func isUnseenStar(_ dayID: String) -> Bool { pickupAvailableDays.contains(dayID) && !seenPickupDays.contains(dayID) }
     func matches(on dayID: String) -> [TradeRouter.RadarMatch] { matchesByDay[dayID] ?? [] }
 
     func setWatched(_ dayID: String, _ on: Bool) {
