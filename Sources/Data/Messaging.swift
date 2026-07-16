@@ -1193,11 +1193,13 @@ final class MessagingStore {
             offerID: request.offerID, acceptedDayIDs: acceptedDayIDs, imageBase64: imageBase64)
         await service.sendResponse(resp)
         responses = (responses.filter { $0.id != resp.id } + [resp]).sorted { $0.createdAt < $1.createdAt }
-        // B6-ECB: an ECB offer accepted via the generic path also auto-posts (de-duped by requestID).
+        // B6-ECB: an ECB offer accepted via the generic path also auto-posts (de-duped by requestID). An IOU
+        // (future available-date) posts on that date; otherwise now.
         if status == .accepted, request.isECB, let amt = request.ecbAmount {
             ECBAccountingStore.shared.autoInsertAcceptedTrade(
                 requestID: request.id, payerID: request.fromID, payerName: request.fromName,
-                payeeID: myID, payeeName: myName, amount: amt, date: Date())
+                payeeID: myID, payeeName: myName, amount: amt,
+                date: request.isECBIOU ? (request.ecbAvailableDate ?? Date()) : Date())
         }
     }
 
@@ -1417,10 +1419,12 @@ final class MessagingStore {
         await service.sendResponse(resp)
         responses = (responses.filter { $0.id != resp.id } + [resp]).sorted { $0.createdAt < $1.createdAt }
         // B6-ECB: accepting an ECB offer auto-posts a CONFIRMED shared ledger line (sender pays accepter).
+        // An IOU (future available-date) posts on THAT date; otherwise it posts now.
         if let amt = request.ecbAmount {
             ECBAccountingStore.shared.autoInsertAcceptedTrade(
                 requestID: request.id, payerID: request.fromID, payerName: request.fromName,
-                payeeID: myID, payeeName: myName, amount: amt, date: Date())
+                payeeID: myID, payeeName: myName, amount: amt,
+                date: request.isECBIOU ? (request.ecbAvailableDate ?? Date()) : Date())
         }
     }
 

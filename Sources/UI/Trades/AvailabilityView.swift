@@ -619,7 +619,9 @@ struct ECBTradesView: View {
     @State private var candidates: [PlanCandidate] = []
     @State private var isSearching = false
     @State private var hasSearched = false
-    @State private var ecb: Double = 9
+    @State private var ecb: Double = SettingsManager.shared.ecbDefault
+    @State private var ecbIsIOU = false            // pay the ECB on a future date (IOU) rather than now
+    @State private var ecbAvailable = Date()       // the IOU pay date
     @State private var calendarExpanded = true
     @State private var sentMsg: String?
     @Environment(\.horizontalSizeClass) private var hSize
@@ -669,6 +671,11 @@ struct ECBTradesView: View {
                         Text(ecbText(ecb)).font(.headline.monospacedDigit())
                         Spacer()
                     }
+                }
+                Toggle("Pay on a later date (IOU)", isOn: $ecbIsIOU.animation()).font(.subheadline)
+                if ecbIsIOU {
+                    DatePicker("Available", selection: $ecbAvailable, in: Date()..., displayedComponents: .date)
+                        .font(.subheadline)
                 }
                 HStack(spacing: 10) {
                     VStack(alignment: .leading, spacing: 1) {
@@ -879,7 +886,8 @@ struct ECBTradesView: View {
             // appears automatically in the sender's ECB offer view once they accept.
             await MessagingStore.shared.sendRequest(
                 to: c.workerID, toName: c.name, note: "",
-                take: [], give: theirDays, ecb: Int(ecb.rounded()), ecbValue: ecb, offerID: offerID, origin: .ecb)
+                take: [], give: theirDays, ecb: Int(ecb.rounded()), ecbValue: ecb, offerID: offerID, origin: .ecb,
+                offerKind: .ecb, ecbAvailableDate: ecbIsIOU ? ecbAvailable : nil)
             sent += 1
         }
         WidgetData.update()
