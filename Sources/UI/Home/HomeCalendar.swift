@@ -1314,7 +1314,7 @@ struct TradeSettingsSheet: View {
         } header: {
             Text("Match Radar")
         } footer: {
-            Text("When on, a standing \"trade X to get Y\" offer alerts you the moment a peer can fill it. Turn off to stop those pushes — your offers still match, you just review them manually in Standing Offers.")
+            Text("When on, a standing \"trade X to get Y\" offer AUTO-SENDS the trade to a coworker the moment exactly one fits (a real 1:1 request — they can accept). If several fit, you're notified to pick. Turn off to only be notified and send every offer yourself.")
         }
 
         Section {

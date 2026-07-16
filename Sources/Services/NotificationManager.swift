@@ -224,8 +224,9 @@ final class NotificationManager {
         }
     }
 
-    /// One newly-fillable standing offer.
-    struct StandingAlert: Sendable { let getDayID: String; let giveDayID: String; let peer: String }
+    /// One newly-fillable standing offer. `autoSent` = the app already sent the trade to this peer (1:1
+    /// auto-match); otherwise it's just a heads-up for the owner to propose manually.
+    struct StandingAlert: Sendable { let getDayID: String; let giveDayID: String; let peer: String; let autoSent: Bool }
 
     /// Alert when a STANDING OFFER becomes fillable. One per offer, naming both dates + the peer; taps
     /// deep-link to the get-day's Trade List (reuses the radar router).
@@ -234,8 +235,13 @@ final class NotificationManager {
         guard await center.notificationSettings().authorizationStatus == .authorized else { return }
         for item in items {
             let content = UNMutableNotificationContent()
-            content.title = "Your standing offer can be filled"
-            content.body = "Give \(Self.prettyDay(item.giveDayID)), get \(Self.prettyDay(item.getDayID)) with \(item.peer)."
+            if item.autoSent {
+                content.title = "Standing offer sent"
+                content.body = "Auto-sent your offer to \(item.peer) — give \(Self.prettyDay(item.giveDayID)), get \(Self.prettyDay(item.getDayID))."
+            } else {
+                content.title = "Your standing offer can be filled"
+                content.body = "Give \(Self.prettyDay(item.giveDayID)), get \(Self.prettyDay(item.getDayID)) with \(item.peer)."
+            }
             content.sound = .default
             content.userInfo = [Self.radarDayKey: item.getDayID]
             let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)

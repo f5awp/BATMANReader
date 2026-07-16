@@ -71,14 +71,28 @@ final class StandingOfferStore {
         matchesByOffer = result
         let satisfied = Set(result.compactMap { $0.value.isEmpty ? nil : $0.key })
         let newly = hasBaselined ? satisfied.subtracting(seenSatisfiedOfferIDs) : []
-        // Auto-match alerts respect the Trade Settings toggle; offers still match + show for manual review.
-        if !newly.isEmpty, SettingsManager.shared.standingOfferAutoMatch {
-            let items: [NotificationManager.StandingAlert] = newly.compactMap { id in
-                guard let offer = offers.first(where: { $0.id == id }), let m = result[id]?.first else { return nil }
-                return .init(getDayID: m.getDayIDs.first ?? offer.getDayIDs.first ?? "",
-                             giveDayID: m.giveDayIDs.first ?? offer.giveDayIDs.first ?? "", peer: m.peerName)
+        if !newly.isEmpty {
+            // AUTO-MATCH (toggle ON): when a newly-fillable offer has exactly ONE fitting peer, auto-send the
+            // trade to them (a real 1:1 request — they get the incoming-request push; the dedup guard stops a
+            // double-send). Multiple peers, or toggle OFF → just notify the owner to pick manually.
+            let auto = SettingsManager.shared.standingOfferAutoMatch
+            var alerts: [NotificationManager.StandingAlert] = []
+            for id in newly {
+                guard let offer = offers.first(where: { $0.id == id }), let peers = result[id], !peers.isEmpty else { continue }
+                let m = peers[0]
+                let give = m.giveDayIDs.first ?? offer.giveDayIDs.first ?? ""
+                let get  = m.getDayIDs.first ?? offer.getDayIDs.first ?? ""
+                if auto, peers.count == 1 {
+                    await MessagingStore.shared.sendRequest(
+                        to: m.peerID, toName: m.peerName,
+                        note: "Standing offer: give \(StandingFmt.list(m.giveDayIDs)), get \(StandingFmt.list(m.getDayIDs)).",
+                        take: m.getDayIDs, give: m.giveDayIDs, origin: .intents)
+                    alerts.append(.init(getDayID: get, giveDayID: give, peer: m.peerName, autoSent: true))
+                } else {
+                    alerts.append(.init(getDayID: get, giveDayID: give, peer: m.peerName, autoSent: false))
+                }
             }
-            await NotificationManager.shared.notifyStanding(items)
+            await NotificationManager.shared.notifyStanding(alerts)
         }
         seenSatisfiedOfferIDs = satisfied
         UserDefaults.standard.set(Array(satisfied), forKey: Keys.seen)
