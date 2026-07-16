@@ -58,7 +58,7 @@ enum ReleaseNotes {
         ),
 
         ReleaseNote(
-            version: "v2.3",
+            version: "v2.3 (1)",
             headline: "Rebuilt the match engine around one honest acceptance score — the best trade wins, not just the smallest — plus a full qual-swap workflow, partial accepts, and a guided welcome.",
             bullets: [
                 ReleaseBullet(icon: "✦", color: violet, title: "Smarter matching, rebuilt end-to-end",
