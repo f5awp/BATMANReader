@@ -276,8 +276,8 @@ struct InboxView: View {
     private var ecb = ECBAccountingStore.shared
     private var radar = MatchStore.shared
     @Environment(\.dismiss) private var dismiss
-    @State private var topMode = 1  // 0 Matches (passive radar lane) · 1 Requests (sent/received proposals)
-    @State private var filter = 0   // 0 Intents · 1 Search · 2 ECB · 3 Misc
+    @State private var topMode = 1  // 0 Auto-Matches (proposed + suggested) · 1 Requests (manual proposals)
+    @State private var filter = 1   // 1 Search · 2 ECB (manual Finder) · 3 Qual Swap — auto-matches live in Auto-Matches
 
     private var myID: String { SettingsManager.shared.username }
 
@@ -289,12 +289,13 @@ struct InboxView: View {
     /// Which tab a request files under (0 Intents · 1 Search · 2 ECB · 3 Qual Swap). Delegates to the
     /// pure `TradeInboxTab.index` (single source of truth, harness-tested).
     private func tabIndex(for r: TradeRequest) -> Int { TradeInboxTab.index(for: r, myID: myID) }
-    private func inTab(_ r: TradeRequest) -> Bool { tabIndex(for: r) == filter }
+    // Auto-matches live in the Auto-Matches section, never the manual Requests tabs.
+    private func inTab(_ r: TradeRequest) -> Bool { !r.isAutoProposed && tabIndex(for: r) == filter }
 
     /// Deduped active (non-archived) requests filing under `tab` — drives the per-tab count badge.
     private func tabCount(_ tab: Int) -> Int {
         let inThisTab = MessagingStore.active(store.requests, archived: store.archivedRequestIDs)
-            .filter { TradeInboxTab.index(for: $0, myID: myID) == tab }
+            .filter { !$0.isAutoProposed && TradeInboxTab.index(for: $0, myID: myID) == tab }
         return MessagingStore.dedupeLoops(inThisTab).count
     }
 
@@ -311,9 +312,9 @@ struct InboxView: View {
                     matchesLane
                 } else {
                     DXSegmented(selection: $filter, options: [
-                        .init(0, "Intents", badge: tabCount(0)), .init(1, "Search", badge: tabCount(1)),
+                        .init(1, "Search", badge: tabCount(1)),
                         .init(2, "ECB", badge: tabCount(2)), .init(3, "Qual Swap", badge: tabCount(3)),
-                    ], color: { v in [0: AppColor.heat, 1: AppColor.primary, 2: AppColor.success, 3: AppColor.special][v] })
+                    ], color: { v in [1: AppColor.primary, 2: AppColor.success, 3: AppColor.special][v] })
                     .padding()
 
                     DXPaletteStripe(height: 4).padding(.horizontal)
@@ -331,7 +332,7 @@ struct InboxView: View {
 
     /// ECB tab: outgoing offers as tappable folders, incoming offers, and ledger-line confirmations.
     @ViewBuilder private var ecbTab: some View {
-        let incomingECB = store.incoming.filter { $0.isECB }.sorted { ($0.ecbAmount ?? 0) > ($1.ecbAmount ?? 0) }
+        let incomingECB = store.incoming.filter { $0.isECB && !$0.isAutoProposed }.sorted { ($0.ecbAmount ?? 0) > ($1.ecbAmount ?? 0) }
         if store.ecbOffers.isEmpty && incomingECB.isEmpty && ecb.pendingConfirmations.isEmpty {
             ContentUnavailableView("No ECB Offers", systemImage: "star.circle",
                 description: Text("One-way ECB trade offers show here, sorted by most ECB offered."))
@@ -358,24 +359,61 @@ struct InboxView: View {
     private var uniqueMatches: [TradeRouter.RadarMatch] {
         Array(Set(radar.matchesByDay.values.flatMap { $0 })).sorted { ($0.takeDayIDs.min() ?? "") < ($1.takeDayIDs.min() ?? "") }
     }
-    private var matchCount: Int { Set(radar.matchesByDay.values.flatMap { $0 }).count }
+    /// All active auto-match requests (sent or received) — the base for the Proposed section.
+    private var allProposed: [TradeRequest] {
+        MessagingStore.active(store.requests, archived: store.archivedRequestIDs).filter { $0.isAutoProposed }
+    }
+    /// Outgoing auto-match ECB offers, grouped by offerID → the giver's queue folder (ECBOfferView) so they
+    /// can pick the accepter. Kept as folders (not plain rows) exactly like the manual ECB tab.
+    private var proposedECBOffers: [(offerID: String, requests: [TradeRequest])] {
+        let ecb = allProposed.filter { $0.isECB && $0.fromID == myID && $0.offerID != nil }
+        return Dictionary(grouping: ecb, by: { $0.offerID! })
+            .map { ($0.key, $0.value.sorted { $0.toName < $1.toName }) }
+            .sorted { ($0.requests.first?.createdAt ?? .distantPast) > ($1.requests.first?.createdAt ?? .distantPast) }
+    }
+    /// Everything else proposed (day-for-day / Both, plus all INCOMING incl. incoming ECB) → normal cards.
+    private var proposedOther: [TradeRequest] {
+        MessagingStore.dedupeLoops(allProposed.filter { !($0.isECB && $0.fromID == myID) })
+            .sorted { $0.createdAt > $1.createdAt }
+    }
+    /// SUGGESTED matches — radar found, no proposal yet (a proposed one lives in Proposed, never both places).
+    private var suggestedMatches: [TradeRouter.RadarMatch] {
+        let proposedKeys: Set<String> = Set(allProposed.flatMap { r -> [String] in
+            let peer = r.fromID == myID ? r.toID : r.fromID
+            return (r.giveDayIDs + r.takeDayIDs).map { "\(peer)|\($0)" }
+        })
+        return uniqueMatches.filter { m in
+            !(m.giveDayIDs + m.takeDayIDs + m.ecbGiveDayIDs).contains { proposedKeys.contains("\(m.peerID)|\($0)") }
+        }
+    }
+    private var matchCount: Int { proposedECBOffers.count + proposedOther.count + suggestedMatches.count }
 
-    /// Matches lane: passive radar matches (no request sent yet). Tap one to see the days, then propose from
-    /// the calendar. Pull to refresh re-runs the radar.
+    /// Auto-Matches lane: ONE divided list — everything the radar proposed for you (Proposed), then everything
+    /// it found that you could still propose (Suggested). All methods (Day / ECB / Both) live here — one place.
     @ViewBuilder private var matchesLane: some View {
-        let matches = uniqueMatches
-        if matches.isEmpty {
+        let ecbOffers = proposedECBOffers
+        let other = proposedOther
+        let suggested = suggestedMatches
+        if ecbOffers.isEmpty && other.isEmpty && suggested.isEmpty {
             ContentUnavailableView("No Matches Yet", systemImage: "sparkle.magnifyingglass",
-                description: Text("When someone's trade lines up with yours it shows here — no request needed. Pull to refresh the radar."))
+                description: Text("When someone's trade lines up with yours it shows here. Pull to refresh the radar."))
                 .refreshable { await radar.recompute() }
         } else {
             List {
-                Section {
-                    ForEach(matches) { m in
-                        NavigationLink { MatchDetailView(match: m) } label: { MatchLaneRow(match: m) }
-                    }
-                } footer: {
-                    Text("Matches the radar found from marked intents. With Auto-match on (Trade Settings) the app proposes these for you; otherwise open one and propose from your calendar.")
+                if !ecbOffers.isEmpty || !other.isEmpty {
+                    Section {
+                        ForEach(ecbOffers, id: \.offerID) { offer in
+                            NavigationLink { ECBOfferView(offerID: offer.offerID) } label: { ECBOfferRow(offer: offer) }
+                        }
+                        ForEach(other) { row($0) }
+                    } header: { Text("Proposed · auto-sent — awaiting a response") }
+                }
+                if !suggested.isEmpty {
+                    Section {
+                        ForEach(suggested) { m in
+                            NavigationLink { MatchDetailView(match: m) } label: { MatchLaneRow(match: m) }
+                        }
+                    } header: { Text("Suggested · radar found — open one to propose") }
                 }
             }
             .refreshable { await radar.recompute() }

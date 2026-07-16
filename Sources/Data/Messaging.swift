@@ -229,6 +229,10 @@ struct TradeRequest: Sendable, Codable, Identifiable, Hashable {
     /// Where this request files in the inbox. ECB always wins; otherwise the stored origin, else Misc.
     var inboxOrigin: TradeOrigin { isECB ? .ecb : (origin ?? .manual) }
 
+    /// An auto-match the radar sent/received (any method — Day, Both, or ECB). Files under the Auto-Matches
+    /// section, NOT the manual Requests tabs. Manual ECB Finder offers keep origin `.ecb`, so they stay in ECB.
+    var isAutoProposed: Bool { origin == .intents }
+
     /// Grouping key: a circular loop's N per-participant requests share one `loopID` and collapse to a
     /// single inbox card / merged thread; a plain (2-way / single) request groups on its own id.
     var groupKey: String {
@@ -1058,7 +1062,8 @@ final class MessagingStore {
             expiresAt: Calendar.current.date(byAdding: .day, value: daysValid, to: now) ?? now,
             ecb: ecb, ecbValue: ecbValue, offerID: offerID, chain: chain, qualSwap: qualSwap,
             perfectMatch: perfect ? true : nil)
-        req.origin = isECB ? .ecb : origin   // ECB always files under ECB; else the caller's origin
+        req.origin = origin   // keep the caller's origin (inboxOrigin still files ECB under the ECB tab); this
+                              // preserves .intents on an auto-match ECB so it lands in Auto-Matches, not manual ECB
         req.loopID = loopID                   // set for circular-loop legs so the N requests group as one
         // §9b: carry alternates (drop any that duplicate the primary selection, and empties → nil).
         let ag = (altGive ?? []).filter { !give.contains($0) }
@@ -1380,7 +1385,8 @@ final class MessagingStore {
 
     /// Your outgoing ECB broadcasts, grouped by offerID, newest first.
     var ecbOffers: [(offerID: String, requests: [TradeRequest])] {
-        let ecb = outgoing.filter { $0.isECB && $0.offerID != nil }
+        // Manual ECB Finder offers only — auto-match ECB lives in the Auto-Matches section (not two places).
+        let ecb = outgoing.filter { $0.isECB && $0.offerID != nil && !$0.isAutoProposed }
         return Dictionary(grouping: ecb, by: { $0.offerID! })
             .map { ($0.key, $0.value.sorted { $0.toName < $1.toName }) }
             .sorted { ($0.requests.first?.createdAt ?? .distantPast) > ($1.requests.first?.createdAt ?? .distantPast) }

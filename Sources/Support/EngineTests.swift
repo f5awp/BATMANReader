@@ -382,6 +382,23 @@ enum TradeEngineTests {
             check(ECBAccounting.owed([iou], myID: taker) == 9 && ECBAccounting.owe([iou], myID: giver) == 9, "ECB-LEDGER: an IOU shows as owed/owe until received")
         }
 
+        // MARK: AUTO-MATCH-TAB — an auto-match (origin .intents, ANY method) files under Auto-Matches; a
+        // manual ECB Finder offer (origin .ecb) stays in the ECB tab. This split powers the unified section.
+        do {
+            func req(_ origin: TradeOrigin?, ecb: Double?) -> TradeRequest {
+                var r = TradeRequest(id: "x", fromID: "me", fromName: "M", toID: "b", toName: "B", note: "",
+                                     takeDayIDs: ecb == nil ? ["d1"] : [], giveDayIDs: ["d2"],
+                                     createdAt: Date(timeIntervalSince1970: 1), expiresAt: Date(timeIntervalSince1970: 100),
+                                     ecbValue: ecb)
+                r.origin = origin
+                return r
+            }
+            check(req(.intents, ecb: nil).isAutoProposed, "AUTO-MATCH-TAB: day-for-day auto-match is auto-proposed")
+            check(req(.intents, ecb: 9).isAutoProposed, "AUTO-MATCH-TAB: ECB auto-match folds into Auto-Matches (auto-proposed)")
+            check(!req(.ecb, ecb: 9).isAutoProposed, "AUTO-MATCH-TAB: manual ECB Finder offer stays in the ECB tab")
+            check(!req(.search, ecb: nil).isAutoProposed, "AUTO-MATCH-TAB: a search proposal is not auto-proposed")
+        }
+
         // MARK: Intents-tab badge count (D2a). activeIntentCount counts non-neutral intents.
         do {
             let store = DayIntentStore.shared
