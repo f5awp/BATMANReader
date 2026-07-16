@@ -213,6 +213,11 @@ struct TradeRequest: Sendable, Codable, Identifiable, Hashable {
     var origin: TradeOrigin? = nil       // inbox filing (intents/search/ecb/manual). Optional ⇒ old records → Misc.
     var loopID: String? = nil            // shared across the N per-participant requests of ONE circular-loop send;
                                          // nil for a plain 2-way/single request. Set post-construction (frozen init).
+    // Match Radar §9b — ALTERNATES the sender is also open to, so the recipient can counter with a different
+    // day than the one proposed. Same orientation as the primary fields (altGive = other of MY days you'd
+    // take; altTake = other of YOUR days I'd take). Optional ⇒ old records decode; set post-construction.
+    var altGiveDayIDs: [String]? = nil
+    var altTakeDayIDs: [String]? = nil
 
     /// Where this request files in the inbox. ECB always wins; otherwise the stored origin, else Misc.
     var inboxOrigin: TradeOrigin { isECB ? .ecb : (origin ?? .manual) }
@@ -904,7 +909,8 @@ final class MessagingStore {
                      take: [String], give: [String], daysValid: Int = 21,
                      ecb: Int? = nil, ecbValue: Double? = nil, offerID: String? = nil,
                      chain: [TradeLeg]? = nil, qualSwap: QualSwapLegData? = nil,
-                     origin: TradeOrigin = .manual, loopID: String? = nil) async {
+                     origin: TradeOrigin = .manual, loopID: String? = nil,
+                     altGive: [String]? = nil, altTake: [String]? = nil) async {
         let now = Date()
         // Sender-side "Perfect Match": does this hit the recipient's published intents? (U6 push)
         let recipient = TradeProfileStore.shared.profile(forWorker: toID)
@@ -929,6 +935,11 @@ final class MessagingStore {
             perfectMatch: perfect ? true : nil)
         req.origin = isECB ? .ecb : origin   // ECB always files under ECB; else the caller's origin
         req.loopID = loopID                   // set for circular-loop legs so the N requests group as one
+        // §9b: carry alternates (drop any that duplicate the primary selection, and empties → nil).
+        let ag = (altGive ?? []).filter { !give.contains($0) }
+        let at = (altTake ?? []).filter { !take.contains($0) }
+        req.altGiveDayIDs = ag.isEmpty ? nil : ag
+        req.altTakeDayIDs = at.isEmpty ? nil : at
         await service.sendRequest(req)
         MetricsStore.shared.log(.proposed)   // H1 #18 global tally
         requests = ([req] + requests.filter { $0.id != req.id })
@@ -1027,8 +1038,13 @@ final class MessagingStore {
     /// kept legs (perspective-flipped: their give = my take, their take = my give). Marks the original
     /// `.countered` and sends the trimmed counter, which the sender accepts to finalize.
     func counterWithSubset(_ request: TradeRequest, keepDays: Set<String>) async {
-        let myGive = request.takeDayIDs.filter(keepDays.contains)   // sender's TAKE = my give
-        let myTake = request.giveDayIDs.filter(keepDays.contains)   // sender's GIVE = my take
+        // §9b: the counter pool includes the sender's ALTERNATES, so I can counter with a day they offered
+        // as an alternative rather than only the one they picked. (sender's TAKE ∪ altTake = my give pool;
+        // sender's GIVE ∪ altGive = my take pool.)
+        let givePool = request.takeDayIDs + (request.altTakeDayIDs ?? [])
+        let takePool = request.giveDayIDs + (request.altGiveDayIDs ?? [])
+        let myGive = givePool.filter(keepDays.contains)   // sender's TAKE = my give
+        let myTake = takePool.filter(keepDays.contains)   // sender's GIVE = my take
         guard !myGive.isEmpty || !myTake.isEmpty else { return }
         // Carry the qual-swap leg only if its give-day survived the trim.
         let leg = request.qualSwap.flatMap { keepDays.contains($0.giveShiftDayID) ? $0 : nil }

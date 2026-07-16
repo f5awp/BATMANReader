@@ -198,22 +198,73 @@ struct MatchLaneRow: View {
     }
 }
 
-/// A passive match's detail: the days you'd give and get. Proposing happens from the calendar day (which
-/// carries the alternates), so this is read-only orientation.
+/// A passive match's detail — and where you propose it. Pick the day you give + the day you get; the other
+/// days in the match travel with the request as ALTERNATES the recipient can counter with (§9b).
 struct MatchDetailView: View {
     let match: TradeRouter.RadarMatch
+    private let store = MessagingStore.shared
+    @State private var selGive: String?
+    @State private var selTake: String?
+    @State private var sending = false
+    @State private var sent = false
+
     var body: some View {
         List {
-            Section("You give") { ForEach(match.giveDayIDs, id: \.self) { Text(Self.pretty($0)) } }
-            Section("You get")  { ForEach(match.takeDayIDs, id: \.self) { Text(Self.pretty($0)) } }
+            Section("You give") {
+                ForEach(match.giveDayIDs, id: \.self) { d in selectRow(d, on: selGive == d) { selGive = d } }
+            }
+            Section("You get") {
+                ForEach(match.takeDayIDs, id: \.self) { d in selectRow(d, on: selTake == d) { selTake = d } }
+            }
             Section {
-                Text("Open either day on your calendar to propose — the proposal carries alternate days \(match.peerName) can counter with.")
-                    .font(.caption).foregroundStyle(.secondary)
+                Button { Task { await propose() } } label: {
+                    Label(sent ? "Proposed" : "Propose Trade",
+                          systemImage: sent ? "checkmark.circle.fill" : "paperplane.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent).tint(AppColor.success)
+                .disabled(sending || sent || selGive == nil || selTake == nil)
+                if let blocked = store.blockedRecipient, blocked == match.peerName {
+                    Text("\(match.peerName) hasn't set up the app yet, so they can't receive a proposal.")
+                        .font(.caption).foregroundStyle(AppColor.danger)
+                }
+            } footer: {
+                Text("\(match.peerName) will see the day you picked plus the other days above as alternates they can counter with.")
             }
         }
         .navigationTitle("Match · \(match.peerName)")
         .navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            selGive = selGive ?? match.giveDayIDs.first
+            selTake = selTake ?? match.takeDayIDs.first
+        }
     }
+
+    @ViewBuilder private func selectRow(_ d: String, on: Bool, tap: @escaping () -> Void) -> some View {
+        Button(action: tap) {
+            HStack(spacing: 8) {
+                Image(systemName: on ? "largecircle.fill.circle" : "circle")
+                    .foregroundStyle(on ? AppColor.success : .secondary)
+                Text(Self.pretty(d)).foregroundStyle(.primary)
+                Spacer()
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func propose() async {
+        guard let g = selGive, let t = selTake else { return }
+        sending = true
+        await store.sendRequest(
+            to: match.peerID, toName: match.peerName,
+            note: "Trade proposed from a calendar match.",
+            take: [t], give: [g], origin: .intents,
+            altGive: match.giveDayIDs.filter { $0 != g },
+            altTake: match.takeDayIDs.filter { $0 != t })
+        sending = false
+        sent = store.blockedRecipient != match.peerName
+    }
+
     static func pretty(_ id: String) -> String {
         guard let d = TradeMatcher.dayDate(fromISO: id) else { return id }
         let f = DateFormatter(); f.dateFormat = "EEE, MMM d"; return f.string(from: d)
@@ -681,6 +732,11 @@ struct ThreadView: View {
             } else {
                 TradeParticipantLines(rows: twoWayRows, orderedPeers: [request.fromID, request.toID])
             }
+            // §9b: alternates the sender is open to — shown to BOTH parties (the recipient can counter with one).
+            if !altTradeDays.isEmpty {
+                Label("Alternates: \(DayFmt.list(sortedAltDays))", systemImage: "arrow.triangle.branch")
+                    .font(.caption).foregroundStyle(AppColor.special)
+            }
             if request.isECB, let ecb = request.ecbAmount {
                 Label("\(ecbText(ecb)) ECB offered", systemImage: "star.circle.fill")
                     .font(.subheadline.weight(.semibold)).foregroundStyle(AppColor.pending)
@@ -709,6 +765,13 @@ struct ThreadView: View {
     // D7: all day-IDs in the offer (both sides) — the pool you can partially accept.
     private var allTradeDays: Set<String> { Set(request.giveDayIDs + request.takeDayIDs) }
     private var sortedTradeDays: [String] { allTradeDays.sorted() }
+    // §9b: the sender's alternates — extra days you can counter with instead of the ones proposed.
+    private var altTradeDays: Set<String> { Set((request.altGiveDayIDs ?? []) + (request.altTakeDayIDs ?? [])) }
+    private var sortedAltDays: [String] { altTradeDays.sorted() }
+    /// "you get" if the day is one of the sender's give-days (primary or alt); else "you give".
+    private func dayDirection(_ d: String) -> String {
+        (request.giveDayIDs.contains(d) || request.altGiveDayIDs?.contains(d) == true) ? "you get" : "you give"
+    }
 
     /// Reskin helper: a List section rendered as ONE app-style card (`.dxCard()`) on a clear row — so the
     /// detail reads as the app's cards rather than a grouped iOS Form. (D7-SKIN.)
@@ -726,29 +789,44 @@ struct ThreadView: View {
         }
     }
 
+    /// One selectable day row in the respond card. `alternate` days are the sender's §9b alternates.
+    @ViewBuilder private func dayToggleRow(_ d: String, alternate: Bool) -> some View {
+        Button {
+            if acceptDays.contains(d) { acceptDays.remove(d) } else { acceptDays.insert(d) }
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: acceptDays.contains(d) ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(acceptDays.contains(d) ? AppColor.success : .secondary)
+                Text(DayFmt.nice(d)).foregroundStyle(.primary)
+                if alternate {
+                    Text("alt").font(.caption2.weight(.bold))
+                        .padding(.horizontal, 5).padding(.vertical, 1)
+                        .background(AppColor.special.opacity(DS.pillFill), in: RoundedRectangle(cornerRadius: 4))
+                        .foregroundStyle(AppColor.special)
+                }
+                Spacer()
+                Text(dayDirection(d)).font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
     /// The incoming-pending action card: pick days (partial accept), note, Accept/Counter/Decline.
     @ViewBuilder private var respondCard: some View {
         if allTradeDays.count > 1 {
             Text("Days to accept").font(.subheadline.weight(.semibold))
-            ForEach(sortedTradeDays, id: \.self) { d in
-                Button {
-                    if acceptDays.contains(d) { acceptDays.remove(d) } else { acceptDays.insert(d) }
-                } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: acceptDays.contains(d) ? "checkmark.circle.fill" : "circle")
-                            .foregroundStyle(acceptDays.contains(d) ? AppColor.success : .secondary)
-                        Text(DayFmt.nice(d)).foregroundStyle(.primary)
-                        Spacer()
-                        Text(request.giveDayIDs.contains(d) ? "you get" : "you give")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                }
-                .buttonStyle(.plain)
-            }
+            ForEach(sortedTradeDays, id: \.self) { d in dayToggleRow(d, alternate: false) }
+            Divider()
+        }
+        // §9b: alternates the sender is also open to — pick one to counter with a different day.
+        if !sortedAltDays.isEmpty {
+            Text("Or counter with an alternate").font(.subheadline.weight(.semibold))
+            ForEach(sortedAltDays, id: \.self) { d in dayToggleRow(d, alternate: true) }
             Divider()
         }
         TextField("Optional note…", text: $replyNote, axis: .vertical).textFieldStyle(.roundedBorder)
-        let acceptingAll = acceptDays == allTradeDays || allTradeDays.count <= 1
+        // Accepting EXACTLY the proposed set (no alternates swapped in) = Accept; anything else = Counter.
+        let acceptingAll = (acceptDays == allTradeDays) || (allTradeDays.count <= 1 && acceptDays.isDisjoint(with: altTradeDays))
         Button { acceptingAll ? respond(.accepted) : counter(acceptDays) } label: {
             Label(acceptingAll ? "Accept" : "Counter with \(acceptDays.count) day\(acceptDays.count == 1 ? "" : "s")",
                   systemImage: acceptingAll ? "checkmark.circle.fill" : "arrow.uturn.left.circle")

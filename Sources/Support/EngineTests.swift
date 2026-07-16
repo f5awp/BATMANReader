@@ -550,6 +550,19 @@ enum TradeEngineTests {
                 check(false, "INBOX-CODEC: TradeRequest failed to round-trip through JSON")
             }
             check(mkReq("solo").groupKey == "solo", "INBOX-CODEC: groupKey falls back to id when loopID is nil")
+
+            // MATCH-ALT: §9b alternates survive the JSON payload round-trip, and an old record (no alt keys)
+            // decodes to nil — the frozen-init/optional back-compat guarantee for the synced schema.
+            var alt = mkReq("alt"); alt.altGiveDayIDs = ["2026-08-05"]; alt.altTakeDayIDs = ["2026-08-12", "2026-08-19"]
+            if let data = try? JSONEncoder().encode(alt),
+               let back = try? JSONDecoder().decode(TradeRequest.self, from: data) {
+                check(back.altGiveDayIDs == ["2026-08-05"], "MATCH-ALT: altGiveDayIDs survives round-trip")
+                check(back.altTakeDayIDs == ["2026-08-12", "2026-08-19"], "MATCH-ALT: altTakeDayIDs survives round-trip")
+            } else {
+                check(false, "MATCH-ALT: TradeRequest with alternates failed to round-trip")
+            }
+            check(mkReq("noalt").altGiveDayIDs == nil && mkReq("noalt").altTakeDayIDs == nil,
+                  "MATCH-ALT: a record without alternates decodes to nil (old-record back-compat)")
         }
 
         // MARK: INBOX-ORIGIN — inbox tab routing (TRADE-INBOX Stage 2). Intents→0, Search→1, ECB→2,
