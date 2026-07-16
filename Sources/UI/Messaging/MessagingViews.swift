@@ -683,6 +683,11 @@ struct RequestRow: View {
                         Label("Invalid", systemImage: "exclamationmark.octagon.fill")
                             .font(.caption2.bold()).foregroundStyle(BrickPalette.critical)
                     }
+                    // Same-day lock: a day here is already committed to another accepted trade.
+                    if let clash = store.committedConflictDay(request) {
+                        Label("You traded \(DayFmt.nice(clash)) — pick another day", systemImage: "lock.fill")
+                            .font(.caption2.bold()).foregroundStyle(BrickPalette.critical)
+                    }
                     if let ecb = request.ecbAmount, request.isECB {
                         Label("\(ecbText(ecb)) ECB", systemImage: "star.circle.fill")
                             .font(.caption2.bold()).foregroundStyle(AppColor.pending)
@@ -727,6 +732,11 @@ struct ThreadView: View {
         (request.isBroadcastLeg && request.fromID == myID)   // owner's fan-out → first-accept-wins aggregate
             ? MessagingStore.broadcastStatus(store.requests.filter { $0.groupKey == request.groupKey }.map { store.status(of: $0) })
             : store.status(of: request)
+    }
+    /// The owner's view of a broadcast: every recipient leg (empty for a normal request or a recipient).
+    private var broadcastLegs: [TradeRequest] {
+        guard request.isBroadcastLeg, request.fromID == myID else { return [] }
+        return store.requests.filter { $0.groupKey == request.groupKey }.sorted { $0.toName < $1.toName }
     }
 
     // The trade card, extracted so the List body stays inside the type-checker's budget.
@@ -847,7 +857,12 @@ struct ThreadView: View {
                 .frame(maxWidth: .infinity)
         }
         .buttonStyle(.borderedProminent).tint(AppColor.success)
-        .disabled(!staleDays.isEmpty || acceptDays.isEmpty)
+        .disabled(!staleDays.isEmpty || acceptDays.isEmpty || store.committedConflictDay(request) != nil)
+        if let clash = store.committedConflictDay(request) {
+            Label("You already accepted a trade for \(DayFmt.nice(clash)) — this day is no longer available. Offer a different day.",
+                  systemImage: "lock.fill")
+                .font(.caption.weight(.semibold)).foregroundStyle(BrickPalette.critical)
+        }
         HStack {
             // Send the note as a real chat message (a visible bubble) — NOT a note-less ".countered"
             // (which used to render as a blank "counter-offer" row). Empty → disabled.
@@ -867,6 +882,19 @@ struct ThreadView: View {
                           systemImage: "exclamationmark.octagon.fill")
                         .font(.subheadline.weight(.bold)).foregroundStyle(BrickPalette.critical)
                         .listRowBackground(BrickPalette.critical.opacity(0.12))
+                }
+            }
+            // Broadcast (owner side): each recipient's live status — first to accept wins.
+            if !broadcastLegs.isEmpty {
+                Section("Sent to \(broadcastLegs.count) · first to accept wins") {
+                    ForEach(broadcastLegs) { leg in
+                        HStack(spacing: 10) {
+                            Avatar(name: leg.toName, id: leg.toID, size: 26)
+                            Text(leg.toName).font(.subheadline)
+                            Spacer()
+                            StatusBadge(status: store.status(of: leg))
+                        }
+                    }
                 }
             }
             // The trade as a card — same language as the feed's package card.

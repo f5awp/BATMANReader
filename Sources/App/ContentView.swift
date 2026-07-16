@@ -135,6 +135,13 @@ struct ContentView: View {
         } message: {
             Text(messaging.duplicateNotice ?? "")
         }
+        .alert("Day already traded", isPresented: Binding(
+            get: { messaging.committedNotice != nil },
+            set: { if !$0 { messaging.committedNotice = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(messaging.committedNotice ?? "")
+        }
         .sheet(isPresented: $showChangelog) {
             WhatsNewView {
                 settings.lastSeenChangelogBuild = AppInfo.build   // mark this build's notes seen

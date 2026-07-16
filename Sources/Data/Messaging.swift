@@ -583,6 +583,10 @@ final class MessagingStore {
     /// observes this to show a "duplicate — check your inbox" alert, then clears it.
     var duplicateNotice: String? = nil
 
+    /// Set when a send/accept is blocked because a day is already committed to an accepted trade. The UI
+    /// shows a "you already traded that day — offer another" alert, then clears it.
+    var committedNotice: String? = nil
+
     /// When the user last OPENED the broadcast channel. Drives the UNREAD badge so it
     /// clears on read — the old badge showed total post count and never cleared (A2/S-SYNC-1).
     private static let lastSeenKey = "batman.msg.broadcastsLastSeen"
@@ -970,6 +974,14 @@ final class MessagingStore {
                 : "\(toName) already proposed this trade — reply to it in your inbox instead of sending a duplicate."
             return
         }
+        // Same-day lock: can't give OR take a day already committed to an accepted trade — offer another day.
+        if loopID == nil, !isECB {
+            let committed = committedDayIDs()
+            if let clash = Set(take + give).sorted().first(where: committed.contains) {
+                committedNotice = "You already traded \(DayFmt.nice(clash)) — offer a different day."
+                return
+            }
+        }
         let perfect = MessagingStore.requestPerfectMatch(
             give: give, take: take, isECB: isECB,
             recipientSeeking: recipient?.seekingDayIDs ?? [],
@@ -1114,6 +1126,11 @@ final class MessagingStore {
         // Never persist a note-less counter — it renders as a blank "counter-offer" row (TRADE-INBOX Stage 7).
         // Accept/decline legitimately carry no note (they show as a status line), so this guards `.countered` only.
         if status == .countered, note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, imageBase64 == nil { return }
+        // Same-day lock: can't accept/counter a trade whose day I already committed to another accepted trade.
+        if status == .accepted || status == .countered, let clash = committedConflictDay(request) {
+            committedNotice = "You already traded \(DayFmt.nice(clash)) — this trade is no longer possible. Offer a different day."
+            return
+        }
         let resp = TradeResponse(
             id: UUID().uuidString, requestID: request.id,
             responderID: myID, responderName: myName,
@@ -1190,6 +1207,24 @@ final class MessagingStore {
     /// set of days in play. A→B give G/take T and B→A give T/take G collapse to the same key.
     static func tradeKey(_ a: String, _ b: String, dayIDs: Set<String>) -> String {
         [a, b].sorted().joined(separator: "~") + "|" + dayIDs.sorted().joined(separator: ",")
+    }
+
+    /// Days locked by an ACCEPTED trade I'm part of — I can't give OR take them in any other trade. Optionally
+    /// exclude one group (so an accepted trade never flags itself).
+    func committedDayIDs(excludingGroup group: String? = nil) -> Set<String> {
+        var days = Set<String>()
+        for r in requests where (r.fromID == myID || r.toID == myID) && status(of: r) == .accepted {
+            if let group, r.groupKey == group { continue }
+            days.formUnion(r.giveDayIDs); days.formUnion(r.takeDayIDs)
+        }
+        return days
+    }
+
+    /// A day in `request` already committed to a DIFFERENT accepted trade (nil = clear) — drives the card
+    /// "you already traded this day" indicator + the accept/send blocks.
+    func committedConflictDay(_ request: TradeRequest) -> String? {
+        let committed = committedDayIDs(excludingGroup: request.groupKey)
+        return Set(request.giveDayIDs + request.takeDayIDs).sorted().first(where: committed.contains)
     }
 
     /// Standing-offer IDs whose linked trade has been ACCEPTED — so the offer can auto-close.
