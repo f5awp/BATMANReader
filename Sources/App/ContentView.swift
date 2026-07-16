@@ -219,8 +219,10 @@ struct ContentView: View {
             launchLoading = false
             // The first-run welcome is the WelcomeWalkthrough (full-screen cover, gated by `hasOnboarded`),
             // and it pops the What's New screen on finish. For ALREADY-onboarded users, show What's New once
-            // per app update (build changed) — unless they've turned the update screen off.
-            if hasOnboarded, settings.showUpdateOnLaunch, settings.lastSeenChangelogBuild != AppInfo.build {
+            // per app update (build changed). This intentionally IGNORES the "show update notes" toggle the
+            // FIRST time a new build runs — a genuinely new version always surfaces once — then `onClose`
+            // records the build so it never repeats; the toggle still governs re-opening it later.
+            if hasOnboarded, settings.lastSeenChangelogBuild != AppInfo.build {
                 showChangelog = true
             }
 
