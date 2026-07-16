@@ -181,10 +181,51 @@ struct FormatBar: View {
 
 // MARK: - Inbox
 
+/// One passive-match row in the Matches lane: peer + give/get counts + kind.
+struct MatchLaneRow: View {
+    let match: TradeRouter.RadarMatch
+    var body: some View {
+        HStack(spacing: 10) {
+            Avatar(name: match.peerName, id: match.peerID, size: 30)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(match.peerName).font(.dsCardTitle)
+                Text("You give \(match.giveDayIDs.count) · get \(match.takeDayIDs.count)")
+                    .font(.dsCardMeta).foregroundStyle(.secondary)
+            }
+            Spacer()
+            KindChip(kind: match.kind)
+        }
+    }
+}
+
+/// A passive match's detail: the days you'd give and get. Proposing happens from the calendar day (which
+/// carries the alternates), so this is read-only orientation.
+struct MatchDetailView: View {
+    let match: TradeRouter.RadarMatch
+    var body: some View {
+        List {
+            Section("You give") { ForEach(match.giveDayIDs, id: \.self) { Text(Self.pretty($0)) } }
+            Section("You get")  { ForEach(match.takeDayIDs, id: \.self) { Text(Self.pretty($0)) } }
+            Section {
+                Text("Open either day on your calendar to propose — the proposal carries alternate days \(match.peerName) can counter with.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .navigationTitle("Match · \(match.peerName)")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+    static func pretty(_ id: String) -> String {
+        guard let d = TradeMatcher.dayDate(fromISO: id) else { return id }
+        let f = DateFormatter(); f.dateFormat = "EEE, MMM d"; return f.string(from: d)
+    }
+}
+
 struct InboxView: View {
     private var store = MessagingStore.shared
     private var ecb = ECBAccountingStore.shared
+    private var radar = MatchStore.shared
     @Environment(\.dismiss) private var dismiss
+    @State private var topMode = 1  // 0 Matches (passive radar lane) · 1 Requests (sent/received proposals)
     @State private var filter = 0   // 0 Intents · 1 Search · 2 ECB · 3 Misc
 
     private var myID: String { SettingsManager.shared.username }
@@ -209,20 +250,30 @@ struct InboxView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                DXSegmented(selection: $filter, options: [
-                    .init(0, "Intents", badge: tabCount(0)), .init(1, "Search", badge: tabCount(1)),
-                    .init(2, "ECB", badge: tabCount(2)), .init(3, "Qual Swap", badge: tabCount(3)),
-                ], color: { v in [0: AppColor.heat, 1: AppColor.primary, 2: AppColor.success, 3: AppColor.special][v] })
-                .padding()
+                // Top split: passive Matches (what the radar found for you) vs Requests (actual proposals).
+                DXSegmented(selection: $topMode, options: [
+                    .init(0, "Matches", badge: matchCount), .init(1, "Requests", badge: 0),
+                ], color: { v in [0: AppColor.success, 1: AppColor.primary][v] })
+                .padding([.horizontal, .top])
 
-                DXPaletteStripe(height: 4).padding(.horizontal)
+                if topMode == 0 {
+                    matchesLane
+                } else {
+                    DXSegmented(selection: $filter, options: [
+                        .init(0, "Intents", badge: tabCount(0)), .init(1, "Search", badge: tabCount(1)),
+                        .init(2, "ECB", badge: tabCount(2)), .init(3, "Qual Swap", badge: tabCount(3)),
+                    ], color: { v in [0: AppColor.heat, 1: AppColor.primary, 2: AppColor.success, 3: AppColor.special][v] })
+                    .padding()
 
-                if filter == 2 { ecbTab } else { requestList }
+                    DXPaletteStripe(height: 4).padding(.horizontal)
+
+                    if filter == 2 { ecbTab } else { requestList }
+                }
             }
             .navigationTitle("Trade Inbox")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { DXCloseButton { dismiss() } } }
-            .task { await store.refresh(); await TradeProfileStore.shared.refreshOthers(); await ecb.syncOnLaunch() }   // load peers so status renders (A7/B8 / audit #7) + ECB confirmations
+            .task { await store.refresh(); await TradeProfileStore.shared.refreshOthers(); await ecb.syncOnLaunch(); await radar.recompute(scope: .local) }   // load peers so status renders (A7/B8 / audit #7) + ECB confirmations + radar matches
             .refreshable { await store.refresh(); await TradeProfileStore.shared.refreshOthers(); await ecb.syncOnLaunch() }
         }
     }
@@ -249,6 +300,34 @@ struct InboxView: View {
                     Section("Offers to you · highest ECB first") { ForEach(incomingECB) { row($0) } }
                 }
             }
+        }
+    }
+
+    /// Unique passive matches the radar found (a match can span several days, so dedupe across the per-day index).
+    private var uniqueMatches: [TradeRouter.RadarMatch] {
+        Array(Set(radar.matchesByDay.values.flatMap { $0 })).sorted { ($0.takeDayIDs.min() ?? "") < ($1.takeDayIDs.min() ?? "") }
+    }
+    private var matchCount: Int { Set(radar.matchesByDay.values.flatMap { $0 }).count }
+
+    /// Matches lane: passive radar matches (no request sent yet). Tap one to see the days, then propose from
+    /// the calendar. Pull to refresh re-runs the radar.
+    @ViewBuilder private var matchesLane: some View {
+        let matches = uniqueMatches
+        if matches.isEmpty {
+            ContentUnavailableView("No Matches Yet", systemImage: "sparkle.magnifyingglass",
+                description: Text("When someone's trade lines up with yours it shows here — no request needed. Pull to refresh the radar."))
+                .refreshable { await radar.recompute() }
+        } else {
+            List {
+                Section {
+                    ForEach(matches) { m in
+                        NavigationLink { MatchDetailView(match: m) } label: { MatchLaneRow(match: m) }
+                    }
+                } footer: {
+                    Text("Passive matches the radar found. Open one to see the days, then propose from your calendar.")
+                }
+            }
+            .refreshable { await radar.recompute() }
         }
     }
 
