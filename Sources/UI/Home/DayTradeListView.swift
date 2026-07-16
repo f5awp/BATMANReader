@@ -43,6 +43,22 @@ struct DayTradeListPane: View {
     @State private var wantToWork: [TradeRouter.DayTradeRow] = []
     @State private var loading = true
     @State private var selectedCandidate: PlanCandidate?   // tapped person → 2-way calendar
+    @State private var fShifts: Set<ShiftAvailabilityType> = []   // shift-type filter (AM/PM/MID)
+    @State private var fQuals: Set<String> = []                   // qual filter (desk's required qual)
+
+    /// The list shown for this day (off → pickups, working → who-could-work).
+    private var activeRows: [TradeRouter.DayTradeRow] { target.isOff ? pickups : wantToWork }
+    private func shiftOf(_ r: TradeRouter.DayTradeRow) -> ShiftAvailabilityType { .infer(fromStartHour: r.startHour) }
+    private func qualOf(_ r: TradeRouter.DayTradeRow) -> String? { DeskRules.requiredQual(forDesk: r.desk) }
+    private var availShifts: [ShiftAvailabilityType] {
+        ShiftAvailabilityType.allCases.filter { s in activeRows.contains { shiftOf($0) == s } }
+    }
+    private var availQuals: [String] { Set(activeRows.compactMap { qualOf($0) }).sorted() }
+    private func passesFilter(_ r: TradeRouter.DayTradeRow) -> Bool {
+        (fShifts.isEmpty || fShifts.contains(shiftOf(r)))
+            && (fQuals.isEmpty || (qualOf(r).map { fQuals.contains($0) } ?? false))
+    }
+    private var shownRows: [TradeRouter.DayTradeRow] { activeRows.filter(passesFilter) }
 
     private var prettyDate: String {
         guard let d = TradeMatcher.dayDate(fromISO: target.dayID) else { return target.dayID }
@@ -64,27 +80,20 @@ struct DayTradeListPane: View {
 
                 if loading {
                     Section { HStack { Spacer(); ProgressView(); Spacer() } }
-                } else if target.isOff {
-                    // OFF day → people looking to have this day off (shifts I could pick up).
-                    Section {
-                        if pickups.isEmpty {
-                            emptyRow("Nobody working this day has marked it to trade away.")
-                        } else {
-                            ForEach(pickups) { personCard($0, showsShift: true) }
-                        }
-                    } header: {
-                        Label("Shifts you can pick up", systemImage: "tray.and.arrow.down")
-                    } footer: { radarStamp }
                 } else {
-                    // WORKING day → people looking to work this day (they'd take my shift).
+                    if availShifts.count > 1 || !availQuals.isEmpty { filterBar }
                     Section {
-                        if wantToWork.isEmpty {
-                            emptyRow("Nobody has marked wanting to work this day.")
+                        if shownRows.isEmpty {
+                            emptyRow(activeRows.isEmpty
+                                     ? (target.isOff ? "Nobody working this day has marked it to trade away."
+                                                     : "Nobody could work this day.")
+                                     : "No one matches these filters.")
                         } else {
-                            ForEach(wantToWork) { personCard($0, showsShift: false) }
+                            ForEach(shownRows) { personCard($0, showsShift: target.isOff) }
                         }
                     } header: {
-                        Label("Wants to work this day", systemImage: "hand.raised")
+                        Label(target.isOff ? "Shifts you can pick up" : "Who could work this day",
+                              systemImage: target.isOff ? "tray.and.arrow.down" : "hand.raised")
                     } footer: { radarStamp }
                 }
             }
@@ -127,6 +136,41 @@ struct DayTradeListPane: View {
 
     @ViewBuilder private func emptyRow(_ text: String) -> some View {
         Text(text).font(.caption).foregroundStyle(.secondary)
+    }
+
+    /// Shift-type + qual filter chips (only the values actually present in this day's list appear).
+    @ViewBuilder private var filterBar: some View {
+        Section {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(availShifts, id: \.self) { s in
+                        filterChip(s.rawValue, on: fShifts.contains(s), tint: AppColor.primary) {
+                            if fShifts.contains(s) { fShifts.remove(s) } else { fShifts.insert(s) }
+                        }
+                    }
+                    ForEach(availQuals, id: \.self) { q in
+                        filterChip(q, on: fQuals.contains(q), tint: AppColor.special) {
+                            if fQuals.contains(q) { fQuals.remove(q) } else { fQuals.insert(q) }
+                        }
+                    }
+                    if !fShifts.isEmpty || !fQuals.isEmpty {
+                        Button { fShifts = []; fQuals = [] } label: {
+                            Label("Clear", systemImage: "xmark.circle.fill").font(.caption)
+                        }.buttonStyle(.plain).foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.vertical, 2)
+            }
+        } header: { Text("Filter") }
+    }
+
+    private func filterChip(_ label: String, on: Bool, tint: Color, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(label).font(.dsBadge)
+                .padding(.horizontal, 10).padding(.vertical, 5)
+                .background(on ? tint.opacity(DS.pillFill) : Color(.tertiarySystemFill), in: Capsule())
+                .foregroundStyle(on ? tint : Color.secondary)
+        }.buttonStyle(.plain)
     }
 
     @ViewBuilder private var radarStamp: some View {

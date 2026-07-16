@@ -28,6 +28,8 @@ final class MatchStore {
         let peerName: String
         let giveDayIDs: [String]   // my want-to-trade days (3/2-mutual with this peer) I'd offer
         let takeDayIDs: [String]   // the peer's offered return days (candidates for the two-way calendar)
+        var shiftTypes: Set<ShiftAvailabilityType> = []   // shift types this trade spans (for filtering)
+        var quals: Set<String> = []                        // desk quals this trade spans (for filtering)
         var id: String { peerID }
     }
     /// Precomputed per-day rows (both directions) so the day-detail Trade List is an O(1) lookup, not a scan.
@@ -140,9 +142,19 @@ final class MatchStore {
             let split = TradeRouter.classifyGives(gives, takes: m.takeDayIDs, myWantToWork: wtwNow, kindOfGive: kinds)
             let suggestGives = split.suggested.filter { !committed.contains($0) }   // never suggest a locked day
             if !suggestGives.isEmpty {
+                let takes = m.takeDayIDs.filter { !committed.contains($0) }
+                // Shift/qual facets this trade spans — from my give-day shift + the peer's return-day shift
+                // (both already in the day index) so the Suggested lane can filter by shift type and qual.
+                var shifts = Set<ShiftAvailabilityType>(); var quals = Set<String>()
+                func note(desk: String, startHour: Int) {
+                    shifts.insert(.infer(fromStartHour: startHour))
+                    if let q = DeskRules.requiredQual(forDesk: desk) { quals.insert(q) }
+                }
+                for g in suggestGives { if let row = dayIndex[g]?.wantToWork.first { note(desk: row.desk, startHour: row.startHour) } }
+                for t in takes { if let row = dayIndex[t]?.pickups.first(where: { $0.peerID == m.peerID }) { note(desk: row.desk, startHour: row.startHour) } }
                 sugg.append(SuggestedMatch(peerID: m.peerID, peerName: m.peerName,
-                                           giveDayIDs: suggestGives.sorted(),
-                                           takeDayIDs: m.takeDayIDs.filter { !committed.contains($0) }))
+                                           giveDayIDs: suggestGives.sorted(), takeDayIDs: takes,
+                                           shiftTypes: shifts, quals: quals))
             }
         }
         suggestedMatches = sugg.sorted { $0.peerName < $1.peerName }
