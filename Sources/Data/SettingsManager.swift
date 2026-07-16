@@ -272,6 +272,11 @@ final class SettingsManager {
     var dailyDigestHour: Int {
         didSet { defaults.set(dailyDigestHour, forKey: Keys.dailyDigestHour) }
     }
+    /// Standing conditional offers auto-match: when ON, a standing offer that becomes fillable alerts you
+    /// automatically. Turn OFF to stop those pushes (offers still work — check them manually). Default ON.
+    var standingOfferAutoMatch: Bool {
+        didSet { defaults.set(standingOfferAutoMatch, forKey: Keys.standingOfferAutoMatch) }
+    }
     /// Private 2000-char scratch notes — synced privately across YOUR devices (A3).
     var privateNotes: String {
         didSet { defaults.set(String(privateNotes.prefix(2000)), forKey: Keys.privateNotes) }
@@ -332,6 +337,7 @@ final class SettingsManager {
         useCloudKit              = defaults.bool(forKey: Keys.useCloudKit)
         dailyDigestEnabled       = (defaults.object(forKey: Keys.dailyDigestEnabled) as? Bool) ?? true   // default ON
         dailyDigestHour          = (defaults.object(forKey: Keys.dailyDigestHour) as? Int) ?? 8
+        standingOfferAutoMatch   = (defaults.object(forKey: Keys.standingOfferAutoMatch) as? Bool) ?? true   // default ON
         normalMaxPeople          = (defaults.object(forKey: Keys.normalMaxPeople) as? Int) ?? 3   // default: pairs + 3-way
         isMercenaryMode          = defaults.bool(forKey: Keys.isMercenaryMode)
         statusBroadcast          = defaults.string(forKey: Keys.statusBroadcast) ?? ""
@@ -371,6 +377,7 @@ final class SettingsManager {
         static let useCloudKit   = "batman.useCloudKit"
         static let dailyDigestEnabled = "batman.dailyDigestEnabled"
         static let dailyDigestHour = "batman.dailyDigestHour"
+        static let standingOfferAutoMatch = "batman.standingOfferAutoMatch"
         static let normalMaxPeople = "batman.normalMaxPeople"
         static let isMercenaryMode = "batman.isMercenaryMode"
         static let statusBroadcast = "batman.statusBroadcast"

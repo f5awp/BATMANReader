@@ -1308,6 +1308,16 @@ struct TradeSettingsSheet: View {
 
     @ViewBuilder private var tradeSettings: some View {
         Section {
+            Toggle("Auto-match standing offers", isOn: Binding(
+                get: { settings.standingOfferAutoMatch },
+                set: { settings.standingOfferAutoMatch = $0 }))
+        } header: {
+            Text("Match Radar")
+        } footer: {
+            Text("When on, a standing \"trade X to get Y\" offer alerts you the moment a peer can fill it. Turn off to stop those pushes — your offers still match, you just review them manually in Standing Offers.")
+        }
+
+        Section {
             Picker("Accepting", selection: openness) {
                 ForEach(TradeOpenness.allCases, id: \.self) { Text($0.label).tag($0) }
             }

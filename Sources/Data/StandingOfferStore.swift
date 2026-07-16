@@ -71,7 +71,8 @@ final class StandingOfferStore {
         matchesByOffer = result
         let satisfied = Set(result.compactMap { $0.value.isEmpty ? nil : $0.key })
         let newly = hasBaselined ? satisfied.subtracting(seenSatisfiedOfferIDs) : []
-        if !newly.isEmpty {
+        // Auto-match alerts respect the Trade Settings toggle; offers still match + show for manual review.
+        if !newly.isEmpty, SettingsManager.shared.standingOfferAutoMatch {
             let items: [NotificationManager.StandingAlert] = newly.compactMap { id in
                 guard let offer = offers.first(where: { $0.id == id }), let m = result[id]?.first else { return nil }
                 return .init(getDayID: m.getDayIDs.first ?? offer.getDayIDs.first ?? "",
