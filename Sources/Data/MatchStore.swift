@@ -32,6 +32,8 @@ final class MatchStore {
     /// Baseline of mutual-match keys already alerted (a match key = peerID + its sorted days). A mutual match
     /// alerts BOTH parties (each device detects it), regardless of watch.
     private var seenMatchKeys: Set<String> = []
+    /// Give-days already auto-sent (so each auto-matches once; re-arms if it stops matching then matches again).
+    private var autoSentGiveDays: Set<String> = []
     private(set) var lastRefreshed: Date?
     /// True once a computed. The FIRST-EVER recompute records current opportunities silently (no spam for
     /// pre-existing ones); only later recomputes notify. Also gates the day-detail cold-start compute.
@@ -45,6 +47,7 @@ final class MatchStore {
         seenPickupDays = Set(UserDefaults.standard.stringArray(forKey: Keys.seen) ?? [])
         seenTakerDays  = Set(UserDefaults.standard.stringArray(forKey: Keys.seenTaker) ?? [])
         seenMatchKeys  = Set(UserDefaults.standard.stringArray(forKey: Keys.seenMatch) ?? [])
+        autoSentGiveDays = Set(UserDefaults.standard.stringArray(forKey: Keys.autoSent) ?? [])
         hasBaselined   = UserDefaults.standard.bool(forKey: Keys.baselined)
         radarStateUpdatedAt = (UserDefaults.standard.object(forKey: Keys.stateUpdatedAt) as? Date) ?? .distantPast
         loadCachedIndex()   // show last session's Trade List instantly on cold launch; recompute refreshes it
@@ -88,6 +91,7 @@ final class MatchStore {
     func recompute(scope: Scope = .intentsOnly) async -> (pickups: Set<String>, takers: Set<String>) {
         let me = SettingsManager.shared.username
         guard !me.isEmpty else { return ([], []) }
+        let firstRun = !hasBaselined
         if scope != .local { await TradeProfileStore.shared.refreshOthers() }
         let r = await TradeRouter.radarScan(excluding: me)
         // gained = opportunities NEW since baseline. First-ever run (no baseline) → none, so we never alert
@@ -121,6 +125,7 @@ final class MatchStore {
             }
         }
         if !newMutual.isEmpty { await NotificationManager.shared.notifyMutualMatch(newMutual) }
+        await autoMatchFromMatches(r.matches, firstRun: firstRun)   // unified auto-send off marked intents
         seenMatchKeys = matchKeys
         UserDefaults.standard.set(Array(matchKeys), forKey: Keys.seenMatch)
         // Record the CURRENT opportunities as the baselines (persisted) so each notifies at most once.
@@ -136,6 +141,46 @@ final class MatchStore {
     /// digest so unwatched matches still surface without per-day spam (delivery is on-open until push lands).
     var unwatchedOpportunityCount: Int {
         pickupAvailableDays.union(takerAvailableDays).subtracting(watchedDays).count
+    }
+
+    /// UNIFIED AUTO-MATCH: your marked intents ARE the standing offers. For each of your want-to-trade days
+    /// that a mutual match exists for, auto-send the swap to the top few complementary peers (claimed
+    /// accounts only), sharing one offerID per give-day for first-accept-wins. Gated by the Trade Settings
+    /// toggle; the FIRST run only records a baseline so it never mass-sends pre-existing matches; sends once
+    /// per give-day (re-arms if the day stops matching then matches again). Auto-sent trades show in
+    /// Auto-Matches / Requests like any proposal.
+    static let autoMatchCap = 3
+    private func autoMatchFromMatches(_ matches: [TradeRouter.RadarMatch], firstRun: Bool) async {
+        var byGive: [String: [(peer: TradeRouter.RadarMatch, take: String)]] = [:]
+        for m in matches where TradeProfileStore.shared.isActiveAccount(m.peerID) {
+            guard let take = m.takeDayIDs.first else { continue }
+            for give in m.giveDayIDs { byGive[give, default: []].append((peer: m, take: take)) }
+        }
+        let matchable = Set(byGive.keys)
+        // First run, or toggle off → just record the baseline; never blast pre-existing matches.
+        guard !firstRun, SettingsManager.shared.standingOfferAutoMatch else {
+            autoSentGiveDays = matchable
+            UserDefaults.standard.set(Array(autoSentGiveDays), forKey: Keys.autoSent)
+            return
+        }
+        let priors = MessagingStore.shared.acceptancePriorMap()
+        var alerts: [NotificationManager.StandingAlert] = []
+        for (give, cands) in byGive where !autoSentGiveDays.contains(give) {
+            let ranked = cands.sorted { (priors[$0.peer.peerID] ?? 0) > (priors[$1.peer.peerID] ?? 0) }.prefix(Self.autoMatchCap)
+            guard let lead = ranked.first else { continue }
+            let offerID = UUID().uuidString
+            for c in ranked {
+                await MessagingStore.shared.sendRequest(
+                    to: c.peer.peerID, toName: c.peer.peerName, note: "Auto-match trade.",
+                    take: [c.take], give: [give],
+                    offerID: ranked.count > 1 ? offerID : nil, origin: .intents)
+            }
+            autoSentGiveDays.insert(give)
+            alerts.append(.init(getDayID: lead.take, giveDayID: give, peer: lead.peer.peerName, sentCount: ranked.count))
+        }
+        autoSentGiveDays.formIntersection(matchable)   // forget days that stopped matching, so they can re-arm
+        UserDefaults.standard.set(Array(autoSentGiveDays), forKey: Keys.autoSent)
+        if !alerts.isEmpty { await NotificationManager.shared.notifyStanding(alerts) }
     }
 
     /// A day has a star — the SAME marker for both directions: an off-day pickup you can work, OR a working
@@ -191,6 +236,7 @@ final class MatchStore {
         static let seen           = "batman.radar.seenPickupDays"
         static let seenTaker      = "batman.radar.seenTakerDays"
         static let seenMatch      = "batman.radar.seenMatchKeys"
+        static let autoSent       = "batman.radar.autoSentGiveDays"
         static let baselined      = "batman.radar.baselined"
         static let stateUpdatedAt = "batman.radar.stateUpdatedAt"
     }

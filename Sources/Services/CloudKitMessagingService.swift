@@ -176,7 +176,6 @@ final class PrivateStateStore {
         await syncIntentsOnLaunch()   // B4-2 — ALWAYS runs, regardless of the notes record
         await syncPrefsOnLaunch()     // welcome / update-notes / consent flags across the user's devices
         await syncRadarOnLaunch()     // Match Radar watch/seen across the user's devices
-        await syncStandingOffersOnLaunch()   // standing conditional offers across the user's devices
     }
 
     /// Reconcile standing conditional offers across the user's devices (newer wins, by updatedAt).

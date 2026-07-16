@@ -371,16 +371,11 @@ struct InboxView: View {
         } else {
             List {
                 Section {
-                    NavigationLink { StandingOffersView() } label: {
-                        Label("Standing Offers", systemImage: "arrow.triangle.2.circlepath")
-                    }
-                }
-                Section {
                     ForEach(matches) { m in
                         NavigationLink { MatchDetailView(match: m) } label: { MatchLaneRow(match: m) }
                     }
                 } footer: {
-                    Text("Passive matches the radar found. Open one to see the days, then propose from your calendar.")
+                    Text("Matches the radar found from marked intents. With Auto-match on (Trade Settings) the app proposes these for you; otherwise open one and propose from your calendar.")
                 }
             }
             .refreshable { await radar.recompute() }
