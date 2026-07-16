@@ -22,17 +22,20 @@ daily background check), it looks at everyone eligible and asks, for each offer:
 
 If yes, the offer is **"fillable."**
 
-**What you get:** the moment an offer becomes fillable, you get a push — **"Your standing offer can be
-filled — give Aug 3, get Aug 10 with Blake."** Open the offer to see every peer who fits, and press
-**Propose** to send one of them the trade. (Tapping the push jumps you to that day.)
+**What happens when it's fillable — depends on the Auto-match toggle** (**Trade Settings → Match Radar →
+Auto-match standing offers**, default ON):
 
-**Important — this is the "v1" behavior:**
-- It **alerts YOU** and you send the proposal manually. It does **not** auto-send offers out to peers on its
-  own. (An "auto-send to the best 3–5 matches" version was designed but not built — see DX-DEV-TODO.md.)
-- You can turn the alerts off: **Trade Settings → Match Radar → Auto-match standing offers.** With it off,
-  offers still match and show in the Standing Offers list; you just don't get pushed.
+- **Auto-match ON + exactly one peer fits →** the app **auto-sends** the trade to that coworker (a real 1:1
+  request — they get the incoming-request push and can accept). You're told: **"Standing offer sent —
+  auto-sent to Blake…"**
+- **Auto-match ON but several peers fit →** the app does NOT guess; you're notified **"…can be filled…"** and
+  pick who to propose to in the offer's detail.
+- **Auto-match OFF →** it never sends on its own; you just get the heads-up and send manually.
+
+Other behavior:
 - Offers keep standing until you **pause** (toggle) or **delete** them. No auto-expiry yet.
-- Each alert fires **once** per offer becoming fillable (it won't re-nag you every recompute).
+- Each fires **once** per offer becoming fillable (it won't re-nag you every recompute), and the dedup guard
+  stops a double-send if a matching request already exists.
 
 **Where it lives / syncs:** your offers save on the phone and sync across your own devices via a private
 iCloud record — that sync needs a CloudKit field deploy (`standingOffers` / `standingOffersUpdatedAt`).
@@ -81,6 +84,13 @@ iCloud record — that sync needs a CloudKit field deploy (`standingOffers` / `s
   (Fresh proposals only; counters and ECB offers are never blocked.)
 - Proposals still carry **alternate days** so the other person can counter with a different day you offered.
 - Proposing from a day/ match / standing offer files in the recipient's inbox under **Search**.
+
+### Standing offers (new this round)
+- New **"trade X to get Y"** offers you create + manage in a **Standing Offers** screen (top of the Inbox
+  Matches lane): pick give-days + get-days + kind, toggle active, see which are fillable, propose per peer.
+- The radar checks every offer each recompute; **1:1 auto-send** (toggle-gated) fires the trade automatically
+  when exactly one coworker fits — otherwise it notifies you to choose.
+- Synced across your devices (needs the `standingOffers` CloudKit field deploy).
 
 ### Cross-device sync
 - Your **watched days** and the radar's "already told you" memory now sync across your own devices (needs the

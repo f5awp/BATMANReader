@@ -113,9 +113,12 @@ Key points about how they mix:
 
 1. In **Standing Offers** (top of the Inbox Matches lane) you create "give these days → get these days."
 2. Every recompute, the radar checks if anyone can fill both sides.
-3. When someone can, you get the **standing-offer alert** and can propose to them in one tap.
-4. v1 note: it alerts **you** and you send manually — it does NOT auto-send to peers. (An auto-send-to-best-
-   matches version was designed but not built; see DX-DEV-TODO.md.)
+3. When someone can, what happens depends on **Trade Settings → Match Radar → Auto-match** (default ON):
+   - **ON + exactly one peer fits** → the app **auto-sends** the trade to them (real 1:1 request; they can
+     accept). You're told it was sent.
+   - **ON + several peers fit** → you're notified to pick who to propose to.
+   - **OFF** → you're only notified; you send manually.
+4. The dedup guard stops a double-send, and standing offers respect the same "notify once" memory.
 
 ---
 
