@@ -830,7 +830,7 @@ struct CompactSwapCard: View {
                     .foregroundStyle(AppColor.primary).accessibilityLabel("Day-for-day")
             }
             if m.ecb {
-                Image(systemName: "star.circle.fill").font(.system(size: 11, weight: .bold))
+                Image(systemName: "dollarsign.circle.fill").font(.system(size: 11, weight: .bold))
                     .foregroundStyle(AppColor.pending).accessibilityLabel("ECB")
             }
             if package.qualSwap != nil {
