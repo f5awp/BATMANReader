@@ -54,28 +54,34 @@ struct DayTradeListPane: View {
     @State private var packages: [TradePackage] = []       // real ranked swap packages (both directions)
     @State private var detailPackage: TradePackage?         // tapped card → schedule-comparison detail
     @State private var loading = true
-    @State private var limitDate = false                    // filter by the flexible day's date range
+    @State private var limitDate = false                    // filter by the flexible day's date(s)
+    @State private var dateMode = 0                         // 0 = range · 1 = specific dates
     @State private var dateFrom = Date()
     @State private var dateTo = Date()
+    @State private var specificDates: Set<DateComponents> = []
 
     private static let isoF: DateFormatter = { let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; return f }()
-    /// The active date range (when the filter is on and valid).
-    private var dateRange: ClosedRange<Date>? {
-        guard limitDate, dateFrom <= dateTo else { return nil }
-        return dateFrom...dateTo
+    /// The allowed ISO days from the filter — a contiguous range OR a set of specific dates. nil = filter off.
+    private var allowedDays: Set<String>? {
+        guard limitDate else { return nil }
+        let cal = Calendar.current
+        if dateMode == 1 {
+            return Set(specificDates.compactMap { cal.date(from: $0) }.map { Self.isoF.string(from: $0) })
+        }
+        guard dateFrom <= dateTo else { return nil }
+        var out = Set<String>(); var d = cal.startOfDay(for: dateFrom); let end = cal.startOfDay(for: dateTo)
+        while d <= end { out.insert(Self.isoF.string(from: d)); d = cal.date(byAdding: .day, value: 1, to: d) ?? end.addingTimeInterval(86_400) }
+        return out
     }
-    /// The two-way seed range (working days limit the return/take dates; off days don't seed a range).
-    private var returnRange: ClosedRange<Date>? { target.isOff ? nil : dateRange }
 
     /// Packages after the date filter, applied to the FLEXIBLE side: on a working day that's the return I get
     /// (their days); on an off day it's the day I give back (my days) — since the day I pick up is fixed.
     private var shownPackages: [TradePackage] {
-        guard let range = dateRange else { return packages }
-        let from = Self.isoF.string(from: range.lowerBound), to = Self.isoF.string(from: range.upperBound)
+        guard let allowed = allowedDays, !allowed.isEmpty else { return packages }
         return packages.filter { pkg in
             pkg.assignments.flatMap { a -> [String] in
                 target.isOff ? a.giveDayIDs : (a.takeOptions.isEmpty ? a.takeDayIDs : a.takeOptions)
-            }.contains { $0 >= from && $0 <= to }
+            }.contains { allowed.contains($0) }
         }
     }
 
@@ -143,13 +149,20 @@ struct DayTradeListPane: View {
         Text(text).font(.caption).foregroundStyle(.secondary)
     }
 
-    /// A single date-range filter (no empty chip box). Narrows to swaps whose flexible day falls in the range.
+    /// Date filter — a contiguous range OR specific dates. Narrows to swaps whose flexible day matches.
     @ViewBuilder private var filterBar: some View {
         Section {
             Toggle(target.isOff ? "Filter by give-back date" : "Filter by return date", isOn: $limitDate.animation())
             if limitDate {
-                DatePicker("From", selection: $dateFrom, displayedComponents: .date)
-                DatePicker("To", selection: $dateTo, in: dateFrom..., displayedComponents: .date)
+                Picker("Mode", selection: $dateMode.animation()) {
+                    Text("Range").tag(0); Text("Specific dates").tag(1)
+                }.pickerStyle(.segmented)
+                if dateMode == 0 {
+                    DatePicker("From", selection: $dateFrom, displayedComponents: .date)
+                    DatePicker("To", selection: $dateTo, in: dateFrom..., displayedComponents: .date)
+                } else {
+                    MultiDatePicker("Dates", selection: $specificDates, in: Date()...).frame(minHeight: 300)
+                }
             }
         } header: { Text("Filter") }
     }

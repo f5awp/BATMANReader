@@ -851,6 +851,9 @@ struct DayIntentEditor: View {
     @State private var acceptTypes: Set<ShiftAvailabilityType> = []  // shift types accepted in return
     @State private var limitDates = false                    // restrict the return to specific dates
     @State private var acceptDates: Set<DateComponents> = []  // the accepted return dates (when limitDates)
+    @State private var acceptDateMode = 1                     // 0 = range · 1 = specific dates
+    @State private var accFrom = Date()                       // range mode: first accepted date
+    @State private var accTo = Date()                         // range mode: last accepted date
     @State private var acceptQuals: Set<String> = []          // accept a return only on desks needing these quals
     @State private var ecbAmount: Double = 9                   // ECB points offered (Day/ECB/Both days)
     @State private var ecbIsIOU = false                        // pay the ECB on a future date (IOU) rather than now
@@ -951,11 +954,19 @@ struct DayIntentEditor: View {
                                     }
                                 }
                             }
-                            // Optional date scope — a multi-select calendar of the dates you'll accept.
+                            // Optional date scope — a contiguous range OR specific dates you'll accept.
                             Toggle("Only on certain dates", isOn: $limitDates.animation())
                             if limitDates {
-                                MultiDatePicker("Accepted dates", selection: $acceptDates, in: Date()...)
-                                    .frame(minHeight: 320)
+                                Picker("Mode", selection: $acceptDateMode.animation()) {
+                                    Text("Range").tag(0); Text("Specific dates").tag(1)
+                                }.pickerStyle(.segmented)
+                                if acceptDateMode == 0 {
+                                    DatePicker("From", selection: $accFrom, displayedComponents: .date)
+                                    DatePicker("To", selection: $accTo, in: accFrom..., displayedComponents: .date)
+                                } else {
+                                    MultiDatePicker("Accepted dates", selection: $acceptDates, in: Date()...)
+                                        .frame(minHeight: 320)
+                                }
                             }
                         }
                     } header: {
@@ -1044,7 +1055,12 @@ struct DayIntentEditor: View {
             var scope = intents.acceptScope(forDay: target.dayID)
             scope.shiftTypes = acceptTypes
             scope.quals = acceptQuals
-            let iso = (limitDates && !acceptDates.isEmpty) ? Self.isoFromComponents(acceptDates) : nil
+            // Range mode materializes the span to ISO days; specific mode uses the multi-select set.
+            let iso: Set<String>? = {
+                guard limitDates else { return nil }
+                if acceptDateMode == 0 { return accFrom <= accTo ? Self.isoDays(from: accFrom, to: accTo) : nil }
+                let s = Self.isoFromComponents(acceptDates); return s.isEmpty ? nil : s
+            }()
             scope.dates = (iso?.isEmpty ?? true) ? nil : iso
             intents.setAcceptScope(scope, forDay: target.dayID)
             // ECB terms only matter when this day can be traded for points (ECB or Both).
@@ -1068,6 +1084,13 @@ struct DayIntentEditor: View {
 
     // MARK: Accept-scope date ↔ ISO conversion (MultiDatePicker uses DateComponents; the model uses ISO days)
     private static let isoDayF: DateFormatter = { let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; return f }()
+    /// Every ISO day in the contiguous [from, to] span — how a range materializes into the accept-scope set.
+    private static func isoDays(from: Date, to: Date) -> Set<String> {
+        let cal = Calendar.current
+        var out = Set<String>(); var d = cal.startOfDay(for: from); let end = cal.startOfDay(for: to)
+        while d <= end { out.insert(isoDayF.string(from: d)); d = cal.date(byAdding: .day, value: 1, to: d) ?? end.addingTimeInterval(86_400) }
+        return out
+    }
     private static func componentsFromISO(_ iso: Set<String>) -> Set<DateComponents> {
         let cal = Calendar.current
         return Set(iso.compactMap { isoDayF.date(from: $0) }.map { cal.dateComponents([.year, .month, .day], from: $0) })
