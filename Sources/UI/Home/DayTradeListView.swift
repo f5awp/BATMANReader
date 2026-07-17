@@ -51,54 +51,31 @@ struct DayTradeListPane: View {
     @Environment(\.dismiss) private var dismiss
     private let radar = MatchStore.shared
 
-    @State private var pickups: [TradeRouter.DayTradeRow] = []
-    @State private var wantToWork: [TradeRouter.DayTradeRow] = []
-    @State private var packages: [TradePackage] = []       // working day: real ranked swap packages
+    @State private var packages: [TradePackage] = []       // real ranked swap packages (both directions)
     @State private var detailPackage: TradePackage?         // tapped card → schedule-comparison detail
     @State private var loading = true
-    @State private var selectedCandidate: PlanCandidate?   // tapped person → 2-way calendar (off-day pickups)
-    @State private var fShifts: Set<ShiftAvailabilityType> = []   // shift-type filter (AM/PM/MID)
-    @State private var fQuals: Set<String> = []                   // qual filter (desk's required qual)
-    @State private var limitReturn = false                       // H6: filter by the return date I want back
-    @State private var returnFrom = Date()
-    @State private var returnTo = Date()
+    @State private var limitDate = false                    // filter by the flexible day's date range
+    @State private var dateFrom = Date()
+    @State private var dateTo = Date()
 
     private static let isoF: DateFormatter = { let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; return f }()
-    /// The active return-date range (working days only, when the filter is on and valid).
-    private var returnRange: ClosedRange<Date>? {
-        guard limitReturn, !target.isOff, returnFrom <= returnTo else { return nil }
-        return returnFrom...returnTo
+    /// The active date range (when the filter is on and valid).
+    private var dateRange: ClosedRange<Date>? {
+        guard limitDate, dateFrom <= dateTo else { return nil }
+        return dateFrom...dateTo
     }
+    /// The two-way seed range (working days limit the return/take dates; off days don't seed a range).
+    private var returnRange: ClosedRange<Date>? { target.isOff ? nil : dateRange }
 
-    /// The list shown for this day (off → pickups, working → who-could-work).
-    private var activeRows: [TradeRouter.DayTradeRow] { target.isOff ? pickups : wantToWork }
-    private func shiftOf(_ r: TradeRouter.DayTradeRow) -> ShiftAvailabilityType { .infer(fromStartHour: r.startHour) }
-    private func qualOf(_ r: TradeRouter.DayTradeRow) -> String? { DeskRules.requiredQual(forDesk: r.desk) }
-    private var availShifts: [ShiftAvailabilityType] {
-        ShiftAvailabilityType.allCases.filter { s in activeRows.contains { shiftOf($0) == s } }
-    }
-    private var availQuals: [String] { Set(activeRows.compactMap { qualOf($0) }).sorted() }
-    private func passesFilter(_ r: TradeRouter.DayTradeRow) -> Bool {
-        (fShifts.isEmpty || fShifts.contains(shiftOf(r)))
-            && (fQuals.isEmpty || (qualOf(r).map { fQuals.contains($0) } ?? false))
-    }
-    private var shownRows: [TradeRouter.DayTradeRow] {
-        var rows = activeRows.filter(passesFilter)
-        if let range = returnRange {   // H6: only people who could give me a return day in the range
-            let peers = radar.peersWithReturnDay(fromISO: Self.isoF.string(from: range.lowerBound),
-                                                 toISO: Self.isoF.string(from: range.upperBound))
-            rows = rows.filter { peers.contains($0.peerID) }
-        }
-        return rows
-    }
-    /// Working-day swap packages, filtered by the return-date range (H6) — a package qualifies if any of the
-    /// peer's return options fall in the range. Already rank-sorted at load.
+    /// Packages after the date filter, applied to the FLEXIBLE side: on a working day that's the return I get
+    /// (their days); on an off day it's the day I give back (my days) — since the day I pick up is fixed.
     private var shownPackages: [TradePackage] {
-        guard let range = returnRange else { return packages }
+        guard let range = dateRange else { return packages }
         let from = Self.isoF.string(from: range.lowerBound), to = Self.isoF.string(from: range.upperBound)
         return packages.filter { pkg in
-            pkg.assignments.flatMap { $0.takeOptions.isEmpty ? $0.takeDayIDs : $0.takeOptions }
-                .contains { $0 >= from && $0 <= to }
+            pkg.assignments.flatMap { a -> [String] in
+                target.isOff ? a.giveDayIDs : (a.takeOptions.isEmpty ? a.takeDayIDs : a.takeOptions)
+            }.contains { $0 >= from && $0 <= to }
         }
     }
 
@@ -122,24 +99,13 @@ struct DayTradeListPane: View {
 
                 if loading {
                     Section { HStack { Spacer(); ProgressView(); Spacer() } }
-                } else if target.isOff {
-                    if availShifts.count > 1 || !availQuals.isEmpty { filterBar }
-                    Section {
-                        if shownRows.isEmpty {
-                            emptyRow(activeRows.isEmpty ? "Nobody working this day has marked it to trade away."
-                                                       : "No one matches these filters.")
-                        } else {
-                            ForEach(shownRows) { personCard($0, showsShift: true) }
-                        }
-                    } header: {
-                        Label("Shifts you can pick up", systemImage: "tray.and.arrow.down")
-                    } footer: { radarStamp }
                 } else {
-                    filterBar   // return-date range (H6)
+                    filterBar
                     Section {
                         if shownPackages.isEmpty {
-                            emptyRow(packages.isEmpty ? "No swaps found for this day."
-                                                      : "No swaps have a return date in that range.")
+                            emptyRow(packages.isEmpty
+                                     ? (target.isOff ? "No swaps found to pick up this day." : "No swaps found for this day.")
+                                     : "No swaps match that date range.")
                         } else {
                             ForEach(shownPackages) { pkg in
                                 CompactSwapCard(package: pkg,
@@ -150,7 +116,8 @@ struct DayTradeListPane: View {
                             }
                         }
                     } header: {
-                        Label("Who could work this day", systemImage: "hand.raised")
+                        Label(target.isOff ? "Shifts you can pick up" : "Who could work this day",
+                              systemImage: target.isOff ? "tray.and.arrow.down" : "hand.raised")
                     } footer: { radarStamp }
                 }
             }
@@ -165,83 +132,26 @@ struct DayTradeListPane: View {
             }
             // Tab-gated: only load when the Trade List tab is active (keyed so it fires on activation + day change).
             .task(id: "\(target.dayID)-\(isActive)") { if isActive { await reload(fullRadar: false) } }
-            // Tap a person → the two-way calendar, seeded with this day (their shift on an off day, mine on
-            // a working day) so both parties' alternates are visible.
-            .sheet(item: $selectedCandidate) { cand in
-                TwoWaySheet(candidate: cand,
-                            initialGive: target.isOff ? [] : [target.dayID],
-                            initialTake: target.isOff ? [target.dayID] : [],
-                            returnRange: returnRange)   // H6: limit their return dates to my chosen range
-            }
-            // Working-day swap card → the schedule-comparison detail (twin calendars) to pick days + propose.
+            // Tap a swap card → the schedule-comparison detail (twin calendars) to pick days + propose.
             .fullScreenCover(item: $detailPackage) { pkg in
                 PackageDetailView(package: pkg, onPropose: { p in Task { await propose(p) } }, onExecute: {})
             }
         }
     }
 
-    /// A tappable person, styled as an app card (ECB / qual-swap format) → opens the 2-way calendar.
-    @ViewBuilder private func personCard(_ row: TradeRouter.DayTradeRow, showsShift: Bool) -> some View {
-        Button {
-            selectedCandidate = PlanCandidate(workerID: row.peerID, name: row.peerName, quals: [],
-                                              coveredShiftIDs: [], bookendShiftIDs: [], week: [])
-        } label: {
-            DayTradeRowView(row: row, showsShift: showsShift)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .dxCard()
-        }
-        .buttonStyle(.plain)
-        .listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
-        .listRowBackground(Color.clear)
-        .listRowSeparator(.hidden)
-    }
-
     @ViewBuilder private func emptyRow(_ text: String) -> some View {
         Text(text).font(.caption).foregroundStyle(.secondary)
     }
 
-    /// Shift-type + qual filter chips (only the values actually present in this day's list appear).
+    /// A single date-range filter (no empty chip box). Narrows to swaps whose flexible day falls in the range.
     @ViewBuilder private var filterBar: some View {
         Section {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(availShifts, id: \.self) { s in
-                        filterChip(s.rawValue, on: fShifts.contains(s), tint: AppColor.primary) {
-                            if fShifts.contains(s) { fShifts.remove(s) } else { fShifts.insert(s) }
-                        }
-                    }
-                    ForEach(availQuals, id: \.self) { q in
-                        filterChip(q, on: fQuals.contains(q), tint: AppColor.special) {
-                            if fQuals.contains(q) { fQuals.remove(q) } else { fQuals.insert(q) }
-                        }
-                    }
-                    if !fShifts.isEmpty || !fQuals.isEmpty {
-                        Button { fShifts = []; fQuals = [] } label: {
-                            Label("Clear", systemImage: "xmark.circle.fill").font(.caption)
-                        }.buttonStyle(.plain).foregroundStyle(.secondary)
-                    }
-                }
-                .padding(.vertical, 2)
-            }
-            // H6: on a working day, narrow to people who could give me a return day in a date range — and the
-            // two-way opens showing only those return dates.
-            if !target.isOff {
-                Toggle("Filter by return date", isOn: $limitReturn.animation())
-                if limitReturn {
-                    DatePicker("From", selection: $returnFrom, displayedComponents: .date)
-                    DatePicker("To", selection: $returnTo, in: returnFrom..., displayedComponents: .date)
-                }
+            Toggle(target.isOff ? "Filter by give-back date" : "Filter by return date", isOn: $limitDate.animation())
+            if limitDate {
+                DatePicker("From", selection: $dateFrom, displayedComponents: .date)
+                DatePicker("To", selection: $dateTo, in: dateFrom..., displayedComponents: .date)
             }
         } header: { Text("Filter") }
-    }
-
-    private func filterChip(_ label: String, on: Bool, tint: Color, _ action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(label).font(.dsBadge)
-                .padding(.horizontal, 10).padding(.vertical, 5)
-                .background(on ? tint.opacity(DS.pillFill) : Color(.tertiarySystemFill), in: Capsule())
-                .foregroundStyle(on ? tint : Color.secondary)
-        }.buttonStyle(.plain)
     }
 
     @ViewBuilder private var radarStamp: some View {
@@ -250,27 +160,47 @@ struct DayTradeListPane: View {
         }
     }
 
-    /// Load this day's rows from the precomputed index. A cold start (never computed) or the manual refresh
-    /// runs ONE recompute; otherwise it's an instant O(1) lookup.
+    /// Build the ranked swap packages for this day (same engine as Trade Solutions). A cold radar start runs
+    /// one recompute; then packages() explores the reciprocal swaps.
     private func reload(fullRadar: Bool) async {
         loading = true
         if fullRadar || !radar.hasComputed { await radar.recompute(scope: .local) }
+        let me = SettingsManager.shared.username
         if target.isOff {
-            // OFF day = pickups (covering someone's shift): the broad eligible pool, tier-sorted.
-            let r = radar.rows(forDay: target.dayID)
-            pickups = r.pickups.sorted { $0.tier != $1.tier ? $0.tier > $1.tier : $0.peerName < $1.peerName }
-            wantToWork = []; packages = []
+            // OFF day = pick up someone's shift on this date: swaps where a peer gives ME this day back. Run the
+            // give-away search over my working days, keep 2-person deals that can hand ME this day, and promote
+            // it to the shown "You get" so the card reads correctly.
+            let today = Calendar.current.startOfDay(for: Date())
+            let mine = ShiftStore.shared.shifts.filter { !$0.isOff && $0.date >= today }
+            let pkgs = await TradeRouter.packages(forGiveShifts: mine, excluding: me)
+            packages = pkgs.compactMap { pkg -> TradePackage? in
+                guard pkg.usesCompactCard, let a = pkg.assignments.first else { return nil }
+                let opts = a.takeOptions.isEmpty ? a.takeDayIDs : a.takeOptions
+                guard opts.contains(target.dayID) else { return nil }
+                return Self.promoteTake(pkg, to: target.dayID)
+            }.sorted { $0.rankScore > $1.rankScore }
         } else {
-            // WORKING day = trade it away: real ranked 2-person swap packages (same engine as Trade Solutions),
-            // rendered as CompactSwapCards. Falls back to nothing if no swap exists.
-            let me = SettingsManager.shared.username
+            // WORKING day = trade it away: swaps handing off THIS shift.
             if let shift = ShiftStore.shared.shifts.first(where: { $0.id == target.dayID }), !shift.isOff {
                 let pkgs = await TradeRouter.packages(forGiveShifts: [shift], excluding: me)
                 packages = pkgs.filter { $0.usesCompactCard }.sorted { $0.rankScore > $1.rankScore }
             } else { packages = [] }
-            pickups = []; wantToWork = []
         }
         loading = false
+    }
+
+    /// A copy of a 2-person package with `day` promoted to the shown give-back ("You get"), preserving scores.
+    private static func promoteTake(_ pkg: TradePackage, to day: String) -> TradePackage {
+        guard let a = pkg.assignments.first else { return pkg }
+        let a2 = PackageAssignment(workerID: a.workerID, name: a.name, giveDayIDs: a.giveDayIDs,
+                                   takeDayIDs: [day], takeOptions: a.takeOptions)
+        var p2 = TradePackage(id: pkg.id, methodology: pkg.methodology, assignments: [a2], route: pkg.route,
+                              urgency: pkg.urgency, isOptimal: pkg.isOptimal, fireCount: pkg.fireCount,
+                              bookendTotal: pkg.bookendTotal, qualSwap: pkg.qualSwap,
+                              partnerPrior: pkg.partnerPrior, acceptanceScore: pkg.acceptanceScore,
+                              coverageCount: pkg.coverageCount)
+        p2.rankScore = pkg.rankScore
+        return p2
     }
 
     /// Propose a swap package straight from the trade list — files under Requests (manual, origin .search).

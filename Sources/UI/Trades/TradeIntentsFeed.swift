@@ -786,7 +786,7 @@ struct CompactSwapCard: View {
             }
             // You get / Them get — each shown once, TOP give-back only (alternates are chosen in the detail
             // view). "+N" hints at more options. Consistent layout: the pair sits left, Spacer fills the rest.
-            HStack(alignment: .firstTextBaseline, spacing: 14) {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
                     swapLine("You", days: effectiveTake, color: BrickPalette.mineScheme)
                     if extraTakeCount > 0 {
@@ -795,6 +795,7 @@ struct CompactSwapCard: View {
                 }
                 swapLine("Them", days: a?.giveDayIDs ?? [], color: peerColor)
                 Spacer(minLength: 0)
+                methodBadges   // Day / $ sit here — under the Propose button, no extra row
             }
             if package.qualSwap != nil {
                 // Clear, always-visible notice (not just the small Q icon) that this match needs a qual swap.
@@ -806,10 +807,25 @@ struct CompactSwapCard: View {
                     .font(.dsBadge).foregroundStyle(AppColor.special)
             }
         }
-        .dxCard()
-        .padding(.horizontal)
+        .dxCard(padding: 10)
+        .padding(.horizontal, 8)
         .contentShape(Rectangle())
         .onTapGesture(perform: onOpen)
+    }
+
+    /// Method indicators (Day ⇄ / ECB $) — rendered under the Propose button so they don't crowd the header.
+    @ViewBuilder private var methodBadges: some View {
+        let m = methodIcons
+        HStack(spacing: 5) {
+            if m.day {
+                Image(systemName: "arrow.left.arrow.right").font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(AppColor.primary).accessibilityLabel("Day-for-day")
+            }
+            if m.ecb {
+                Image(systemName: "dollarsign.circle.fill").font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(AppColor.pending).accessibilityLabel("ECB")
+            }
+        }
     }
 
     /// Which trade methods this swap supports, from my give-days' kinds: a day-for-day is always possible on a
@@ -823,16 +839,6 @@ struct CompactSwapCard: View {
 
     @ViewBuilder private var badges: some View {
         HStack(spacing: 6) {
-            // Method: Day (swap), ECB (points), or both indicators when a day can go either way.
-            let m = methodIcons
-            if m.day {
-                Image(systemName: "arrow.left.arrow.right").font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(AppColor.primary).accessibilityLabel("Day-for-day")
-            }
-            if m.ecb {
-                Image(systemName: "dollarsign.circle.fill").font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(AppColor.pending).accessibilityLabel("ECB")
-            }
             if package.qualSwap != nil {
                 // Amber Q CAUTION: this solution needs a qual swap — open the card to pick the bridge.
                 Image(systemName: "q.square.fill").font(.system(size: 12, weight: .bold)).foregroundStyle(AppColor.pending)
