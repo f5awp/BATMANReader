@@ -295,7 +295,7 @@ struct InboxView: View {
     private var ecb = ECBAccountingStore.shared
     private var radar = MatchStore.shared
     @Environment(\.dismiss) private var dismiss
-    @State private var topMode = 1  // 0 AUTO (proposed + suggested) · 1 Requests (manual proposals)
+    @State private var topMode = 0  // 0 Auto (auto-sent) · 1 Suggested (you propose) · 2 Requests (manual)
     @State private var suggestedPick: MatchStore.SuggestedMatch?   // tapped Suggested → two-way calendar
     @State private var sugShifts: Set<ShiftAvailabilityType> = []  // Suggested lane shift-type filter
     @State private var sugQuals: Set<String> = []                  // Suggested lane qual filter
@@ -324,15 +324,18 @@ struct InboxView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                // Top split: passive Matches (what the radar found for you) vs Requests (actual proposals).
+                // Three lanes: Auto (the app sent it) · Suggested (radar found, you propose) · Requests (manual).
                 DXSegmented(selection: $topMode, options: [
-                    .init(0, "AUTO", badge: matchCount), .init(1, "Requests", badge: 0),
-                ], color: { v in [0: AppColor.success, 1: AppColor.primary][v] })
+                    .init(0, "Auto", badge: proposedECBOffers.count + proposedOther.count),
+                    .init(1, "Suggested", badge: suggestedMatches.count),
+                    .init(2, "Requests", badge: 0),
+                ], color: { v in [0: AppColor.success, 1: AppColor.pending, 2: AppColor.primary][v] })
                 .padding([.horizontal, .top])
 
-                if topMode == 0 {
-                    matchesLane
-                } else {
+                switch topMode {
+                case 0: autoLane
+                case 1: suggestedLane
+                default:
                     DXSegmented(selection: $filter, options: [
                         .init(1, "Search", badge: tabCount(1)),
                         .init(2, "ECB", badge: tabCount(2)), .init(3, "Qual Swap", badge: tabCount(3)),
@@ -410,7 +413,6 @@ struct InboxView: View {
         ShiftAvailabilityType.allCases.filter { s in suggestedBase.contains { $0.shiftTypes.contains(s) } }
     }
     private var sugAvailQuals: [String] { Set(suggestedBase.flatMap { $0.quals }).sorted() }
-    private var matchCount: Int { proposedECBOffers.count + proposedOther.count + suggestedMatches.count }
 
     private func inboxFilterChip(_ label: String, on: Bool, tint: Color, _ action: @escaping () -> Void) -> some View {
         Button(action: action) {
@@ -423,57 +425,67 @@ struct InboxView: View {
 
     /// Auto-Matches lane: ONE divided list — everything the radar proposed for you (Proposed), then everything
     /// it found that you could still propose (Suggested). All methods (Day / ECB / Both) live here — one place.
-    @ViewBuilder private var matchesLane: some View {
+    /// AUTO lane — trades the app sent for you (auto-matches), awaiting a response.
+    @ViewBuilder private var autoLane: some View {
         let ecbOffers = proposedECBOffers
         let other = proposedOther
-        let suggested = suggestedMatches
-        if ecbOffers.isEmpty && other.isEmpty && suggestedBase.isEmpty {
-            ContentUnavailableView("No Matches Yet", systemImage: "sparkle.magnifyingglass",
-                description: Text("When someone's trade lines up with yours it shows here. Pull to refresh the radar."))
+        if ecbOffers.isEmpty && other.isEmpty {
+            ContentUnavailableView("No Auto-Matches Yet", systemImage: "sparkle.magnifyingglass",
+                description: Text("When the app auto-sends a sure-thing trade for you it shows here. Pull to refresh the radar."))
                 .refreshable { await radar.recompute() }
         } else {
             List {
-                if !ecbOffers.isEmpty || !other.isEmpty {
-                    Section {
-                        ForEach(ecbOffers, id: \.offerID) { offer in
-                            NavigationLink { ECBOfferView(offerID: offer.offerID) } label: { ECBOfferRow(offer: offer) }
-                        }
-                        ForEach(other) { row($0) }
-                    } header: { Text("Proposed · auto-sent — awaiting a response") }
+                ForEach(ecbOffers, id: \.offerID) { offer in
+                    NavigationLink { ECBOfferView(offerID: offer.offerID) } label: { ECBOfferRow(offer: offer) }
                 }
-                if !suggestedBase.isEmpty {
+                ForEach(other) { row($0) }
+            }
+            .refreshable { await radar.recompute() }
+        }
+    }
+
+    /// SUGGESTED lane — radar found a trade you'd initiate; tap to open the two-way calendar and propose.
+    @ViewBuilder private var suggestedLane: some View {
+        let suggested = suggestedMatches
+        if suggestedBase.isEmpty {
+            ContentUnavailableView("No Suggestions Yet", systemImage: "sparkle.magnifyingglass",
+                description: Text("Mark days to trade away or work on Home; coworkers who could trade them show here for you to propose. Pull to refresh."))
+                .refreshable { await radar.recompute() }
+        } else {
+            List {
+                if sugAvailShifts.count > 1 || !sugAvailQuals.isEmpty {
                     Section {
-                        if sugAvailShifts.count > 1 || !sugAvailQuals.isEmpty {
-                            ScrollView(.horizontal, showsIndicators: false) {
-                                HStack(spacing: 8) {
-                                    ForEach(sugAvailShifts, id: \.self) { s in
-                                        inboxFilterChip(s.rawValue, on: sugShifts.contains(s), tint: AppColor.primary) {
-                                            if sugShifts.contains(s) { sugShifts.remove(s) } else { sugShifts.insert(s) }
-                                        }
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 8) {
+                                ForEach(sugAvailShifts, id: \.self) { s in
+                                    inboxFilterChip(s.rawValue, on: sugShifts.contains(s), tint: AppColor.primary) {
+                                        if sugShifts.contains(s) { sugShifts.remove(s) } else { sugShifts.insert(s) }
                                     }
-                                    ForEach(sugAvailQuals, id: \.self) { q in
-                                        inboxFilterChip(q, on: sugQuals.contains(q), tint: AppColor.special) {
-                                            if sugQuals.contains(q) { sugQuals.remove(q) } else { sugQuals.insert(q) }
-                                        }
+                                }
+                                ForEach(sugAvailQuals, id: \.self) { q in
+                                    inboxFilterChip(q, on: sugQuals.contains(q), tint: AppColor.special) {
+                                        if sugQuals.contains(q) { sugQuals.remove(q) } else { sugQuals.insert(q) }
                                     }
-                                    if !sugShifts.isEmpty || !sugQuals.isEmpty {
-                                        Button { sugShifts = []; sugQuals = [] } label: {
-                                            Label("Clear", systemImage: "xmark.circle.fill").font(.caption)
-                                        }.buttonStyle(.plain).foregroundStyle(.secondary)
-                                    }
+                                }
+                                if !sugShifts.isEmpty || !sugQuals.isEmpty {
+                                    Button { sugShifts = []; sugQuals = [] } label: {
+                                        Label("Clear", systemImage: "xmark.circle.fill").font(.caption)
+                                    }.buttonStyle(.plain).foregroundStyle(.secondary)
                                 }
                             }
                         }
-                        if suggested.isEmpty {
-                            Text("No suggestions match these filters.").font(.caption).foregroundStyle(.secondary)
-                        } else {
-                            ForEach(suggested) { m in
-                                Button { suggestedPick = m } label: { SuggestedRow(match: m) }
-                                    .buttonStyle(.plain)
-                            }
-                        }
-                    } header: { Text("Suggested · you pick the days — opens the two-way calendar") }
+                    } header: { Text("Filter") }
                 }
+                Section {
+                    if suggested.isEmpty {
+                        Text("No suggestions match these filters.").font(.caption).foregroundStyle(.secondary)
+                    } else {
+                        ForEach(suggested) { m in
+                            Button { suggestedPick = m } label: { SuggestedRow(match: m) }
+                                .buttonStyle(.plain)
+                        }
+                    }
+                } header: { Text("You pick the days — opens the two-way calendar") }
             }
             .refreshable { await radar.recompute() }
             // Tap a Suggested match → the two-way calendar seeded with the days; propose files under Requests.
