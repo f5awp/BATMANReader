@@ -296,7 +296,7 @@ struct InboxView: View {
     private var radar = MatchStore.shared
     @Environment(\.dismiss) private var dismiss
     @State private var topMode = 0  // 0 Auto (auto-sent) · 1 Suggested (you propose) · 2 Requests (manual)
-    @State private var suggestedPick: MatchStore.SuggestedMatch?   // tapped Suggested → two-way calendar
+    @State private var suggestedDetail: TradePackage?   // tapped Suggested → Trade-Solutions calendar view
     @State private var sugShifts: Set<ShiftAvailabilityType> = []  // Suggested lane shift-type filter
     @State private var sugQuals: Set<String> = []                  // Suggested lane qual filter
     @State private var filter = 1   // 1 Search · 2 ECB (manual Finder) · 3 Qual Swap — auto-matches live in Auto-Matches
@@ -481,20 +481,33 @@ struct InboxView: View {
                         Text("No suggestions match these filters.").font(.caption).foregroundStyle(.secondary)
                     } else {
                         ForEach(suggested) { m in
-                            Button { suggestedPick = m } label: { SuggestedRow(match: m) }
+                            Button { Task { await openSuggested(m) } } label: { SuggestedRow(match: m) }
                                 .buttonStyle(.plain)
                         }
                     }
-                } header: { Text("You pick the days — opens the two-way calendar") }
+                } header: { Text("You pick the days — opens the calendar view") }
             }
             .refreshable { await radar.recompute() }
-            // Tap a Suggested match → the two-way calendar seeded with the days; propose files under Requests.
-            .sheet(item: $suggestedPick) { m in
-                TwoWaySheet(candidate: PlanCandidate(workerID: m.peerID, name: m.peerName, quals: [],
-                                                     coveredShiftIDs: [], bookendShiftIDs: [], week: []),
-                            initialGive: Set(m.giveDayIDs), initialTake: Set(m.takeDayIDs))
+            // Tap a Suggested match → the Trade-Solutions calendar view (PackageDetailView); propose → Requests.
+            .fullScreenCover(item: $suggestedDetail) { pkg in
+                PackageDetailView(package: pkg, onPropose: { p in Task { await proposeSuggested(p) } }, onExecute: {})
             }
         }
+    }
+
+    /// Build the tapped peer's best day-for-day swap and open the calendar view (matches the day detail).
+    private func openSuggested(_ m: MatchStore.SuggestedMatch) async {
+        let today = Calendar.current.startOfDay(for: Date())
+        let mine = ShiftStore.shared.shifts.filter { !$0.isOff && $0.date >= today }
+        let pkgs = await TradeRouter.packages(forGiveShifts: mine, excluding: myID)
+        suggestedDetail = pkgs.first { $0.usesCompactCard && $0.assignments.first?.workerID == m.peerID }
+    }
+    private func proposeSuggested(_ pkg: TradePackage) async {
+        for a in pkg.assignments {
+            await store.sendRequest(to: a.workerID, toName: a.name, note: "Swap proposed from Suggested.",
+                                    take: a.takeDayIDs, give: a.giveDayIDs, origin: .search)
+        }
+        WidgetData.update(); suggestedDetail = nil
     }
 
     /// Intents / Search / Misc tabs: the usual sectioned request list, filtered to the active tab.

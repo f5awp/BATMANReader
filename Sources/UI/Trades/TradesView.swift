@@ -30,12 +30,13 @@ struct TradesView: View {
 
                 if segment == 0 {
                     Picker("Find mode", selection: $findMode) {
-                        Text("Search a date range").tag(0)
-                        Text("From my marked days").tag(1)
+                        Text("Date range").tag(0)
+                        Text("Complex Search").tag(1)
+                        Text("Dispatcher").tag(2)
                     }
                     .pickerStyle(.segmented)
                     .padding(.horizontal).padding(.bottom, 6)
-                    if findMode == 1 { IntentTallyBar(centered: true) }   // per-intent counts, marks mode only
+                    if findMode == 1 { IntentTallyBar(centered: true) }   // per-intent counts, complex mode only
                 }
 
                 Divider()
@@ -44,8 +45,10 @@ struct TradesView: View {
                     ECBTradesView()
                 } else if findMode == 0 {
                     FindCandidatesSection(whatIf: $whatIf) { loading = false }   // drop spinner when cold load settles
+                } else if findMode == 1 {
+                    TradeByIntentsFeed(whatIf: $whatIf, complexOnly: true)   // 3+ / N-way / qual-swap solutions
                 } else {
-                    TradeByIntentsFeed(whatIf: $whatIf)
+                    DispatcherLookupView()
                 }
             }
             .loadingOverlay(loading, label: "Loading trades…")
@@ -62,6 +65,85 @@ struct TradesView: View {
             .onChange(of: findMode) { _, m in loading = (segment == 0 && m == 0) }
             .onChange(of: segment) { _, s in if s != 0 || findMode != 0 { loading = false } }
         }
+    }
+}
+
+// MARK: - Dispatcher Lookup (Find Trades mode)
+
+/// Search the roster and open any dispatcher's best day-for-day swap in the Trade-Solutions calendar view.
+struct DispatcherLookupView: View {
+    @State private var dispatchers: [(id: String, name: String)] = []
+    @State private var query = ""
+    @State private var detailPackage: TradePackage?
+    @State private var noSwap: String?
+    @State private var busy = false
+    private var myID: String { SettingsManager.shared.username }
+
+    private var filtered: [(id: String, name: String)] {
+        query.isEmpty ? dispatchers : dispatchers.filter { $0.name.localizedCaseInsensitiveContains(query) }
+    }
+
+    var body: some View {
+        List {
+            if dispatchers.isEmpty {
+                ContentUnavailableView("Loading roster…", systemImage: "person.2")
+            } else {
+                ForEach(filtered, id: \.id) { p in
+                    Button { Task { await lookUp(p.id, name: p.name) } } label: {
+                        HStack(spacing: 10) {
+                            Avatar(name: p.name, id: p.id, size: 30)
+                            Text(p.name).font(.dsCardTitle)
+                            Spacer()
+                            Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
+                        }
+                    }.buttonStyle(.plain)
+                }
+            }
+        }
+        .searchable(text: $query, prompt: "Find a dispatcher")
+        .overlay { if busy { ProgressView().padding().background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12)) } }
+        .task { await load() }
+        .fullScreenCover(item: $detailPackage) { pkg in
+            PackageDetailView(package: pkg, onPropose: { p in Task { await propose(p) } }, onExecute: {})
+        }
+        .alert("No swap with \(noSwap ?? "")", isPresented: Binding(
+            get: { noSwap != nil }, set: { if !$0 { noSwap = nil } })) {
+            Button("OK", role: .cancel) { noSwap = nil }
+        } message: { Text("No feasible day-for-day swap with them across your upcoming shifts.") }
+    }
+
+    private func load() async {
+        if !TradeFeedCache.shared.allDispatchers.isEmpty { dispatchers = TradeFeedCache.shared.allDispatchers; return }
+        let now = Date(); let end = Calendar.current.date(byAdding: .month, value: 12, to: now) ?? now
+        let entries = await RosterStore.shared.entries(from: now, to: end)
+        let me = myID
+        let out = await Task.detached(priority: .userInitiated) {
+            var seen = Set<String>(); var out: [(id: String, name: String)] = []
+            for e in entries where e.workerID != me && seen.insert(e.workerID).inserted {
+                out.append((e.workerID, TradeNames.resolved(displayName: nil, rosterName: e.workerName, workerID: e.workerID)))
+            }
+            return out.sorted { $0.name < $1.name }
+        }.value
+        dispatchers = out
+        TradeFeedCache.shared.allDispatchers = out
+    }
+
+    private func lookUp(_ id: String, name: String) async {
+        busy = true
+        let today = Calendar.current.startOfDay(for: Date())
+        let mine = ShiftStore.shared.shifts.filter { !$0.isOff && $0.date >= today }
+        let pkgs = await TradeRouter.packages(forGiveShifts: mine, excluding: myID)
+        busy = false
+        if let best = pkgs.first(where: { $0.usesCompactCard && $0.assignments.first?.workerID == id }) { detailPackage = best }
+        else { noSwap = name }
+    }
+
+    private func propose(_ pkg: TradePackage) async {
+        for a in pkg.assignments {
+            await MessagingStore.shared.sendRequest(to: a.workerID, toName: a.name,
+                note: "Swap proposed from Dispatcher Lookup.", take: a.takeDayIDs, give: a.giveDayIDs, origin: .search)
+        }
+        WidgetData.update(); detailPackage = nil
     }
 }
 

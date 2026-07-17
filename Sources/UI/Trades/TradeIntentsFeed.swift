@@ -57,6 +57,9 @@ final class TradeFeedCache {
 struct TradeByIntentsFeed: View {
 
     @Binding var whatIf: Bool
+    /// Complex Search: show ONLY multi-person (3+) / N-way / qual-swap solutions — the simple 2-person swaps
+    /// are already covered by the inbox Suggested lane, so this avoids duplicating them.
+    var complexOnly: Bool = false
 
     @State private var packages: [TradePackage] = []        // ALL-mode results (superset)
     @State private var mutualPackages: [TradePackage] = []  // Mutual subset — both computed once per search
@@ -85,7 +88,9 @@ struct TradeByIntentsFeed: View {
     /// shift-time / qual overrides are applied here (`criteriaMatch`), matching Trade Solutions.
     private var displayed: [TradePackage] {
         Array(searchFilter.filter(activePackages, selfID: SettingsManager.shared.username)
-            .filter(criteriaMatch).prefix(100))
+            .filter(criteriaMatch)
+            .filter { !complexOnly || $0.peopleCount >= 3 || $0.needsQualSwap }
+            .prefix(100))
     }
 
     /// A2: the Lucky shift-time (`receiveTypes`) + desk-qual (`deskQuals`) filters, applied to a result using

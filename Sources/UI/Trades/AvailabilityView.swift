@@ -42,7 +42,6 @@ struct FindCandidatesSection: View {
     @State private var isSearching = false
     @State private var hasSearched = false
     @State private var calendarExpanded = true
-    @State private var lookupNoSwap: String?              // dispatcher look-up found no swap → alert name
     @State private var packages: [TradePackage] = []
     @State private var searchText = ""                 // C4: filter candidates by name
     @State private var pinnedPeople: Set<String> = []  // C4: pinned to top (per session)
@@ -129,12 +128,6 @@ struct FindCandidatesSection: View {
             controls
             Divider()
             content
-        }
-        .alert("No swap with \(lookupNoSwap ?? "")", isPresented: Binding(
-            get: { lookupNoSwap != nil }, set: { if !$0 { lookupNoSwap = nil } })) {
-            Button("OK", role: .cancel) { lookupNoSwap = nil }
-        } message: {
-            Text("No feasible day-for-day swap with them right now across your upcoming shifts.")
         }
         .sheet(isPresented: $showFilter) {
             MasterFilterSheet(filter: $searchFilter, people: rosterPeople, availableQuals: availableQuals,
@@ -269,14 +262,7 @@ struct FindCandidatesSection: View {
                             } label: { Label("Clear selection", systemImage: "xmark.circle") }
                         }
                         Button { showFilter = true } label: { Label(luckyTitle, systemImage: "wand.and.stars") }
-                        // What If? hidden for now — it doesn't affect the new package-based results yet.
-                        if !allDispatchers.isEmpty {
-                            Menu {
-                                ForEach(allDispatchers, id: \.id) { p in
-                                    Button(p.name) { Task { await lookUpDispatcher(p.id) } }
-                                }
-                            } label: { Label("Look up a dispatcher", systemImage: "magnifyingglass.circle") }
-                        }
+                        // "Look up a dispatcher" is now its own Find-Trades mode (DispatcherLookupView).
                         Button { emailSelectedToDispatch() } label: { Label("Email to dispatch DL", systemImage: "envelope") }
                             .disabled(selectedIDs.isEmpty)
                     } label: {
@@ -434,20 +420,6 @@ struct FindCandidatesSection: View {
     }
 
     /// Find: fast 2-person generation, with any Lucky filter cleared so the results show.
-    /// "Look up a dispatcher": build that person's best day-for-day swap over my upcoming shifts and open it
-    /// in the Trade-Solutions calendar view (PackageDetailView). No swap → a brief alert.
-    private func lookUpDispatcher(_ peerID: String) async {
-        let me = SettingsManager.shared.username
-        let today = Calendar.current.startOfDay(for: Date())
-        let mine = ShiftStore.shared.shifts.filter { !$0.isOff && $0.date >= today }
-        let pkgs = await TradeRouter.packages(forGiveShifts: mine, excluding: me)
-        if let best = pkgs.first(where: { $0.usesCompactCard && $0.assignments.first?.workerID == peerID }) {
-            detailPackage = best
-        } else {
-            lookupNoSwap = allDispatchers.first(where: { $0.id == peerID })?.name ?? "them"
-        }
-    }
-
     private func searchFast() async {
         searchFilter = .normal
         // Step 4: Find searches up to the user's N-max toggle (default 3); floor + N-penalty keep
