@@ -10,6 +10,7 @@
 import UserNotifications
 import Foundation
 import BackgroundTasks
+import CloudKit
 
 final class NotificationManager {
 
@@ -83,6 +84,25 @@ final class NotificationManager {
     // MARK: - Daily digest (once-a-day summary of what needs you)
 
     private let digestID = "batman.digest.daily"
+    private let matchSummaryID = "batman.matchSummary"
+
+    /// Schedule (or clear) the periodic Match Summary — a LOCAL notification every `intervalHours` listing the
+    /// auto-match + suggested counts per date. Replaces the per-watched-day pings. Re-armed on each radar
+    /// recompute so its content stays current. `lines` empty (no matches) → nothing scheduled.
+    func scheduleMatchSummary(enabled: Bool, intervalHours: Int, lines: [String]) async {
+        center.removePendingNotificationRequests(withIdentifiers: [matchSummaryID])
+        guard enabled, !lines.isEmpty else { return }
+        let hours = max(1, intervalHours)
+        let totalAuto = lines.count   // # of dates with activity, for the title
+        let content = UNMutableNotificationContent()
+        content.title = "Trade matches — \(totalAuto) date\(totalAuto == 1 ? "" : "s")"
+        content.body = lines.prefix(8).joined(separator: "\n")
+        content.sound = .default
+        // Repeats every `hours`, so it still fires when the app is dormant; content is refreshed on each recompute.
+        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: Double(hours) * 3600, repeats: true)
+        let request = UNNotificationRequest(identifier: matchSummaryID, content: content, trigger: trigger)
+        do { try await center.add(request) } catch { print("⚠️ Could not schedule match summary: \(error)") }
+    }
 
     /// Schedule (or clear) the once-a-day summary at `hour`. The body reflects the counts known NOW and
     /// repeats daily; callers re-run this on launch so it stays reasonably current between opens. No
@@ -304,12 +324,27 @@ final class RadarNotificationRouter: NSObject, UNUserNotificationCenterDelegate 
 
     func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification)
         async -> UNNotificationPresentationOptions {
-        notification.request.identifier.hasPrefix(NotificationManager.radarIDPrefix) ? [.banner, .sound, .list] : []
+        let userInfo = notification.request.content.userInfo
+        // Local radar notifications (fire ~1s after an in-app recompute) + any CloudKit remote push (auto-match,
+        // requests, DMs…) that lands while the app is foregrounded should still show their banner.
+        if notification.request.identifier.hasPrefix(NotificationManager.radarIDPrefix) || userInfo["ck"] != nil {
+            return [.banner, .sound, .list]
+        }
+        return []
     }
 
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
-        guard let day = response.notification.request.content.userInfo[NotificationManager.radarDayKey] as? String
-        else { return }
-        await MainActor.run { MatchStore.shared.pendingDayID = day }
+        let userInfo = response.notification.request.content.userInfo
+        // 1) Local radar notification — carries our day key directly.
+        if let day = userInfo[NotificationManager.radarDayKey] as? String {
+            await MainActor.run { MatchStore.shared.pendingDayID = day }
+            return
+        }
+        // 2) Auto-match SERVER push — a CloudKit query notification whose desiredKeys ship the ISO day.
+        //    Parse it and deep-link to that day's Trade List, same as the local path.
+        if let note = CKNotification(fromRemoteNotificationDictionary: userInfo) as? CKQueryNotification,
+           let day = note.recordFields?["autoMatchDayISO"] as? String {
+            await MainActor.run { MatchStore.shared.pendingDayID = day }
+        }
     }
 }

@@ -314,8 +314,13 @@ final class ECBAccountingStore {
     static let shared = ECBAccountingStore()
 
     private(set) var entries: [ECBEntry] { didSet { persist() } }
+    /// Shared lines the user FORCE-THROUGH'd into their OWN accounting before the counterparty confirmed.
+    /// LOCAL ONLY — never published, so the shared record's real `state` (and the other dispatcher's ledger)
+    /// is untouched. Treated as confirmed + cleared in MY balance math only. Reversible.
+    private(set) var forcedThroughIDs: Set<String>
     private static let key = "batman.v2.ecbLedger"
     private static let clockKey = "batman.v2.ecbLedgerUpdatedAt"
+    private static let forcedKey = "batman.v2.ecbForcedThrough"
     private var personalUpdatedAt: Date
     private let ecbCloud = CloudKitECBService()
     private let privateCloud = CloudKitPrivateStateService()
@@ -325,20 +330,44 @@ final class ECBAccountingStore {
     private init() {
         entries = (UserDefaults.standard.data(forKey: Self.key))
             .flatMap { try? JSONDecoder().decode([ECBEntry].self, from: $0) } ?? []
+        forcedThroughIDs = Set(UserDefaults.standard.stringArray(forKey: Self.forcedKey) ?? [])
         personalUpdatedAt = (UserDefaults.standard.object(forKey: Self.clockKey) as? Date) ?? .distantPast
     }
 
     // MARK: Derived
+    /// My-ledger view: a force-through'd still-unconfirmed shared line counts as confirmed + cleared for MY
+    /// balances only. The stored/published entry keeps its real `state`, so the counterparty is unaffected.
+    private var effectiveEntries: [ECBEntry] {
+        guard !forcedThroughIDs.isEmpty else { return entries }
+        return entries.map { e in
+            guard forcedThroughIDs.contains(e.id), e.isShared, e.state != .confirmed else { return e }
+            var c = e; c.state = .confirmed; c.cleared = true; return c
+        }
+    }
     /// Cleared, capped-at-144 balance (what you can use right now).
-    var available: Double { ECBAccounting.available(entries, viewerID: myID) }
+    var available: Double { ECBAccounting.available(effectiveEntries, viewerID: myID) }
     /// Available + everything scheduled (agreed pay-day adds/withdraws + landing IOUs).
-    var projected: Double { ECBAccounting.projected(entries, viewerID: myID) }
+    var projected: Double { ECBAccounting.projected(effectiveEntries, viewerID: myID) }
     var pendingConfirmations: [ECBEntry] { ECBAccounting.pendingConfirmations(entries, myID: myID) }
     /// Outstanding IOUs you'll pay / others will pay you (agreed, not yet cleared).
-    var owe: Double { ECBAccounting.owe(entries, myID: myID) }
-    var owed: Double { ECBAccounting.owed(entries, myID: myID) }
+    var owe: Double { ECBAccounting.owe(effectiveEntries, myID: myID) }
+    var owed: Double { ECBAccounting.owed(effectiveEntries, myID: myID) }
     /// How much you can still promise on an outgoing trade/IOU (cleared + uncommitted scheduled deposits).
-    var payableCapacity: Double { ECBAccounting.payableCapacity(entries, myID: myID) }
+    var payableCapacity: Double { ECBAccounting.payableCapacity(effectiveEntries, myID: myID) }
+
+    // MARK: Force-through (own-ledger only)
+    /// Count a still-unconfirmed shared line in YOUR OWN balances now (confirmed + cleared for you). LOCAL
+    /// ONLY — nothing is published, so the counterparty's ledger and the shared record are untouched.
+    func forceThrough(_ id: String) {
+        forcedThroughIDs.insert(id)
+        UserDefaults.standard.set(Array(forcedThroughIDs), forKey: Self.forcedKey)
+    }
+    /// Undo a force-through (the line returns to awaiting-confirmation in your balances).
+    func unforceThrough(_ id: String) {
+        forcedThroughIDs.remove(id)
+        UserDefaults.standard.set(Array(forcedThroughIDs), forKey: Self.forcedKey)
+    }
+    func isForcedThrough(_ id: String) -> Bool { forcedThroughIDs.contains(id) }
     /// Register order — newest first, deterministic tiebreak by id.
     var register: [ECBEntry] {
         entries.sorted { $0.date != $1.date ? $0.date > $1.date : $0.id > $1.id }
@@ -477,10 +506,14 @@ final class ECBAccountingStore {
     func syncOnLaunch() async {
         guard SettingsManager.shared.useCloudKit else { return }
         let localShared = entries.filter { $0.isShared }
-        let remoteShared = await ecbCloud.fetch(involving: myID)
+        // Run the two independent CloudKit reads CONCURRENTLY (were sequential — that was the open-lag).
+        async let remoteSharedF = ecbCloud.fetch(involving: myID)
+        async let remotePersonalF = privateCloud.fetchECB()
+        let remoteShared = await remoteSharedF
+        let remotePersonal = await remotePersonalF
         let shared = FetchMerge.keepCacheOnEmpty(existing: localShared, fetched: remoteShared)
         var personal = entries.filter { !$0.isShared }
-        if let remote = await privateCloud.fetchECB(), remote.updatedAt > personalUpdatedAt,
+        if let remote = remotePersonal, remote.updatedAt > personalUpdatedAt,
            let decoded = try? JSONDecoder().decode([ECBEntry].self, from: Data(remote.json.utf8)) {
             personal = decoded
             personalUpdatedAt = remote.updatedAt

@@ -21,18 +21,19 @@ import SwiftUI
 struct MessagingDock: View {
     @Binding var showInbox: Bool
     @Binding var showChannel: Bool
-    @Binding var showTradeSettings: Bool
-    @Binding var showAppSettings: Bool
-    @Binding var showDashboard: Bool         // trade-status breakdown
-    @Binding var showECB: Bool               // ECB Accounting ledger (⋯ menu)
+    @Binding var showSettings: Bool          // the single unified Settings (opens the Trade tab)
+    @Binding var showColorKey: Bool          // Colors & Legend (⋯ menu)
+    @Binding var showDashboard: Bool         // trade-status breakdown (⋯ menu)
+    @Binding var showECB: Bool               // ECB Accounting ledger — its own tile
     private var store = MessagingStore.shared
+    private var dms = DirectMessageStore.shared
     private var history = TradeHistoryStore.shared
 
     init(showInbox: Binding<Bool>, showChannel: Binding<Bool>,
-         showTradeSettings: Binding<Bool>, showAppSettings: Binding<Bool>,
+         showSettings: Binding<Bool>, showColorKey: Binding<Bool>,
          showDashboard: Binding<Bool>, showECB: Binding<Bool>) {
         _showInbox = showInbox; _showChannel = showChannel
-        _showTradeSettings = showTradeSettings; _showAppSettings = showAppSettings
+        _showSettings = showSettings; _showColorKey = showColorKey
         _showDashboard = showDashboard; _showECB = showECB
     }
 
@@ -45,21 +46,22 @@ struct MessagingDock: View {
     }
 
     var body: some View {
-        // Three controls: Inbox · Channel · ⋯ (overflow). The ⋯ menu holds Trade History,
-        // ECB Accounting, Trade Settings, and App Settings. Active trades live in the Inbox.
+        // Four controls: Inbox · Channel · ECB · ⋯. The ⋯ menu holds Trade History, Colors & Legend,
+        // and the single Settings entry (opens the Trade tab by default).
         HStack(spacing: DS.s) {
             iconButton("tray.full.fill", label: "Inbox",
-                       badge: activeTradesBadge + ECBAccountingStore.shared.pendingConfirmations.count,
-                       badgeColor: AppColor.danger) { showInbox = true }
-            iconButton("megaphone.fill", label: "Channel",
-                       badge: store.unreadBroadcastCount, badgeColor: AppColor.primary) { showChannel = true }
+                       badge: activeTradesBadge, badgeColor: AppColor.danger) { showInbox = true }
+            iconButton("megaphone.fill", label: "Channels & Messages",
+                       badge: store.unreadBroadcastCount + dms.totalUnread,
+                       badgeColor: AppColor.primary) { showChannel = true }
+            iconButton("banknote.fill", label: "ECB Accounting",
+                       badge: ECBAccountingStore.shared.pendingConfirmations.count,
+                       badgeColor: AppColor.pending) { showECB = true }
             Menu {
                 Button { showDashboard = true } label: { Label("Trade History", systemImage: "clock.arrow.circlepath") }
+                Button { showColorKey = true } label: { Label("Colors & Legend", systemImage: "paintpalette") }
                 Divider()
-                Button { showECB = true } label: { Label("ECB Accounting", systemImage: "banknote") }
-                Divider()
-                Button { showTradeSettings = true } label: { Label("Trade Settings", systemImage: "arrow.left.arrow.right") }
-                Button { showAppSettings = true } label: { Label("App Settings", systemImage: "gearshape") }
+                Button { showSettings = true } label: { Label("Settings", systemImage: "gearshape") }
             } label: { iconLabel("ellipsis") }
             .buttonStyle(.plain)
             .accessibilityLabel("More")

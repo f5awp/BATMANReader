@@ -789,8 +789,12 @@ enum TradeMatcher {
 
     /// Whether covering `day` attaches to the map owner's existing work (same
     /// "no floating island" bookend rule as the one-way matcher).
-    nonisolated static func anchored(day: Date, map: [String: RosterEntry], plan: Set<String>, cal: Calendar) -> Bool {
-        func existingWork(_ d: Date) -> Bool { map[iso(d)].map { !$0.isOff } ?? false }
+    /// `removed` = days the owner GIVES AWAY in the SAME trade — they're no longer worked, so they can't
+    /// anchor a pickup. This is what stops a bookend from "counting" when an adjacent give-away in the same
+    /// package breaks it at the same time (see net-schedule bookend rule).
+    nonisolated static func anchored(day: Date, map: [String: RosterEntry], plan: Set<String>,
+                                     removed: Set<String> = [], cal: Calendar) -> Bool {
+        func existingWork(_ d: Date) -> Bool { !removed.contains(iso(d)) && (map[iso(d)].map { !$0.isOff } ?? false) }
         func worksInPlan(_ d: Date) -> Bool { plan.contains(iso(d)) || existingWork(d) }
         for dir in [-1, 1] {
             var step = dir, guardCount = 0
@@ -911,10 +915,11 @@ extension TradeMatcher {
         rested(map: map, day: day, startHour: startHour, cal: cal)
     }
 
-    /// Whether covering `day` attaches to existing work (no floating island).
+    /// Whether covering `day` attaches to existing work (no floating island). `removed` = days given
+    /// away in the same trade (no longer worked, so they can't anchor a pickup).
     nonisolated static func isAnchored(day: Date, map: [String: RosterEntry], plan: Set<String>,
-                           cal: Calendar = .current) -> Bool {
-        anchored(day: day, map: map, plan: plan, cal: cal)
+                           removed: Set<String> = [], cal: Calendar = .current) -> Bool {
+        anchored(day: day, map: map, plan: plan, removed: removed, cal: cal)
     }
 
     /// ISO "yyyy-MM-dd" for a date.

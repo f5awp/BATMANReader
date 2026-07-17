@@ -126,8 +126,8 @@ extension View {
 struct AppTopBar: View {
     @Binding var showInbox: Bool
     @Binding var showChannel: Bool
-    @Binding var showTradeSettings: Bool
-    @Binding var showAppSettings: Bool
+    @Binding var showSettings: Bool
+    @Binding var showColorKey: Bool
     @Binding var showDashboard: Bool
     @Binding var showECB: Bool
     private var settings = SettingsManager.shared
@@ -135,10 +135,10 @@ struct AppTopBar: View {
     @Environment(\.horizontalSizeClass) private var hClass
 
     init(showInbox: Binding<Bool>, showChannel: Binding<Bool>,
-         showTradeSettings: Binding<Bool>, showAppSettings: Binding<Bool>,
+         showSettings: Binding<Bool>, showColorKey: Binding<Bool>,
          showDashboard: Binding<Bool>, showECB: Binding<Bool>) {
         _showInbox = showInbox; _showChannel = showChannel
-        _showTradeSettings = showTradeSettings; _showAppSettings = showAppSettings
+        _showSettings = showSettings; _showColorKey = showColorKey
         _showDashboard = showDashboard; _showECB = showECB
     }
 
@@ -157,7 +157,7 @@ struct AppTopBar: View {
                 }
                 Spacer(minLength: DS.s)
                 MessagingDock(showInbox: $showInbox, showChannel: $showChannel,
-                              showTradeSettings: $showTradeSettings, showAppSettings: $showAppSettings,
+                              showSettings: $showSettings, showColorKey: $showColorKey,
                               showDashboard: $showDashboard, showECB: $showECB)
             }
             .padding(.horizontal, hClass == .regular ? DS.l : DS.m)
@@ -405,6 +405,10 @@ struct DXChatBubble: View {
         Text(text)
             .font(.callout)
             .foregroundStyle(mine ? .white : .primary)
+            .multilineTextAlignment(.leading)
+            // Grow to the full height of the wrapped text — never truncate to one line. Horizontal stays
+            // constrained by the maxWidth cap below, so long messages wrap onto as many lines as they need.
+            .fixedSize(horizontal: false, vertical: true)
             .padding(.horizontal, 12)
             .padding(.vertical, 9)
             .background {
@@ -416,7 +420,7 @@ struct DXChatBubble: View {
                 }
             }
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .frame(maxWidth: 264, alignment: mine ? .trailing : .leading)
+            .frame(maxWidth: 300, alignment: mine ? .trailing : .leading)
             .frame(maxWidth: .infinity, alignment: mine ? .trailing : .leading)
     }
 }

@@ -431,26 +431,23 @@ struct IntentCalendarView: View {
                 // FILLED disc behind the date number in the topology accent (orange / pink); the number turns
                 // white for contrast. The star (matches) + note dot live in the corners; "today" is the inset
                 // tile ring (a different radius), so they never collide.
-                let topo = intents.topology(forDay: dayID)
-                let sig  = topo != .standard
-                if sig {
-                    Circle().fill(topo.accent).frame(width: 24, height: 24)
+                // §Match-Radar: MATCHES are the most-visible marker — a FILLED orange disc behind the date
+                // number (the number turns white for contrast). High-impact/holiday + personal-milestone days
+                // move to the TOP-RIGHT star; watch is the "!" top-left. Disc = "there's a trade here."
+                let hasMatch = MatchStore.shared.hasStar(dayID)
+                if hasMatch {
+                    Circle().fill(AppColor.heat).frame(width: 24, height: 24)
                 }
                 Text("\(cal.component(.day, from: date))")
                     .font(isToday ? DXFont.dayNumber.weight(.heavy) : DXFont.dayNumber)
-                    .foregroundStyle(sig ? Color.white
+                    .foregroundStyle(hasMatch ? Color.white
                                      : numberColor(dayID: dayID, isWorking: isWorking, hasShift: hasShift, date: date, shift: shift))
             }
             .frame(height: DXSpace.cellNumberH)
             .contentShape(Circle())
             .onTapGesture {
-                if intents.topology(forDay: dayID) != .standard { infoDay = dayID }
-                else if hasShift { onTap(dayID, isOff) }   // normal day → same as cell tap
+                if hasShift { onTap(dayID, isOff) }   // normal day → same as cell tap
                 withAnimation(.snappy) { tappedDay = dayID }
-            }
-            .popover(isPresented: Binding(get: { infoDay == dayID },
-                                          set: { if !$0 { infoDay = nil } })) {
-                topologyInfo(dayID: dayID)
             }
             dayContent(shift: shift, isWorking: isWorking, isOff: isOff, dayID: dayID, date: date)
                 .frame(height: DXSpace.cellLabelH)   // FIXED (not minHeight) so every cell is the same size
@@ -504,9 +501,10 @@ struct IntentCalendarView: View {
                     .padding(3).transition(.scale.combined(with: .opacity))
             }
         }
-        // Match Radar: star (pickup/match) + watch ring live TOP-RIGHT so they never overlap the shift code
-        // at the bottom of the cell. The note dot moves to the bottom-leading corner (clear of both).
-        .overlay(alignment: .topTrailing) { matchMarker(dayID).padding(3) }
+        // Match Radar: the STAR (a pickup/match exists) lives TOP-RIGHT; the WATCH dot lives TOP-LEFT — two
+        // corners, two shapes, so they never blur. The note dot sits bottom-leading, clear of both.
+        .overlay(alignment: .topTrailing) { highImpactMarker(dayID).padding(3) }
+        .overlay(alignment: .topLeading) { watchMarker(dayID).padding(4) }
         .overlay(alignment: .bottomLeading) { noteDot(dayID).padding(3) }
         .opacity(faded ? 0.3 : (isPast ? 0.45 : 1))
         .contentShape(Rectangle())
@@ -619,30 +617,39 @@ struct IntentCalendarView: View {
         }
     }
 
-    /// Match Radar corner marker. A filled STAR (success green) means ≥1 legal pickup/match exists for you
-    /// on this day; a hollow RING (primary blue) means you're watching it. Both can show at once (star inside
-    /// the ring). Reads off `MatchStore` — accessing its properties here registers Observation, so the cell
-    /// re-renders when the radar recomputes. White casing keeps the star legible on any tile fill.
-    @ViewBuilder private func matchMarker(_ dayID: String) -> some View {
-        let radar   = MatchStore.shared
-        let star    = radar.hasStar(dayID)
-        let watched = radar.isWatched(dayID)
-        if star || watched {
-            ZStack {
-                if watched {
-                    Circle().stroke(AppColor.primary, lineWidth: 1.5).frame(width: 15, height: 15)
-                }
-                if star {
-                    Image(systemName: "star.fill")
-                        .font(.system(size: 8, weight: .bold))
-                        .foregroundStyle(AppColor.success)
-                        .shadow(color: .black.opacity(0.35), radius: 0.5)
-                        .accessibilityLabel("Pickup available")
-                }
+    /// High-impact marker (TOP-RIGHT): a filled STAR on a high-demand holiday (orange) or personal milestone
+    /// (pink). Tapping it opens the day's topology info. Matches use the prominent orange number-disc; watch
+    /// is the "!" top-left — three distinct shapes/corners so they never blur.
+    @ViewBuilder private func highImpactMarker(_ dayID: String) -> some View {
+        let topo = intents.topology(forDay: dayID)
+        if topo != .standard {
+            Button { infoDay = dayID } label: {
+                Image(systemName: "star.fill")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(topo.accent)
+                    .shadow(color: .black.opacity(0.35), radius: 0.5)
+                    .frame(height: 15)
             }
-            .frame(height: 15)
+            .buttonStyle(.plain)
+            .accessibilityLabel(topo == .personalMilestone ? "Personal milestone" : "High-impact day")
+            .popover(isPresented: Binding(get: { infoDay == dayID }, set: { if !$0 { infoDay = nil } })) {
+                topologyInfo(dayID: dayID)
+            }
         } else {
             Color.clear.frame(height: 9)
+        }
+    }
+
+    /// Watch marker (TOP-LEFT): a bold "!" means you're watching this day — you'll get an instant alert the
+    /// moment a match appears. Distinct corner + glyph from the match disc, so a watched day with no match
+    /// reads clearly as "watching", not "empty".
+    @ViewBuilder private func watchMarker(_ dayID: String) -> some View {
+        if MatchStore.shared.isWatched(dayID) {
+            Image(systemName: "exclamationmark.circle.fill")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(AppColor.primary)
+                .shadow(color: .black.opacity(0.3), radius: 0.5)
+                .accessibilityLabel("Watching this day")
         }
     }
 
@@ -866,6 +873,29 @@ struct DayIntentEditor: View {
         let f = DateFormatter(); f.dateFormat = "EEEE, MMM d, yyyy"; return f.string(from: d)
     }
 
+    /// Trade options (kind + accept scope + note) show for a day you're trading away or an off day you want
+    /// to work. When shown, the Note sits at the END of that group; otherwise it's its own section.
+    private var tradeOptionsVisible: Bool {
+        (!target.isOff && working == .dontWantToWork) || (target.isOff && off == .wantToWork)
+    }
+
+    /// The public/private day note — coworkers see the PUBLIC text on trade cards (day rows, package cards,
+    /// inbox threads) for this day. "Make Private" keeps it device-only.
+    @ViewBuilder private var noteSection: some View {
+        Section {
+            HStack {
+                TextField("Short note", text: $noteText)
+                    .onChange(of: noteText) { _, v in if v.count > 50 { noteText = String(v.prefix(50)) } }
+                CharCounter(text: noteText, limit: 50)
+            }
+            Toggle("Make Private", isOn: $notePrivate)
+        } header: {
+            Text("Note (≤ 50 chars)")
+        } footer: {
+            Text("Public by default — coworkers see it on the trade cards for this day. Turn on Make Private to keep it to yourself.")
+        }
+    }
+
     var body: some View {
         NavigationStack {
             Form {
@@ -974,6 +1004,10 @@ struct DayIntentEditor: View {
                     } footer: {
                         Text("Day-for-day swaps a shift; ECB trades for points. The scope pills are optional 1-time overrides of your defaults — limit what you'll accept by shift type, qual, or date (leave off for any).")
                     }
+
+                    // Note sits at the END of the trade-options group so coworkers see WHY you're trading on
+                    // the trade cards. Public by default; "Make Private" keeps it device-only.
+                    noteSection
                 }
 
                 Section {
@@ -983,7 +1017,7 @@ struct DayIntentEditor: View {
                     }
                     Toggle("Significant day", isOn: $significant)
                 } footer: {
-                    Text("Protects this date from automatic trade suggestions.")
+                    Text("Flags a personal milestone — marks the date with a pink dot on your calendar and raises its priority when the app ranks trades that would cover it, so a shift you're giving away on an important day gets covered first. It doesn't block trading on that day.")
                 }
 
                 Section {
@@ -992,14 +1026,8 @@ struct DayIntentEditor: View {
                     Text("Marks this day as a vacation (you're off) and tells others — use it for a carryover vacation that isn't printed in the posted schedule.")
                 }
 
-                Section("Note (≤ 50 chars)") {
-                    HStack {
-                        TextField("Short note", text: $noteText)
-                            .onChange(of: noteText) { _, v in if v.count > 50 { noteText = String(v.prefix(50)) } }
-                        CharCounter(text: noteText, limit: 50)
-                    }
-                    Toggle("Make Private", isOn: $notePrivate)
-                }
+                // When trade options aren't visible (e.g. a Keep/Blackout day), the Note is its own section.
+                if !tradeOptionsVisible { noteSection }
 
                 Section {
                     Button("Clear all intent for this day", role: .destructive) {
@@ -1165,13 +1193,12 @@ struct BlacklistPill: View {
 
 // MARK: - Tabbed Trade Settings sheet
 
-struct TradeSettingsSheet: View {
+/// The Trade tab's sections (Match Radar · Openness · Trade Acceptance · Qual Swap · Relief), rendered
+/// inside the unified Settings Form. Self-contained: owns its qual load + the override editor sheet.
+struct TradeSettingsSections: View {
     @Bindable private var settings = SettingsManager.shared
-    @Environment(\.dismiss) private var dismiss
-    @State private var tab = 0
     @State private var myQuals: [String] = []
     @State private var showOverrideEditor = false
-    @State private var editingNotes = false
 
     /// Re-run the base openness shortcut (which layers in the date-range overrides)
     /// and re-publish. Call after any override change.
@@ -1261,52 +1288,33 @@ struct TradeSettingsSheet: View {
     }
 
     var body: some View {
-        NavigationStack {
-            Form {
-                DXSegmented(selection: $tab, options: [
-                    .init(0, "Profile"), .init(1, "Trade Settings"),
-                ])
-                .listRowBackground(Color.clear)
-
-                if tab == 0 { profile } else { tradeSettings }
+        Group {
+            tradeSettings
+        }
+        .onDisappear { publishProfile() }   // R-B: single publish funnel on close
+        .sheet(isPresented: $showOverrideEditor) {
+            OpennessOverrideEditor { ov in
+                settings.opennessOverrides.append(ov)
+                reapplyOpenness()
             }
-            .scrollContentBackground(.hidden)   // §11: drop the grouped-list chrome background
-            .navigationTitle("Trade Settings")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { DXCloseButton { dismiss() } } }
-            // R-B: single publish funnel — guarantees status/settings edits reach peers even
-            // when a vertical TextField swallows .onSubmit (status was blank cross-device).
-            .onDisappear { publishProfile() }
-            .sheet(isPresented: $showOverrideEditor) {
-                OpennessOverrideEditor { ov in
-                    settings.opennessOverrides.append(ov)
-                    reapplyOpenness()
-                }
+        }
+        .task {
+            // Heal any stale "want to work" left by the old openness behavior.
+            if !settings.isMercenaryMode {
+                let lvl = TradeOpenness(rawValue: settings.tradeOpenness) ?? .bookends
+                DayIntentStore.shared.applyOpenness(lvl, shifts: ShiftStore.shared.shifts)
             }
-            .sheet(isPresented: $editingNotes) { PrivateNotesEditor() }
-            .task {
-                // Heal any stale "want to work" left by the old openness behavior:
-                // re-apply the (neutral) openness shortcut. Manual edits are preserved.
-                if !settings.isMercenaryMode {
-                    let lvl = TradeOpenness(rawValue: settings.tradeOpenness) ?? .bookends
-                    DayIntentStore.shared.applyOpenness(lvl, shifts: ShiftStore.shared.shifts)
-                }
-                myQuals = settings.cachedQuals   // instant from cache so region pills aren't stale
-                if myQuals.isEmpty {
-                    // Fresh user / first launch: the master may still be importing, so the schedule fetch
-                    // (and the import-time qual cache) land late. Poll on BOTH signals until quals resolve
-                    // (~8s) instead of showing "no quals" until the sheet is re-opened.
-                    for _ in 0..<20 {
-                        let q = await RosterStore.shared.schedule(forWorker: settings.username).first?.quals ?? []
-                        if !q.isEmpty { myQuals = q; settings.cachedQuals = q; break }
-                        if !settings.cachedQuals.isEmpty { myQuals = settings.cachedQuals; break }
-                        try? await Task.sleep(for: .milliseconds(400))
-                    }
-                } else {
-                    // Already have cached quals — refresh silently from the roster if it now differs.
+            myQuals = settings.cachedQuals
+            if myQuals.isEmpty {
+                for _ in 0..<20 {
                     let q = await RosterStore.shared.schedule(forWorker: settings.username).first?.quals ?? []
-                    if !q.isEmpty { myQuals = q; settings.cachedQuals = q }
+                    if !q.isEmpty { myQuals = q; settings.cachedQuals = q; break }
+                    if !settings.cachedQuals.isEmpty { myQuals = settings.cachedQuals; break }
+                    try? await Task.sleep(for: .milliseconds(400))
                 }
+            } else {
+                let q = await RosterStore.shared.schedule(forWorker: settings.username).first?.quals ?? []
+                if !q.isEmpty { myQuals = q; settings.cachedQuals = q }
             }
         }
     }
@@ -1318,53 +1326,6 @@ struct TradeSettingsSheet: View {
         return "\(out.string(from: s)) – \(out.string(from: e))"
     }
 
-    // MARK: Profile tab
-
-    @ViewBuilder private var profile: some View {
-        Section("Status (public, 140 chars)") {
-            TextField("e.g. \"😀 Happy to take weekend PMs\" — emojis welcome", text: Binding(
-                get: { settings.statusBroadcast },
-                set: { settings.statusBroadcast = String($0.prefix(140)) }), axis: .vertical)
-                .lineLimit(1...3)
-                .onSubmit { publishProfile() }   // publish status on change (A3 cross-device)
-            HStack { Spacer(); CharCounter(text: settings.statusBroadcast, limit: 140) }
-        }
-        Section("Qualifications") {
-            if myQuals.isEmpty {
-                Text("No quals loaded — import your roster.").font(.caption).foregroundStyle(.secondary)
-            } else {
-                HStack {
-                    ForEach(myQuals, id: \.self) { q in
-                        Text(q).font(.caption.bold())
-                            .padding(.horizontal, 8).padding(.vertical, 3)
-                            .background(Color.accentColor.opacity(0.15), in: Capsule())
-                    }
-                }
-            }
-        }
-        Section {
-            // Read-only single-line bar; swipe horizontally to read long notes, tap to edit.
-            Button { editingNotes = true } label: {
-                HStack(spacing: 8) {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        Text(settings.privateNotes.isEmpty ? "Tap to add private notes" : settings.privateNotes)
-                            .font(.subheadline)
-                            .foregroundStyle(settings.privateNotes.isEmpty ? .secondary : .primary)
-                            .lineLimit(1)
-                            .fixedSize(horizontal: true, vertical: false)
-                            .padding(.vertical, 2)
-                    }
-                    Image(systemName: "pencil").font(.caption).foregroundStyle(.secondary)
-                }
-            }
-            .buttonStyle(.plain)
-        } header: {
-            Text("Private notes")
-        } footer: {
-            Text("Stored on your device only and never shared. Tap to edit; swipe to read.")
-        }
-    }
-
     // MARK: Trade Settings tab
 
     @ViewBuilder private var tradeSettings: some View {
@@ -1372,35 +1333,23 @@ struct TradeSettingsSheet: View {
             Toggle("Auto-match my intents", isOn: Binding(
                 get: { settings.standingOfferAutoMatch },
                 set: { settings.standingOfferAutoMatch = $0 }))
-            Stepper(value: Binding(get: { settings.ecbDefault },
-                                   set: { settings.ecbDefault = TradeRequest.clampECB($0) }),
-                    in: 5...25, step: 0.5) {
-                LabeledContent("Default ECB") { Text("\(ecbText(settings.ecbDefault)) ECB").bold() }
-            }
         } header: {
-            Text("Match Radar")
-        } footer: {
-            Text("When on, a day you mark Want to Trade auto-sends the swap to matching coworkers as soon as one fits — up to three at once, first to accept wins. Turn off to just be notified and send it yourself. Default ECB is the points offered on an ECB trade — override it per day on that day's Info tab.")
+            infoHeader("Match Radar", "When on, a day you mark Want to Trade auto-sends the swap to matching coworkers as soon as one fits — up to three at once, first to accept wins. Turn off to just be notified and send it yourself.")
         }
 
+        // ── Openness (+ date-range override subgroup) ──
         Section {
             Picker("Accepting", selection: openness) {
                 ForEach(TradeOpenness.allCases, id: \.self) { Text($0.label).tag($0) }
             }
             Toggle("Mercenary mode (take any qualifying shift)", isOn: mercenary)
-        } header: {
-            Text("Openness")
-        } footer: {
-            Text("A shortcut that sets your availability pills on Main View — “All” accepts any pickup, “Bookends” accepts only pickups that don’t split your time off, “Not accepting” blocks all matches. Both All and Bookends leave the calendar neutral; only Mercenary mode paints every off day “want to work.” You can fine-tune any day afterward.")
-        }
 
-        Section {
+            subGroup("Date-range override", "Temporarily change your openness for a specific span — e.g. base “Bookends”, but “Open to all” for a slow week. Active until you delete it.")
             ForEach(settings.opennessOverrides.sorted { $0.startDay < $1.startDay }) { ov in
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(ov.openness.label).font(.subheadline.weight(.semibold))
-                        Text("\(prettyRange(ov.startDay, ov.endDay))")
-                            .font(.caption).foregroundStyle(.secondary)
+                        Text("\(prettyRange(ov.startDay, ov.endDay))").font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
                     Image(systemName: ov.openness.symbol).foregroundStyle(.secondary)
@@ -1416,68 +1365,106 @@ struct TradeSettingsSheet: View {
                 Label("Add date-range override", systemImage: "plus.circle.fill")
             }
         } header: {
-            Text("Date-range overrides")
-        } footer: {
-            Text("Temporarily change your openness for a specific span — e.g. base “Bookends”, but “Open to all” for a slow week. Active until you delete it.")
+            infoHeader("Openness", "A shortcut that sets your availability pills on Main View — “All” accepts any pickup, “Bookends” accepts only pickups that don’t split your time off, “Not accepting” blocks all matches. Only Mercenary mode paints every off day “want to work.” Fine-tune any day afterward.")
         }
+
+        // ── Trade Acceptance › Blacklist ──
         Section {
-            TextField("e.g. 29, 82", text: deskText)
-                .autocorrectionDisabled().textInputAutocapitalization(.characters)
-        } header: {
-            Text("Blacklisted desks")
-        } footer: {
-            Text("You won't be offered automated pickups on these desks.")
-        }
-        Section {
-            FlowLayout(spacing: 8) {
-                ForEach(ShiftAvailabilityType.allCases, id: \.self) { type in
-                    BlacklistPill(label: type.rawValue,
-                                  selected: settings.blacklistedShiftTypes.contains(type.rawValue)) {
-                        toggle(&settings.blacklistedShiftTypes, type.rawValue)
+            tightGroup("Shift types", "Tap a type (AM / PM / MID) to stop being offered those shifts.") {
+                FlowLayout(spacing: 8) {
+                    ForEach(ShiftAvailabilityType.allCases, id: \.self) { type in
+                        BlacklistPill(label: type.rawValue,
+                                      selected: settings.blacklistedShiftTypes.contains(type.rawValue)) {
+                            toggle(&settings.blacklistedShiftTypes, type.rawValue)
+                        }
                     }
-                }
+                }.frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 2)
-        } header: {
-            Text("Blacklisted shift types")
-        } footer: {
-            Text("Tap a type (AM / PM / MID) to stop being offered those shifts.")
-        }
-        Section {
-            FlowLayout(spacing: 8) {
-                ForEach(DeskRegion.allCases, id: \.self) { region in
-                    let qualed = DeskRules.isQualified(quals: myQuals, forRegion: region)
-                    BlacklistPill(label: region.rawValue,
-                                  selected: settings.blacklistedRegions.contains(region.rawValue),
-                                  enabled: qualed) {
-                        toggle(&settings.blacklistedRegions, region.rawValue)
+            tightGroup("Regions", "Grayed regions need a qualification you don't hold. Tap a region to stop being offered its desks.") {
+                FlowLayout(spacing: 8) {
+                    ForEach(DeskRegion.allCases, id: \.self) { region in
+                        let qualed = DeskRules.isQualified(quals: myQuals, forRegion: region)
+                        BlacklistPill(label: region.rawValue,
+                                      selected: settings.blacklistedRegions.contains(region.rawValue),
+                                      enabled: qualed) {
+                            toggle(&settings.blacklistedRegions, region.rawValue)
+                        }
                     }
-                }
+                }.frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 2)
-        } header: {
-            Text("Blacklisted regions")
-        } footer: {
-            Text("Grayed regions need a qualification you don't hold. Tap a region to stop being offered its desks.")
-        }
-        Section {
-            FlowLayout(spacing: 8) {
-                ForEach(Self.weekdayPills, id: \.day) { wd in
-                    BlacklistPill(label: wd.letter,
-                                  selected: settings.blacklistedWeekdays.contains(wd.day)) {
-                        toggle(&settings.blacklistedWeekdays, wd.day)
+            tightGroup("Specific days", "Tap the weekdays you never want offered in trades — they show as Blackout on your calendar.") {
+                FlowLayout(spacing: 8) {
+                    ForEach(Self.weekdayPills, id: \.day) { wd in
+                        BlacklistPill(label: wd.letter,
+                                      selected: settings.blacklistedWeekdays.contains(wd.day)) {
+                            toggle(&settings.blacklistedWeekdays, wd.day)
+                        }
                     }
-                }
+                }.frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 2)
+            tightGroup("Desks", "You won't be offered automated pickups on these desks. Type desk numbers separated by commas.") {
+                TextField("e.g. 29, 82", text: deskText)
+                    .textFieldStyle(.roundedBorder)
+                    .autocorrectionDisabled().textInputAutocapitalization(.characters)
+            }
         } header: {
-            Text("Blackout days")
-        } footer: {
-            Text("Tap the days you never want offered in trades — they show as Blackout on your calendar.")
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Trade Acceptance").font(.footnote.weight(.bold)).foregroundStyle(.primary).textCase(nil)
+                HStack(spacing: 6) { Text("Blacklist").textCase(nil); InfoBubble(text: "Anything selected here is never offered to you in a trade.") }
+            }
+        }
+
+        // ── Trade Acceptance › ECB ──
+        Section {
+            Stepper(value: Binding(get: { settings.ecbDefault },
+                                   set: { settings.ecbDefault = TradeRequest.clampECB($0) }),
+                    in: 5...25, step: 0.5) {
+                LabeledContent("Default Requested ECB") { Text("\(ecbText(settings.ecbDefault)) ECB").bold() }
+            }
+            Stepper(value: Binding(get: { settings.defaultAcceptedECB },
+                                   set: { settings.defaultAcceptedECB = TradeRequest.clampECB($0) }),
+                    in: 5...25, step: 0.5) {
+                LabeledContent("Minimum Accepted ECB") { Text("\(ecbText(settings.defaultAcceptedECB)) ECB").bold() }
+            }
+            Toggle("Consider IOUs", isOn: Binding(get: { settings.considerIOUs },
+                                                  set: { settings.considerIOUs = $0 }))
+        } header: {
+            infoHeader("ECB", "Default Requested ECB is the points you offer when giving a shift away (override per day on its Info tab). Minimum Accepted ECB is your floor for ECB offers — offers below it are hidden AND the radar won't auto-match you into one (nothing below your floor is ever auto-sent to you). Consider IOUs — off hides offers paid on a later date and stops them being auto-matched to you.")
         }
 
         qualSwapSettings
         reliefSettings
+    }
+
+    /// Section header with an (i) info bubble (replaces footers).
+    private func infoHeader(_ title: String, _ info: String) -> some View {
+        HStack(spacing: 6) { Text(title); InfoBubble(text: info) }
+    }
+    /// An inline group sub-label + (i) inside a section, with a little top padding.
+    private func subGroup(_ title: String, _ info: String) -> some View {
+        HStack(spacing: 6) {
+            Text(title).font(.caption.weight(.semibold)).foregroundStyle(.secondary).textCase(nil)
+            InfoBubble(text: info)
+            Spacer()
+        }
+        .padding(.top, 4)
+        .listRowSeparator(.hidden)
+    }
+
+    /// A sub-label + (i) with its controls in ONE compact row, so the title hugs its content (no Form
+    /// row-gap between the subtitle and its pills/field). Tightens the Trade Settings spacing.
+    @ViewBuilder private func tightGroup<Content: View>(_ title: String, _ info: String,
+                                                        @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Text(title).font(.caption.weight(.semibold)).foregroundStyle(.secondary).textCase(nil)
+                InfoBubble(text: info)
+                Spacer()
+            }
+            content()
+        }
+        .padding(.vertical, 3)
+        .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
     }
 
     // MARK: Relief dispatcher
@@ -1489,9 +1476,7 @@ struct TradeSettingsSheet: View {
                 DatePicker("Schedule known through", selection: reliefDate, displayedComponents: .date)
             }
         } header: {
-            Text("Relief schedule")
-        } footer: {
-            Text("Relief dispatchers only get their schedule ~45 days out; the master roster pads the rest of the year with placeholder AMs. Set the last real date — your shifts after it are hidden from your calendar and from trading (for everyone), and stay hidden across roster updates.")
+            infoHeader("Relief schedule", "Relief dispatchers only get their schedule ~45 days out; the master roster pads the rest of the year with placeholder AMs. Set the last real date — your shifts after it are hidden from your calendar and from trading (for everyone), and stay hidden across roster updates.")
         }
         .listRowBackground(AppColor.vacation.opacity(0.20))   // E3: relief box visually distinct (higher contrast)
     }
@@ -1502,37 +1487,101 @@ struct TradeSettingsSheet: View {
 
     @ViewBuilder private var qualSwapSettings: some View {
         Section {
-            if myQuals.isEmpty {
-                Text("No quals loaded — import your roster to set qual-swap preferences.")
-                    .font(.caption).foregroundStyle(.secondary)
-            } else {
-                ForEach(myQuals, id: \.self) { q in
-                    Picker(q, selection: qualValueBinding(q)) {
-                        Text("Open").tag(-1)
-                        Text("Won't work").tag(0)
-                        ForEach(1...qualSwapMaxValue, id: \.self) { v in
-                            Text(v == 1 ? "1 (least)"
-                                 : v == qualSwapMaxValue ? "\(v) (most)" : "\(v)").tag(v)
+            tightGroup("Ranking", "When a trade needs a qual swap, you move onto a different desk. You accept only if that desk's qual is ranked EQUAL OR HIGHER than the qual of the desk you're already working that day.\n\n• Open = no preference (you'll take it).\n• Won't work (0) = never swap into that qual.\n• 1 = least preferred … higher = more preferred.") {
+                if myQuals.isEmpty {
+                    Text("No quals loaded — import your roster to set qual-swap preferences.")
+                        .font(.caption).foregroundStyle(.secondary)
+                } else {
+                    // Own VStack with generous spacing so the per-qual menu rows never crowd/overlap.
+                    VStack(spacing: 14) {
+                        ForEach(myQuals, id: \.self) { q in
+                            Picker(q, selection: qualValueBinding(q)) {
+                                Text("Open").tag(-1)
+                                Text("Won't work").tag(0)
+                                ForEach(1...qualSwapMaxValue, id: \.self) { v in
+                                    Text(v == 1 ? "1 (least)"
+                                         : v == qualSwapMaxValue ? "\(v) (most)" : "\(v)").tag(v)
+                                }
+                            }
+                            .pickerStyle(.menu)
                         }
                     }
                 }
             }
+            tightGroup("Desk blacklist", "Specific desk numbers you'll never qual-swap into — blocked regardless of qual preference. Type desk numbers separated by commas.") {
+                TextField("e.g. 64, 65", text: qualSwapDeskText)
+                    .textFieldStyle(.roundedBorder)
+                    .autocorrectionDisabled().textInputAutocapitalization(.characters)
+            }
         } header: {
-            Text("Qual-swap preferences")
-        } footer: {
-            Text("When a trade needs a qual swap, you'll be asked to move onto a different desk. You'll accept only if that desk's qual is ranked EQUAL OR HIGHER than the qual of the desk you're already working that day.\n\n• Open = no preference (you'll take it).\n• Won't work (0) = never swap into that qual.\n• 1 = least preferred … higher = more preferred.")
+            infoHeader("Qual Swap", "Set which desks you'll accept sliding onto for a qual swap, and which you'll never take.")
         }
-        .listRowBackground(AppColor.special.opacity(0.20))   // E3: qual-swap section distinct from blacklists above
+        .listRowBackground(AppColor.special.opacity(0.20))   // E3: qual-swap group distinct from blacklists above
+    }
+}
 
-        Section {
-            TextField("e.g. 64, 65", text: qualSwapDeskText)
-                .autocorrectionDisabled().textInputAutocapitalization(.characters)
-        } header: {
-            Text("Qual-swap desk blacklist")
-        } footer: {
-            Text("Specific desk numbers you'll never qual-swap into — blocked regardless of qual preference.")
+// MARK: - Profile sections (Account tab)
+
+/// Your public profile — Status, Qualifications, and device-only Private Notes. Rendered in the Account
+/// tab of the unified Settings.
+struct ProfileSections: View {
+    @Bindable private var settings = SettingsManager.shared
+    @State private var myQuals: [String] = []
+    @State private var editingNotes = false
+
+    private func publishProfile() { settings.markPrefsChanged(); Task { await TradeProfileStore.shared.publishMine() } }
+
+    var body: some View {
+        Group {
+            Section {
+                TextField("e.g. \"😀 Happy to take weekend PMs\" — emojis welcome", text: Binding(
+                    get: { settings.statusBroadcast },
+                    set: { settings.statusBroadcast = String($0.prefix(140)) }), axis: .vertical)
+                    .lineLimit(1...3)
+                    .onSubmit { publishProfile() }
+                HStack { Spacer(); CharCounter(text: settings.statusBroadcast, limit: 140) }
+            } header: {
+                HStack(spacing: 6) { Text("Status"); InfoBubble(text: "A public one-liner shown to coworkers (140 chars). Emojis welcome.") }
+            }
+            Section {
+                if myQuals.isEmpty {
+                    Text("No quals loaded — import your roster.").font(.caption).foregroundStyle(.secondary)
+                } else {
+                    HStack {
+                        ForEach(myQuals, id: \.self) { q in
+                            Text(q).font(.caption.bold())
+                                .padding(.horizontal, 8).padding(.vertical, 3)
+                                .background(Color.accentColor.opacity(0.15), in: Capsule())
+                        }
+                    }
+                }
+            } header: {
+                HStack(spacing: 6) { Text("Qualifications"); InfoBubble(text: "Your desk qualifications, read from the roster.") }
+            }
+            Section {
+                Button { editingNotes = true } label: {
+                    HStack(spacing: 8) {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            Text(settings.privateNotes.isEmpty ? "Tap to add private notes" : settings.privateNotes)
+                                .font(.subheadline)
+                                .foregroundStyle(settings.privateNotes.isEmpty ? .secondary : .primary)
+                                .lineLimit(1).fixedSize(horizontal: true, vertical: false).padding(.vertical, 2)
+                        }
+                        Image(systemName: "pencil").font(.caption).foregroundStyle(.secondary)
+                    }
+                }.buttonStyle(.plain)
+            } header: {
+                HStack(spacing: 6) { Text("Private notes"); InfoBubble(text: "Stored on your device only and never shared. Tap to edit; swipe to read.") }
+            }
         }
-        .listRowBackground(AppColor.special.opacity(0.20))   // E3
+        .sheet(isPresented: $editingNotes) { PrivateNotesEditor() }
+        .task {
+            myQuals = settings.cachedQuals
+            if myQuals.isEmpty {
+                let q = await RosterStore.shared.schedule(forWorker: settings.username).first?.quals ?? []
+                if !q.isEmpty { myQuals = q; settings.cachedQuals = q }
+            }
+        }
     }
 }
 

@@ -81,7 +81,28 @@ actor CloudKitMessagingService: MessagingService {
             r["perfectMatch"] = (request.perfectMatch == true ? 1 : 0) as CKRecordValue
             // Flag so the taker's record-UPDATE subscription fires on qual-swap responses (Q3/Q6).
             r["hasQualSwap"] = (request.qualSwap != nil ? 1 : 0) as CKRecordValue
+            // Auto-match server push: a radar auto-send (origin .intents) gets its own subscription + a
+            // DYNAMIC alert ("An Auto-Match has been found for <date> with <name>!"). The flat fields feed the
+            // subscription's loc-args; `isAutoMatch` gates it (and excludes it from the generic request pushes).
+            let isAuto = request.origin == .intents
+            r["isAutoMatch"] = (isAuto ? 1 : 0) as CKRecordValue
+            if isAuto {
+                let firstDay = (request.giveDayIDs + request.takeDayIDs).sorted().first
+                r["autoMatchDate"] = (firstDay.map(Self.pushDayLabel) ?? "a shift") as CKRecordValue
+                r["autoMatchPeer"] = request.fromName as CKRecordValue
+                // The ISO day the tap should deep-link to (delivered in the push via the subscription's
+                // desiredKeys → parsed on tap to open that day's Trade List).
+                if let firstDay { r["autoMatchDayISO"] = firstDay as CKRecordValue }
+            }
         }
+    }
+
+    /// "Sat, Sep 6" style label for an ISO day, for the auto-match push text (loc-arg).
+    private static func pushDayLabel(_ isoDay: String) -> String {
+        let iso = DateFormatter(); iso.dateFormat = "yyyy-MM-dd"; iso.calendar = Calendar(identifier: .gregorian)
+        guard let d = iso.date(from: isoDay) else { return isoDay }
+        let out = DateFormatter(); out.dateFormat = "EEE, MMM d"
+        return out.string(from: d)
     }
 
     func fetchRequests(involving workerID: String) async -> [TradeRequest] {
@@ -103,6 +124,8 @@ actor CloudKitMessagingService: MessagingService {
         await save(recordType: RT.response, id: response.id, model: response) { r in
             r["requestID"]   = response.requestID as CKRecordValue
             r["responderID"] = response.responderID as CKRecordValue
+            // Flat, queryable id of the request owner to push ("someone responded to your trade").
+            if let notifyID = response.notifyID { r["notifyID"] = notifyID as CKRecordValue }
         }
     }
 
@@ -176,6 +199,33 @@ final class PrivateStateStore {
         await syncIntentsOnLaunch()   // B4-2 — ALWAYS runs, regardless of the notes record
         await syncPrefsOnLaunch()     // welcome / update-notes / consent flags across the user's devices
         await syncRadarOnLaunch()     // Match Radar watch/seen across the user's devices
+        await syncDMOnLaunch()        // Direct-message read-state across the user's devices
+    }
+
+    /// Reconcile DM read-state (per-conversation last-opened) across the user's devices. MERGE semantics:
+    /// adopt the remote map (newest-read per conversation wins), then push our merged copy if we're newer —
+    /// so reading a message on one device clears its unread dot on the others.
+    func syncDMOnLaunch() async {
+        guard SettingsManager.shared.useCloudKit else { return }
+        let store = DirectMessageStore.shared
+        guard let remote = await cloud.fetchDMReadState() else {
+            if let json = store.exportReadStateJSON(), store.readStateUpdatedAt > .distantPast {
+                await cloud.publishDMReadState(json, updatedAt: store.readStateUpdatedAt)
+            }
+            return
+        }
+        let localNewer = store.readStateUpdatedAt > remote.updatedAt
+        store.applyRemoteReadState(remote.json, at: remote.updatedAt)   // always merge remote in
+        if localNewer, let json = store.exportReadStateJSON() {
+            await cloud.publishDMReadState(json, updatedAt: store.readStateUpdatedAt)   // push our merged map up
+        }
+    }
+
+    /// Push the local DM read-state up (called after the user opens a conversation).
+    func publishLocalDMReadState() async {
+        guard SettingsManager.shared.useCloudKit,
+              let json = DirectMessageStore.shared.exportReadStateJSON() else { return }
+        await cloud.publishDMReadState(json, updatedAt: DirectMessageStore.shared.readStateUpdatedAt)
     }
 
     /// Reconcile standing conditional offers across the user's devices (newer wins, by updatedAt).
@@ -414,6 +464,26 @@ actor CloudKitPrivateStateService {
         guard let record = try? await db.record(for: id),
               let json = record["radar"] as? String,
               let updatedAt = record["radarUpdatedAt"] as? Date else { return nil }
+        return (json, updatedAt)
+    }
+
+    /// DM read-state (per-conversation last-opened map) — private, cross-device only. Rides the same
+    /// private_state record in its own fields (needs `dmReadState` / `dmReadStateUpdatedAt` deployed in the
+    /// CloudKit Console — see CLOUDKIT_DEPLOY.md). The DM messages themselves live in the PUBLIC DB.
+    func publishDMReadState(_ json: String, updatedAt: Date) async {
+        let record: CKRecord
+        if let existing = try? await db.record(for: id) { record = existing }
+        else { record = CKRecord(recordType: Self.recordType, recordID: id) }
+        record["dmReadState"] = json as CKRecordValue
+        record["dmReadStateUpdatedAt"] = updatedAt as CKRecordValue
+        do { _ = try await db.save(record) }
+        catch { print("⚠️ DM read-state publish failed: \(error.localizedDescription)") }
+    }
+
+    func fetchDMReadState() async -> (json: String, updatedAt: Date)? {
+        guard let record = try? await db.record(for: id),
+              let json = record["dmReadState"] as? String,
+              let updatedAt = record["dmReadStateUpdatedAt"] as? Date else { return nil }
         return (json, updatedAt)
     }
 

@@ -39,6 +39,9 @@ final class TradeFeedCache {
     /// "Look up a dispatcher" dropdown (moved from the former Just 2 tab) so it isn't re-fetched
     /// on every tab return.
     var allDispatchers: [(id: String, name: String)] = []
+    /// Per-worker desk quals, cached alongside `allDispatchers` so the Dispatcher tab never re-fetches
+    /// a year of roster on every open.
+    var allDispatcherQuals: [String: [String]] = [:]
 
     /// A stable hash of the inputs that change a feed's results. Days are optional (Intents seeds from
     /// marked intent, not a day picker).
@@ -68,9 +71,13 @@ struct TradeByIntentsFeed: View {
     @State private var sentMessage: String?
     @State private var detailPackage: TradePackage?
     @State private var pkgSwap: PackageSwapContext?   // Q1: qual-swap package → blast picker
-    // A1/A2: Master Filter — shapes the on-demand "I'm Feeling Lucky" search; chips stay visible.
+    // A1/A2: Master Filter — the comprehensive display filters (dates / connection / shift time / desk qual).
     @State private var searchFilter = SearchFilter()
-    @State private var showFilter = false
+    // The "Deeper" escalation — OFF = fast two-person; ON = intensive 3+ / N-Way generation.
+    @State private var deeper = false
+    /// Complex Intents does NOT auto-search — the user taps Search first (set true once they do, or when a
+    /// cached result is restored).
+    @State private var hasSearched = false
     @State private var rosterPeople: [(id: String, name: String)] = []
     @State private var searchTask: Task<Void, Never>?   // A1: cancellable Lucky search
     @State private var mutualOnly = true   // Mutual (both sides marked) vs All (also one-sided, active peers)
@@ -118,29 +125,28 @@ struct TradeByIntentsFeed: View {
         return true
     }
 
-    /// The deeper-search button label reflects the active one-time criteria (or the default name).
-    /// "More: 3+ & loops" = the on-demand heavy search for 3+person / circular options (the normal feed
-    /// stays fast at two-person swaps).
-    private var luckyTitle: String {
-        searchFilter.summary(nameFor: { id in rosterPeople.first { $0.id == id }?.name ?? id })
-            .map { "More: \($0)" } ?? "More: 3+ & loops"
-    }
-
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
                 if !loading {
-                    luckyBar
+                    FindTradesFilterBar(filter: $searchFilter, deeper: $deeper, people: rosterPeople,
+                                        availableQuals: SettingsManager.shared.cachedQuals.filter(DispatcherDirectory.isQualCode).sorted(),
+                                        searchShiftCount: max(1, DayIntentStore.shared.seekingDayIDs.count),
+                                        onApply: { runSearch { await runCurrentDepth() } })
                     // Mutual = both sides marked (true intent matches). All = also one-sided deals where
                     // an ACTIVE peer could take days you marked. Robots/inactives are excluded in both.
                     DXSegmented(selection: $mutualOnly, options: [.init(true, "Mutual"), .init(false, "All")],
                                 color: { $0 ? AppColor.heat : AppColor.primary })
                         .padding(.horizontal).padding(.top, 4)
                     // No re-run on toggle: both Mutual + All were computed in one search (instant flip).
-                    // Trade size (Max people) is a Lucky-time option — only shown once Lucky is engaged.
-                    if searchFilter.isActive {
-                        MaxPeoplePicker().padding(.horizontal).padding(.top, 4)
+
+                    // Complex Intents runs ONLY when you tap Search (no auto-start).
+                    Button { hasSearched = true; runSearch { await runCurrentDepth() } } label: {
+                        Label(hasSearched ? "Search again" : "Search", systemImage: "magnifyingglass")
+                            .font(.subheadline.weight(.semibold)).frame(maxWidth: .infinity)
                     }
+                    .buttonStyle(.borderedProminent).controlSize(.small)
+                    .padding(.horizontal).padding(.top, 4)
                 }
 
                 if loading {
@@ -163,14 +169,20 @@ struct TradeByIntentsFeed: View {
                             .accessibilityLabel("Cancel")
                             .padding(.bottom, 8)
                         }
+                } else if !hasSearched {
+                    ContentUnavailableView("Search Complex Intents", systemImage: "magnifyingglass",
+                        description: Text("Set your filters above, then tap Search to find 3+ person and circular (N-Way) trades. Turn on “Deeper” for the most exhaustive search."))
+                        .padding(.top, 20)
                 } else if displayed.isEmpty {
-                    ContentUnavailableView("No Intent Matches",
-                        systemImage: "sparkles",
-                        description: Text(activePackages.isEmpty
+                    ContentUnavailableView(complexOnly && !deeper ? "Turn on Deeper" : "No Intent Matches",
+                        systemImage: complexOnly && !deeper ? "wand.and.stars" : "sparkles",
+                        description: Text(complexOnly && !deeper
+                            ? "Complex trades — 3+ person and circular loops — only surface with the intensive search. Flip “Deeper” above to find them."
+                            : (activePackages.isEmpty
                             ? (mutualOnly
                                ? "No two-sided intent matches yet — mark days to trade away on Home, and as others mark theirs, matches appear here. Switch to All to see active people who could take the days you marked."
-                               : "Mark days to trade away on Home. Tap “More: 3+ & loops” for 3+ person and circular options.")
-                            : "No matches fit your current filter — tap the filter to widen it."))
+                               : "Mark days to trade away on Home. Flip “Deeper” above for 3+ person and circular options.")
+                            : "No matches fit your current filter — tap Filters to widen it.")))
                         .padding(.top, 20)
                 } else {
                     sectionHeader("Intent Matches", "Most mutual intent first — your marked days matched with theirs (🔥 = both sides marked)")
@@ -215,69 +227,31 @@ struct TradeByIntentsFeed: View {
                 }
             }
         }
-        .sheet(isPresented: $showFilter) {
-            MasterFilterSheet(filter: $searchFilter, people: rosterPeople,
-                              availableQuals: SettingsManager.shared.cachedQuals.sorted(),   // show the Desk-qual filter
-                              searchShiftCount: max(1, DayIntentStore.shared.seekingDayIDs.count),   // marked trade-aways
-                              onGenerate: { f in runSearch { await reload(generation: f, lucky: true, computeAll: true); cacheSnapshot() } },
-                              onReset: { runSearch { await reloadFast() } })
-        }
         .task {
             // U-PERF: restore the last results instantly if nothing changed; otherwise run a
             // CANCELLABLE fast search (so the spinner shows a working Cancel and the engine yields).
+            // Restore prior results instantly if nothing changed; otherwise WAIT for the user to tap Search
+            // (Complex Intents never auto-starts).
             if let snap = TradeFeedCache.shared.snapshot(Self.cacheKey),
                snap.signature == TradeFeedCache.signature(whatIf: whatIf) {
                 packages = snap.packages; mutualPackages = snap.mutualPackages
                 allLoaded = snap.allLoaded
-                rosterPeople = snap.rosterPeople; loading = false
+                rosterPeople = snap.rosterPeople; loading = false; hasSearched = true
             } else {
-                runSearch { await reloadFast() }
+                loading = false
             }
         }
-        // Switching to All generates the heavier superset ONCE (Mutual is already computed); switching
-        // back to Mutual is instant. Opening Intents therefore never pays for All unless it's asked for.
-        .onChange(of: mutualOnly) { _, isMutual in
-            if !isMutual, !allLoaded { runSearch { await reloadAll() } }
-        }
-        .onChange(of: whatIf) { _, _ in runSearch { await reloadFast() } }
-        // C1: recompute on an explicit SAVE (intents revision) — NOT on every edit (was
-        // MatchInputsSignature, which re-ran the heavy search on every keystroke). Background
-        // reruns stay FAST (2-person) — the heavy 3+/N-Way search only runs via Lucky → Generate.
-        .onChange(of: DayIntentStore.shared.intentsRevision) { _, _ in runSearch { await reloadFast() } }
-        .onChange(of: SettingsManager.shared.normalMaxPeople) { _, _ in runSearch { await reloadFast() } }
-        .onDisappear { searchTask?.cancel() }   // A1: leaving cancels any in-flight Lucky search
+        // Switching Mutual/All no longer auto-searches — the user taps Search to (re)generate at the
+        // current scope (Search runs computeAll when All is selected).
+        .onChange(of: whatIf) { _, _ in if hasSearched { runSearch { await runCurrentDepth() } } }
+        // Recompute on an explicit SAVE (intents revision) — only if a search is already showing.
+        .onChange(of: DayIntentStore.shared.intentsRevision) { _, _ in if hasSearched { runSearch { await runCurrentDepth() } } }
+        .onChange(of: SettingsManager.shared.normalMaxPeople) { _, _ in if hasSearched { runSearch { await runCurrentDepth() } } }
+        .onDisappear { searchTask?.cancel() }   // A1: leaving cancels any in-flight search
         .alert("Package sent", isPresented: Binding(
             get: { sentMessage != nil }, set: { if !$0 { sentMessage = nil } })) {
             Button("OK", role: .cancel) {}
         } message: { Text(sentMessage ?? "") }
-    }
-
-    /// A1/A2: the "I'm Feeling Lucky" filter bar — a button to shape the search + visible chips
-    /// of the active choices.
-    private var luckyBar: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Button { showFilter = true } label: {
-                Label(luckyTitle, systemImage: "wand.and.stars")
-                    .font(.subheadline.weight(.semibold))
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.borderedProminent).controlSize(.small)
-            .tint(searchFilter.isActive ? AppColor.heat : nil)
-            if searchFilter.isActive {
-                HStack(spacing: 6) {
-                    chip("One-time generation — tap to change or reset")
-                    Spacer()
-                }
-                .font(.caption2)
-            }
-        }
-        .padding(.horizontal).padding(.top, 4)
-    }
-
-    private func chip(_ text: String) -> some View {
-        Text(text).font(.caption2.weight(.semibold))
-            .padding(.horizontal, 8).padding(.vertical, 3)
-            .background(Color(.tertiarySystemFill), in: Capsule())
     }
 
     private func sectionHeader(_ title: String, _ subtitle: String) -> some View {
@@ -303,23 +277,20 @@ struct TradeByIntentsFeed: View {
         }
     }
 
-    /// Background/default: fast 2-person generation, and clear any Lucky filter so the
-    /// 2-person results aren't hidden by a stale engine/people selection.
-    private func reloadFast() async {
-        searchFilter = .normal
-        // Opening Intents (and background SAVE / What-If reruns) computes ONLY the Mutual set — fast.
-        // "All" is generated lazily when the user taps it. If they're CURRENTLY viewing All, keep it fresh.
-        await reload(generation: SearchFilter(engine: .both, maxPeople: SettingsManager.shared.normalMaxPeople),
-                     computeAll: !mutualOnly)
-        if Task.isCancelled { return }
-        cacheSnapshot()
-    }
-
-    /// Generate the heavier "All" superset on demand (when the user switches to the All tab), keeping the
-    /// already-computed Mutual results.
-    private func reloadAll() async {
-        await reload(generation: SearchFilter(engine: .both, maxPeople: SettingsManager.shared.normalMaxPeople),
-                     computeAll: true)
+    /// Run the search at the CURRENT depth. "Deeper" OFF = fast two-person generation (background default);
+    /// ON = the intensive 3+/N-Way generation (`lucky` applies the openness override + heavy search). The
+    /// comprehensive filters in `searchFilter` are preserved across depth changes — they filter the display,
+    /// so a date range / connection stays applied whether the toggle is on or off.
+    private func runCurrentDepth() async {
+        let gen: SearchFilter
+        if deeper {
+            gen = SearchFilter(engine: .both, maxPeople: max(3, searchFilter.maxPeople),
+                               myOpennessOverride: searchFilter.myOpennessOverride)
+        } else {
+            gen = SearchFilter(engine: .both, maxPeople: SettingsManager.shared.normalMaxPeople)
+        }
+        // Compute ONLY the Mutual set unless the user is currently viewing All (lazy superset).
+        await reload(generation: gen, lucky: deeper, computeAll: !mutualOnly)
         if Task.isCancelled { return }
         cacheSnapshot()
     }
@@ -546,27 +517,27 @@ struct MasterFilterSheet: View {
                     Text("Search with your openness set to this — just for this search. “Open to all” accepts any pickup that's physically possible (you're off, qualified, rested); “Bookends only” keeps just bookend days. Your blacklist still applies, and your saved setting isn't changed.")
                 }
                 Section {
-                    // One-time HEAVY generation for the chosen criteria (3+ loops included).
+                    // Apply the comprehensive display filters. Search DEPTH (fast vs intensive 3+/N-Way)
+                    // is governed separately by the "Deeper" toggle on the filter bar.
                     Button {
                         draft.engine = .both   // toggle retired — always generate the full set; ranker curates
                         filter = draft; onGenerate(draft); dismiss()
                     } label: {
-                        Label("Generate matches", systemImage: "wand.and.stars").frame(maxWidth: .infinity)
+                        Label("Apply filters", systemImage: "checkmark.circle").frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(rangeTooShort)   // too-short window can't hold every received day
-                    // Reset back to the fast NORMAL generation (2-person only).
                     Button(role: .destructive) {
                         draft = .normal; filter = .normal; onReset(); dismiss()
                     } label: {
-                        Label("Reset to normal", systemImage: "arrow.uturn.backward").frame(maxWidth: .infinity)
+                        Label("Clear filters", systemImage: "arrow.uturn.backward").frame(maxWidth: .infinity)
                     }
                     .disabled(!filter.isActive && !draft.isActive)
                 } footer: {
-                    Text("Generate runs the heavy 3+ person and circular (N-Way) search once. The normal feed stays fast with two-person trades only.")
+                    Text("These narrow which trades are shown. To search harder for 3+ person and circular (N-Way) trades, turn on “Deeper” on the filter bar.")
                 }
             }
-            .navigationTitle("More: 3+ & loops")
+            .navigationTitle("Filters")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
         }
@@ -1218,6 +1189,20 @@ struct PackageDetailView: View {
     private func gives(_ id: String) -> Set<String> { Set(steps.filter { $0.fromID == id }.map(\.dayID)) }
     private func gets(_ id: String) -> Set<String> { Set(steps.filter { $0.toID == id }.map(\.dayID)) }
 
+    /// The published (non-private) note the day's owner wrote — mine from my local store, a peer's from their
+    /// published profile. Drives the note line under the calendars.
+    private func dayNote(day: String, owner: String) -> String? {
+        owner == myID ? DayIntentStore.shared.note(forDay: day)?.message
+                      : TradeProfileStore.shared.profile(forWorker: owner)?.dayNotes?[day]
+    }
+    /// The note for the currently-focused step's give-day (its giver is the owner).
+    private var focusedNote: (name: String, note: String)? {
+        guard steps.indices.contains(selectedStep) else { return nil }
+        let s = steps[selectedStep]
+        guard let m = dayNote(day: s.dayID, owner: s.fromID), !m.isEmpty else { return nil }
+        return (name(s.fromID), m)
+    }
+
     private var thisMonthStart: Date {
         cal.date(from: cal.dateComponents([.year, .month], from: Date())) ?? Date()
     }
@@ -1275,6 +1260,15 @@ struct PackageDetailView: View {
                         }
                     }
                     .tabViewStyle(.page(indexDisplayMode: .never))
+
+                    // The note whoever OWNS the focused day published — so you see WHY they're trading it,
+                    // consistent with the day rows + inbox thread cards.
+                    if let fn = focusedNote {
+                        Label("\(fn.name): \(fn.note)", systemImage: "quote.bubble")
+                            .font(.caption).foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal)
+                    }
 
                     if !readOnly {
                         if selectable {

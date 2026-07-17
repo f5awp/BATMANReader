@@ -127,6 +127,11 @@ struct TradeProfile: Sendable, Hashable, Codable, Identifiable {
     var notificationLeadHours: Int? = nil              // hours before a shift the reminder fires
     var dailyDigestEnabled: Bool? = nil                // once-a-day summary on/off
     var dailyDigestHour: Int? = nil                    // hour (0–23) the summary fires
+    // Match Radar ECB acceptance thresholds — PUBLISHED (unlike the pure local view filter) so a peer's radar
+    // WON'T auto-send me an ECB offer I'd reject: an offer below `minAcceptedECB`, or an IOU when I've turned
+    // Consider IOUs off. Set post-init; optional ⇒ old records decode.
+    var minAcceptedECB: Double? = nil
+    var considerIOUs: Bool? = nil
 
     // EXPLICIT init — this REPLACES Swift's synthesized memberwise init and FREEZES the
     // construction signature. Adding a NEW optional published field above does NOT change
@@ -438,6 +443,9 @@ final class TradeProfileStore {
         p.notificationLeadHours = s.notificationLeadHours
         p.dailyDigestEnabled   = s.dailyDigestEnabled
         p.dailyDigestHour      = s.dailyDigestHour
+        // Published so peers' radar respects my ECB acceptance floor when auto-matching (prevents auto-sends below it).
+        p.minAcceptedECB       = s.defaultAcceptedECB
+        p.considerIOUs         = s.considerIOUs
         // Proof this profile belongs to a real, signed-in account (not a legacy/orphan cloud record).
         p.accountClaimed = s.appleUserID.isEmpty ? nil : true
         return p

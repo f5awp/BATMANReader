@@ -14,6 +14,7 @@
 		911DBAC23002CCF0003A03FD /* Archivo-Black.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 911DBA893002CCF0003A03FD /* Archivo-Black.ttf */; };
 		911DBADC3002CCF0003A03FD /* Archivo-Bold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 911DBA8B3002CCF0003A03FD /* Archivo-Bold.ttf */; };
 		911DBB1230030610003A03FD /* Archivo-SemiBold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 911DBB1130030610003A03FD /* Archivo-SemiBold.ttf */; };
+		91A39867300A426800243B1B /* DX Info List.pdf in Resources */ = {isa = PBXBuildFile; fileRef = 91A39866300A426800243B1B /* DX Info List.pdf */; };
 		91C3EA913003A1D000F144B8 /* mockup-reference.html in Resources */ = {isa = PBXBuildFile; fileRef = 91C3EA903003A1D000F144B8 /* mockup-reference.html */; };
 		91C3EAA43003CCD900F144B8 /* blackout-options.png in Resources */ = {isa = PBXBuildFile; fileRef = 91C3EAA33003CCD900F144B8 /* blackout-options.png */; };
 		91C3EAA63003CCE300F144B8 /* MOCKUP-PARITY.md in Resources */ = {isa = PBXBuildFile; fileRef = 91C3EAA53003CCE300F144B8 /* MOCKUP-PARITY.md */; };
@@ -60,6 +61,7 @@
 		911DBA8B3002CCF0003A03FD /* Archivo-Bold.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "Archivo-Bold.ttf"; sourceTree = "<group>"; };
 		911DBA8D3002CCF0003A03FD /* Archivo-ExtraBold.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "Archivo-ExtraBold.ttf"; sourceTree = "<group>"; };
 		911DBB1130030610003A03FD /* Archivo-SemiBold.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "Archivo-SemiBold.ttf"; sourceTree = "<group>"; };
+		91A39866300A426800243B1B /* DX Info List.pdf */ = {isa = PBXFileReference; lastKnownFileType = image.pdf; path = "DX Info List.pdf"; sourceTree = "<group>"; };
 		91B5643C2FDA47E400D38BBE /* BATMANReader.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = BATMANReader.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		91C3EA903003A1D000F144B8 /* mockup-reference.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = "mockup-reference.html"; sourceTree = "<group>"; };
 		91C3EAA33003CCD900F144B8 /* blackout-options.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "blackout-options.png"; sourceTree = "<group>"; };
@@ -188,6 +190,7 @@
 				91C3EAA83003CDAA00F144B8 /* IMG_4171.PNG */,
 				91C3EAAB3003CDFB00F144B8 /* app-vs-mockup.png */,
 				91C3EAB5300427CB00F144B8 /* PARITY-v2-style 2.md */,
+				91A39866300A426800243B1B /* DX Info List.pdf */,
 			);
 			sourceTree = "<group>";
 		};
@@ -308,6 +311,7 @@
 			files = (
 				911DBB1230030610003A03FD /* Archivo-SemiBold.ttf in Resources */,
 				911DBABC3002CCF0003A03FD /* Archivo-ExtraBold.ttf in Resources */,
+				91A39867300A426800243B1B /* DX Info List.pdf in Resources */,
 				91F4D30C30062B00004A2AFE /* README 2.md in Resources */,
 				911DBAC23002CCF0003A03FD /* Archivo-Black.ttf in Resources */,
 				91C3EAAC3003CDFB00F144B8 /* app-vs-mockup.png in Resources */,

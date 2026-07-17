@@ -439,6 +439,12 @@ final class DayIntentStore {
     func offIntent(forDay dayID: String) -> OffIntentState? { offIntents[dayID] }
     func topology(forDay dayID: String) -> DayTopology {
         if let t = topologies[dayID] { return t }            // user override wins
+        // MID-aware auto-holiday: a shift belongs to the day it works INTO (a Midnight shift the night before
+        // a holiday IS high-demand; a MID on the holiday date works into the next day and is NOT). Use the
+        // day's own shift when we have it (this store is always the current user's, so ShiftStore applies).
+        if let sh = ShiftStore.shared.shifts.first(where: { $0.id == dayID }), !sh.isOff {
+            return Holidays.isHighDemand(dayID, startHour: sh.startHour) ? .highDemand : .standard
+        }
         return Holidays.isHighDemand(dayID) ? .highDemand : .standard
     }
     func note(forDay dayID: String) -> DayNote? { notes[dayID] }

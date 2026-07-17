@@ -30,8 +30,11 @@ import SwiftUI
 struct DXSegment<T: Hashable> {
     let value: T
     let label: String
-    let badge: Int      // optional count badge (0 = none) shown to the right of the label
-    init(_ value: T, _ label: String, badge: Int = 0) { self.value = value; self.label = label; self.badge = badge }
+    let badge: Int      // optional TOTAL count badge (0 = none) shown to the right of the label
+    let newBadge: Int   // optional NEW/unread count (0 = none) — a small red bubble after the total
+    init(_ value: T, _ label: String, badge: Int = 0, newBadge: Int = 0) {
+        self.value = value; self.label = label; self.badge = badge; self.newBadge = newBadge
+    }
 }
 
 struct DXSegmented<T: Hashable>: View {
@@ -66,6 +69,14 @@ struct DXSegmented<T: Hashable>: View {
                                 .foregroundStyle(active ? (tint ?? AppColor.primary) : .white)
                                 .padding(.horizontal, 5).padding(.vertical, 1)
                                 .background(active ? Color.white.opacity(0.95) : (tint ?? AppColor.primary), in: Capsule())
+                        }
+                        // NEW/unread count — always the alerting heat color so it reads as "needs attention".
+                        if opt.newBadge > 0 {
+                            Text("\(min(opt.newBadge, 99)) new")
+                                .font(.system(size: 9, weight: .bold))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 5).padding(.vertical, 1)
+                                .background(AppColor.heat, in: Capsule())
                         }
                     }
                         .frame(maxWidth: .infinity)

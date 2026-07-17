@@ -38,6 +38,27 @@ enum Holidays {
         return map(year: year)[dayID]
     }
 
+    /// The day a SHIFT counts toward for holiday purposes. A Midnight shift belongs to the day it works
+    /// INTO — it starts the night before (e.g. a Sep 6 MID runs into Sep 7 Labor Day), so its holiday is
+    /// its date + 1. A MID on the holiday date itself works into the next (ordinary) day and does NOT count.
+    /// AM/PM shifts count on their own date.
+    private static func holidayDate(for dayID: String, startHour: Int) -> String {
+        guard ShiftAvailabilityType.infer(fromStartHour: startHour) == .mid,
+              let d = isoF.date(from: dayID),
+              let next = cal.date(byAdding: .day, value: 1, to: d) else { return dayID }
+        return isoF.string(from: next)
+    }
+
+    /// High-demand for a specific SHIFT, honoring the MID = night-before rule (see `holidayDate`).
+    static func isHighDemand(_ dayID: String, startHour: Int) -> Bool {
+        isHighDemand(holidayDate(for: dayID, startHour: startHour))
+    }
+
+    /// The holiday a specific SHIFT covers, honoring the MID = night-before rule.
+    static func name(forDay dayID: String, startHour: Int) -> String? {
+        name(forDay: holidayDate(for: dayID, startHour: startHour))
+    }
+
     // MARK: - Computation
 
     private static func compute(year: Int) -> [String: String] {

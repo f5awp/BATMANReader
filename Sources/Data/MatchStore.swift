@@ -36,6 +36,9 @@ final class MatchStore {
     private(set) var dayIndex: [String: TradeRouter.DayRadar] = [:]
     /// The Watch toggle (per day). Local v1 (cross-device sync is a later add).
     private(set) var watchedDays: Set<String> = []
+    /// Suggested-lane read markers (LOCAL): which suggestions the user has already viewed — drives the
+    /// inbox "new" badge on the Suggested tab.
+    private var seenSuggestedKeys: Set<String> = []
     /// Deep-link target: set when the user taps a radar notification; the UI opens that day's Trade List
     /// then clears it. (Observed by ContentView + HomeView.)
     var pendingDayID: String?
@@ -58,6 +61,7 @@ final class MatchStore {
 
     private init() {
         watchedDays    = Set(UserDefaults.standard.stringArray(forKey: Keys.watched) ?? [])
+        seenSuggestedKeys = Set(UserDefaults.standard.stringArray(forKey: Keys.seenSuggested) ?? [])
         seenPickupDays = Set(UserDefaults.standard.stringArray(forKey: Keys.seen) ?? [])
         seenTakerDays  = Set(UserDefaults.standard.stringArray(forKey: Keys.seenTaker) ?? [])
         seenMatchKeys  = Set(UserDefaults.standard.stringArray(forKey: Keys.seenMatch) ?? [])
@@ -164,24 +168,14 @@ final class MatchStore {
                                  takeDayIDs: acc.takes.sorted(), shiftTypes: acc.shifts, quals: acc.quals)
         }.sorted { $0.peerName < $1.peerName }
         lastRefreshed = Date()
-        if !gainedPickups.isEmpty || !gainedTakers.isEmpty {
-            await NotificationManager.shared.notifyRadar(gainedPickups: gainedPickups, gainedTakers: gainedTakers,
-                                                         watched: watchedDays)
-        }
-        // Mutual matches alert BOTH parties (each device detects it), watched or not — once per match.
-        let df = DateFormatter(); df.dateFormat = "yyyy-MM-dd"
-        let out = DateFormatter(); out.dateFormat = "EEE, MMM d"
-        var matchKeys = Set<String>(); var newMutual: [(peer: String, dayID: String, dayLabel: String)] = []
+        // Per-day watch pings + mutual-match pings are RETIRED — replaced by the periodic Match Summary
+        // (scheduled at the end of recompute) and, for real incoming trades, the auto-match server push.
+        // We still track match keys for the "seen" baseline that drives the badge counts.
+        var matchKeys = Set<String>()
         for m in visibleMatches {
             let days = (m.giveDayIDs + m.takeDayIDs).sorted()
-            let key = m.peerID + "|" + days.joined(separator: ",")
-            matchKeys.insert(key)
-            if hasBaselined, !seenMatchKeys.contains(key), let first = days.first {
-                let label = df.date(from: first).map { out.string(from: $0) } ?? first
-                newMutual.append((peer: m.peerName, dayID: first, dayLabel: label))
-            }
+            matchKeys.insert(m.peerID + "|" + days.joined(separator: ","))
         }
-        if !newMutual.isEmpty { await NotificationManager.shared.notifyMutualMatch(newMutual) }
         await autoMatchFromMatches(r.matches, firstRun: firstRun)   // unified auto-send off marked intents
         seenMatchKeys = matchKeys
         UserDefaults.standard.set(Array(matchKeys), forKey: Keys.seenMatch)
@@ -191,6 +185,11 @@ final class MatchStore {
         UserDefaults.standard.set(Array(takerDays), forKey: Keys.seenTaker)
         if !hasBaselined { hasBaselined = true; UserDefaults.standard.set(true, forKey: Keys.baselined) }
         saveCachedIndex()   // persist so the next cold launch shows this instantly
+        // Re-arm the periodic Match Summary with the current per-date counts (replaces per-day watch pings).
+        await NotificationManager.shared.scheduleMatchSummary(
+            enabled: SettingsManager.shared.matchSummaryEnabled,
+            intervalHours: SettingsManager.shared.matchSummaryIntervalHours,
+            lines: matchSummaryLines())
         return (r.pickupDays, r.takerDays)
     }
 
@@ -198,6 +197,25 @@ final class MatchStore {
     /// digest so unwatched matches still surface without per-day spam (delivery is on-open until push lands).
     var unwatchedOpportunityCount: Int {
         pickupAvailableDays.union(takerAvailableDays).subtracting(watchedDays).count
+    }
+
+    /// Per-date "N auto-matches · M suggested" lines for the periodic Match Summary notification.
+    func matchSummaryLines() -> [String] {
+        let df = DateFormatter(); df.dateFormat = "yyyy-MM-dd"
+        let out = DateFormatter(); out.dateFormat = "EEE, MMM d"
+        var perDate: [String: (auto: Int, sug: Int)] = [:]
+        for (day, ms) in matchesByDay where !ms.isEmpty { perDate[day, default: (0, 0)].auto = ms.count }
+        for sm in suggestedMatches {
+            for d in Set(sm.giveDayIDs + sm.takeDayIDs) { perDate[d, default: (0, 0)].sug += 1 }
+        }
+        return perDate.keys.sorted().compactMap { day in
+            guard let v = perDate[day] else { return nil }
+            let label = df.date(from: day).map { out.string(from: $0) } ?? day
+            var parts: [String] = []
+            if v.auto > 0 { parts.append("\(v.auto) auto-match\(v.auto == 1 ? "" : "es")") }
+            if v.sug > 0 { parts.append("\(v.sug) suggested") }
+            return parts.isEmpty ? nil : "\(label): \(parts.joined(separator: " · "))"
+        }
     }
 
     /// UNIFIED AUTO-MATCH: your marked intents ARE the standing offers. For each of your want-to-trade days
@@ -237,7 +255,6 @@ final class MatchStore {
             return
         }
         let priors = MessagingStore.shared.acceptancePriorMap()
-        var alerts: [NotificationManager.StandingAlert] = []
         for give in matchable where !autoSentGiveDays.contains(give) {
             let kind = intents.tradeKind(forDay: give)
             let amount = TradeRequest.clampECB(intents.ecbAmount(forDay: give))
@@ -246,7 +263,7 @@ final class MatchStore {
             if kind != .ecb, !dayForDay.isEmpty {
                 // Day-for-day (Day) or a dual offer (Both) — broadcast to the top reciprocal peers.
                 let ranked = dayForDay.sorted { (priors[$0.peer.peerID] ?? 0) > (priors[$1.peer.peerID] ?? 0) }.prefix(Self.autoMatchCap)
-                guard let lead = ranked.first else { continue }
+                guard !ranked.isEmpty else { continue }
                 let offerID = UUID().uuidString
                 let offerKind: TradeKind = (kind == .both) ? .both : .day   // Both carries the ECB option too
                 for c in ranked {
@@ -259,11 +276,20 @@ final class MatchStore {
                         offerKind: offerKind, ecbAvailableDate: offerKind == .both ? available : nil)
                 }
                 autoSentGiveDays.insert(give)
-                alerts.append(.init(getDayID: lead.take, giveDayID: give, peer: lead.peer.peerName, sentCount: ranked.count))
             } else if kind != .day, let ecbCands = ecb[give], !ecbCands.isEmpty {
                 // ECB one-way: give this day for points to the top peers who'd cover it (first-accept-wins queue).
-                let ranked = ecbCands.sorted { (priors[$0.peerID] ?? 0) > (priors[$1.peerID] ?? 0) }.prefix(Self.autoMatchCap)
-                guard let lead = ranked.first else { continue }
+                // Honor each peer's PUBLISHED Minimum Accepted ECB + Consider IOUs — never auto-send an offer a
+                // peer would reject. This is what makes "Minimum Accepted ECB prevents an auto-match" real.
+                let isIOU = available.map { $0 > Date() } ?? false
+                let eligible = ecbCands.filter { c in
+                    let prof = TradeProfileStore.shared.profile(forWorker: c.peerID)
+                    if let floor = prof?.minAcceptedECB, amount < floor { return false }
+                    if isIOU, prof?.considerIOUs == false { return false }
+                    return true
+                }
+                guard !eligible.isEmpty else { continue }
+                let ranked = eligible.sorted { (priors[$0.peerID] ?? 0) > (priors[$1.peerID] ?? 0) }.prefix(Self.autoMatchCap)
+                guard !ranked.isEmpty else { continue }
                 let offerID = UUID().uuidString   // ECB ALWAYS shares an offerID (even solo) so it groups into one ECB folder
                 for c in ranked {
                     await MessagingStore.shared.sendRequest(
@@ -273,12 +299,11 @@ final class MatchStore {
                         offerKind: .ecb, ecbAvailableDate: available)
                 }
                 autoSentGiveDays.insert(give)
-                alerts.append(.init(getDayID: give, giveDayID: give, peer: lead.peerName, sentCount: ranked.count))
             }
         }
         autoSentGiveDays.formIntersection(matchable)   // forget days that stopped matching, so they can re-arm
         UserDefaults.standard.set(Array(autoSentGiveDays), forKey: Keys.autoSent)
-        if !alerts.isEmpty { await NotificationManager.shared.notifyStanding(alerts) }
+        // No local "your auto-match was sent" ping — the RECIPIENT gets the auto-match server push instead.
     }
 
     /// A day has a star — the SAME marker for both directions: an off-day pickup you can work, OR a working
@@ -313,6 +338,23 @@ final class MatchStore {
     }
     func isWatched(_ dayID: String) -> Bool { watchedDays.contains(dayID) }
 
+    /// Stable per-suggestion key (peer + the exact days), so a changed offer re-counts as new.
+    static func suggestedKey(_ m: SuggestedMatch) -> String {
+        "\(m.peerID)|\(m.giveDayIDs.sorted().joined(separator: ","))|\(m.takeDayIDs.sorted().joined(separator: ","))"
+    }
+    /// How many of these suggestions the user hasn't viewed yet (inbox "new" badge).
+    func newSuggestedCount(_ matches: [SuggestedMatch]) -> Int {
+        matches.reduce(0) { $0 + (seenSuggestedKeys.contains(Self.suggestedKey($1)) ? 0 : 1) }
+    }
+    /// Mark suggestions as viewed (called when the Suggested lane appears).
+    func markSuggestedSeen(_ matches: [SuggestedMatch]) {
+        let before = seenSuggestedKeys.count
+        for m in matches { seenSuggestedKeys.insert(Self.suggestedKey(m)) }
+        if seenSuggestedKeys.count != before {
+            UserDefaults.standard.set(Array(seenSuggestedKeys), forKey: Keys.seenSuggested)
+        }
+    }
+
     // MARK: Cross-device sync (rides the PrivateState blob, LWW by `radarStateUpdatedAt`)
 
     private(set) var radarStateUpdatedAt: Date = .distantPast
@@ -341,6 +383,7 @@ final class MatchStore {
 
     private enum Keys {
         static let watched        = "batman.radar.watchedDays"
+        static let seenSuggested  = "batman.radar.seenSuggestedKeys"
         static let seen           = "batman.radar.seenPickupDays"
         static let seenTaker      = "batman.radar.seenTakerDays"
         static let seenMatch      = "batman.radar.seenMatchKeys"

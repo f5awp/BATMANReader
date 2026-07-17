@@ -44,11 +44,11 @@ struct WelcomeTradePrefs: View {
                          label: { $0 })
             } header: { Text("Blacklisted regions") } footer: { Text("Grayed regions need a qualification you don't hold.") }
             Section {
-                pillFlow(TradeSettingsSheet.weekdayPills.map { String($0.day) },
+                pillFlow(TradeSettingsSections.weekdayPills.map { String($0.day) },
                          isOn: { settings.blacklistedWeekdays.contains(Int($0) ?? 0) },
                          enabled: { _ in true },
                          toggle: { toggleSet(&settings.blacklistedWeekdays, Int($0) ?? 0) },
-                         label: { d in TradeSettingsSheet.weekdayPills.first { String($0.day) == d }?.letter ?? d })
+                         label: { d in TradeSettingsSections.weekdayPills.first { String($0.day) == d }?.letter ?? d })
             } header: { Text("Blackout days") } footer: {
                 Text("More options — desks, qual-swap values, relief — live in Trade Settings.")
             }
@@ -237,11 +237,11 @@ struct WelcomeView: View {
                          label: { $0 })
             } header: { Text("Blacklisted regions") } footer: { Text("Grayed regions need a qualification you don't hold.") }
             Section {
-                pillFlow(TradeSettingsSheet.weekdayPills.map { String($0.day) },
+                pillFlow(TradeSettingsSections.weekdayPills.map { String($0.day) },
                          isOn: { settings.blacklistedWeekdays.contains(Int($0) ?? 0) },
                          enabled: { _ in true },
                          toggle: { toggleSet(&settings.blacklistedWeekdays, Int($0) ?? 0) },
-                         label: { d in TradeSettingsSheet.weekdayPills.first { String($0.day) == d }?.letter ?? d })
+                         label: { d in TradeSettingsSections.weekdayPills.first { String($0.day) == d }?.letter ?? d })
             } header: { Text("Blackout days") } footer: {
                 Text("More options — desks, qual-swap values, relief — live in Trade Settings.")
             }

@@ -25,10 +25,10 @@ struct ContentView: View {
     @State private var tradesLoaded = false   // §7: create TradesView lazily on first visit (no launch cost)
     @State private var showInbox = false
     @State private var showChannel = false
-    @State private var showTradeSettings = false  // settings (moved into the dock, on every tab)
-    @State private var showAppSettings = false
+    @State private var showSettings = false        // single unified Settings (opens the Trade tab by default)
+    @State private var showColorKey = false        // Colors & Legend (⋯ menu)
     @State private var showDashboard = false       // trade-status dashboard (from the top-bar status strip)
-    @State private var showECB = false             // ECB Accounting ledger (⋯ menu)
+    @State private var showECB = false             // ECB Accounting ledger — its own dock tile
     @State private var showChangelog = false   // Z2: "What's New" — now only from Settings, not on launch
     @AppStorage("hasOnboarded") private var hasOnboarded = false   // has completed the tour at least once
     @State private var walkthroughDismissed = false   // per-launch: closed the tour this session
@@ -61,7 +61,7 @@ struct ContentView: View {
         VStack(spacing: 0) {
             // One clean, shared top bar (identity + utilities), laid out above the content.
             AppTopBar(showInbox: $showInbox, showChannel: $showChannel,
-                      showTradeSettings: $showTradeSettings, showAppSettings: $showAppSettings,
+                      showSettings: $showSettings, showColorKey: $showColorKey,
                       showDashboard: $showDashboard, showECB: $showECB)
             // §7: content in a ZStack — BOTH tabs kept alive so state + the unsaved-intents leave guard
             // survive a switch; only the selected one is shown/hittable. Trades is created lazily on first
@@ -117,8 +117,8 @@ struct ContentView: View {
         } message: { Text("You have unsaved marks. Save them so your trades update, or discard to revert.") }
         .fullScreenCover(isPresented: $showInbox) { InboxView().magnifiable() }
         .fullScreenCover(isPresented: $showChannel) { ChannelView().magnifiable() }
-        .sheet(isPresented: $showTradeSettings) { TradeSettingsSheet().magnifiable() }
-        .sheet(isPresented: $showAppSettings) { SettingsView().magnifiable() }
+        .sheet(isPresented: $showSettings) { SettingsView(initialTab: .trade).magnifiable() }
+        .sheet(isPresented: $showColorKey) { IntentKeySheet().magnifiable() }
         .sheet(isPresented: $showDashboard) { TradeDashboardSheet().magnifiable() }
         .sheet(isPresented: $showECB) { ECBAccountingView().magnifiable() }
         .alert("Not on the app yet", isPresented: Binding(
@@ -196,6 +196,7 @@ struct ContentView: View {
             // ~8 CloudKit round-trips, each blocking the next). None depend on another; overlapping their
             // network waits is where the loader time is won.
             async let messagingRefresh: Void = MessagingStore.shared.refresh()
+            async let dmRefresh: Void         = DirectMessageStore.shared.refresh()   // 1:1 direct messages
             async let rosterRows: Int         = RosterStore.shared.syncMasterIfNewer()   // latest master
             async let privateState: Void      = PrivateStateStore.shared.syncOnLaunch()  // private notes (A3)
             async let myStatus: Void          = TradeProfileStore.shared.syncMyStatus()  // public status (A3 #12)
@@ -229,7 +230,7 @@ struct ContentView: View {
             // PHASE 2 — background housekeeping; none of it gates first paint or Welcome. The remaining
             // cross-device reads (started concurrently above) are awaited HERE, so the loader wasn't held on
             // them; the work that DEPENDS on them follows.
-            _ = await (messagingRefresh, privateState, myStatus, ecb, history)
+            _ = await (messagingRefresh, dmRefresh, privateState, myStatus, ecb, history)
             // Master import flipped my schedule to match a pending trade → auto-complete it. Needs the
             // refreshed inbox, so it runs after the messaging await. (B6-AUTOCOMPLETE.)
             if let diff = ShiftStore.shared.lastDiff, diff.hasChanges {
@@ -292,6 +293,8 @@ struct ContentView: View {
               !settings.username.trimmingCharacters(in: .whitespaces).isEmpty else { return }
         let rosterRows = await RosterStore.shared.syncMasterIfNewer()  // admin master-schedule updates (cheap version probe)
         await MessagingStore.shared.refresh()                 // inbox + channel posts/replies
+        await DirectMessageStore.shared.refresh()             // 1:1 direct messages (conversations + messages)
+        await PrivateStateStore.shared.syncDMOnLaunch()       // DM read-state across YOUR devices (LWW merge)
         await TradeProfileStore.shared.refreshOthers()        // peers' latest profiles/status
         await PrivateStateStore.shared.syncIntentsOnLaunch()  // intents (LWW)
         await ECBAccountingStore.shared.syncOnLaunch()        // ECB balance + shared lines
@@ -766,6 +769,7 @@ struct OnboardingView: View {
                 settings.useCloudKit = true
                 await TradeProfileStore.shared.setCloudKit(true)
                 await MessagingStore.shared.setCloudKit(true)
+                await DirectMessageStore.shared.setCloudKit(true)
             }
             let result = await account.claim(employeeID: id, appleUserID: appleUser, displayName: nm)
             switch result {

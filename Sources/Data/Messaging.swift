@@ -476,6 +476,8 @@ struct TradeResponse: Sendable, Codable, Identifiable, Hashable {
     var imageBase64: String? = nil   // attached photo on a 1:1 chat message (downscaled JPEG, base64) — #28.
     var acceptedKind: TradeKind? = nil // Match Radar: the method the taker chose accepting a Both offer (day/ecb),
                                        // so the giver sees each responder's pick. Set post-init; optional ⇒ old records decode.
+    var notifyID: String? = nil        // the counterparty to push ("someone responded to your request") —
+                                       // mirrored to a flat, queryable CKRecord field. Set post-init; optional ⇒ old records decode.
 
     // EXPLICIT init — freezes the construction signature (stale-incremental-link fix).
     init(id: String, requestID: String, responderID: String, responderName: String,
@@ -1209,6 +1211,21 @@ final class MessagingStore {
             status: status.rawValue, note: note, createdAt: Date(),
             offerID: request.offerID, acceptedDayIDs: acceptedDayIDs, imageBase64: imageBase64)
         if status == .accepted, request.offersDayForDay { resp.acceptedKind = .day }   // taker chose the swap
+        // A DECISION response (accept/decline/counter) pushes the request's owner: the counterparty relative to
+        // me. Plain chat (.message) doesn't — the thread's new-activity dot covers that.
+        // COALESCE: only the FIRST responder in a group (a broadcast offer / loop shares one groupKey) pushes
+        // the owner — later responders are visible in-app but don't re-buzz. CloudKit can't collapse background
+        // pushes server-side, so we suppress the trigger at the source instead. (Simultaneous responders that
+        // haven't synced each other's response yet may both push — an acceptable edge case.)
+        if status != .message {
+            let owner = (request.fromID == myID) ? request.toID : request.fromID
+            let legIDs = Set(requests.filter { $0.groupKey == request.groupKey }.map(\.id))
+            let priorResponse = responses.contains {
+                legIDs.contains($0.requestID) && $0.responderID != myID
+                    && $0.statusValue != .message && $0.statusValue != .cancelled
+            }
+            resp.notifyID = priorResponse ? nil : owner
+        }
         await service.sendResponse(resp)
         responses = (responses.filter { $0.id != resp.id } + [resp]).sorted { $0.createdAt < $1.createdAt }
         // B6-ECB: an ECB offer accepted via the generic path also auto-posts (de-duped by requestID). An IOU

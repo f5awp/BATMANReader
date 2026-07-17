@@ -232,14 +232,14 @@ enum AppLegend {
                  meaning: "Needs a qualified \"bridge\" to slide onto the desk so an unqualified taker can cover"),
         ]),
         Section(title: "Markers", items: [
-            Item(swatch: .icon("star.fill", AppColor.success), name: "Match available",
-                 meaning: "Someone wants to drop a shift you can work, or work a shift you want to trade, on this day"),
-            Item(swatch: .icon("circle", AppColor.primary), name: "Watching",
-                 meaning: "A ring around the star — you're watching this day for new matches"),
-            Item(swatch: .icon("circle.fill", AppColor.heat), name: "High-demand date",
-                 meaning: "A filled disc behind the date — an auto-marked hot date (holidays, etc.)"),
-            Item(swatch: .icon("circle.fill", AppColor.milestone), name: "Personal milestone",
-                 meaning: "A filled disc behind the date — a protected personal date"),
+            Item(swatch: .icon("circle.fill", AppColor.heat), name: "Match available",
+                 meaning: "Orange disc behind the date (the most visible marker) — someone wants to drop a shift you can work, or work a shift you want to trade, on this day"),
+            Item(swatch: .icon("exclamationmark.circle.fill", AppColor.primary), name: "Watching",
+                 meaning: "Blue “!”, top-left — you turned on Watch Day, so you'll be alerted the moment a match appears here"),
+            Item(swatch: .icon("star.fill", AppColor.heat), name: "High-demand date",
+                 meaning: "Orange star, top-right — an auto-marked high-demand date (holidays). A Midnight shift counts toward the night-before holiday it works into"),
+            Item(swatch: .icon("star.fill", AppColor.milestone), name: "Personal milestone",
+                 meaning: "Pink star, top-right — a protected personal date"),
             Item(swatch: .icon("note.text", AppColor.primary), name: "Note",
                  meaning: "Blue dot = public note · orange dot = private note — tap the day to read it"),
             Item(swatch: .glyph("🔥"), name: "Mutual intent",
@@ -366,4 +366,28 @@ func ceramicFill(_ base: Color) -> LinearGradient {
         })
     }
     return LinearGradient(colors: [stop(true), stop(false)], startPoint: .top, endPoint: .bottom)
+}
+
+// MARK: - Info bubble
+
+/// A small (i) button that opens a popover with an explanation — the app-wide way to attach help text
+/// to a control or section header (replaces inline footers). Compact-adaptation keeps it a bubble on iPhone.
+struct InfoBubble: View {
+    let text: String
+    @State private var show = false
+    var body: some View {
+        Button { show = true } label: {
+            Image(systemName: "info.circle").font(.footnote).foregroundStyle(.secondary)
+        }
+        .buttonStyle(.plain)
+        .popover(isPresented: $show) {
+            Text(text)
+                .font(.callout)
+                .padding()
+                .frame(maxWidth: 300)
+                .fixedSize(horizontal: false, vertical: true)
+                .presentationCompactAdaptation(.popover)
+        }
+        .accessibilityLabel("More info")
+    }
 }

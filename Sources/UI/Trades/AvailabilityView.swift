@@ -52,7 +52,8 @@ struct FindCandidatesSection: View {
     // A1/A2 on Trade Solutions: candidate-focused Master Filter (engine / max-people / Connection),
     // applied to the package results (TS keeps whole packages — no 2-person decomposition).
     @State private var searchFilter = SearchFilter()
-    @State private var showFilter = false
+    // The "Deeper" escalation — OFF = fast two-person; ON = intensive 3+ / N-Way generation.
+    @State private var deeper = false
     @State private var rosterPeople: [(id: String, name: String)] = []
     @State private var allDispatchers: [(id: String, name: String)] = []   // D2: full-roster lookup (was Just 2)
     @State private var searchTask: Task<Void, Never>?   // A1: cancellable Lucky search
@@ -68,8 +69,10 @@ struct FindCandidatesSection: View {
     private var hasQualSwapPackages: Bool {
         searchFilter.filter(packages, selfID: settings.username).filter(criteriaMatch).contains { $0.needsQualSwap }
     }
-    /// Quals present across the current results — the qual filter's option list.
-    private var availableQuals: [String] { Set(dayQual.values).union(myDayQual.values).sorted() }
+    /// Quals present across the current results — the qual filter's option list (real desk-qual codes only).
+    private var availableQuals: [String] {
+        Set(dayQual.values).union(myDayQual.values).filter(DispatcherDirectory.isQualCode).sorted()
+    }
     /// Apply the roster-backed More-filter criteria (receive shift-type + desk qual). Date range,
     /// engine, max-people and required-person are handled by `searchFilter.filter`.
     private func criteriaMatch(_ p: TradePackage) -> Bool {
@@ -129,12 +132,6 @@ struct FindCandidatesSection: View {
             Divider()
             content
         }
-        .sheet(isPresented: $showFilter) {
-            MasterFilterSheet(filter: $searchFilter, people: rosterPeople, availableQuals: availableQuals,
-                              searchShiftCount: max(1, selectedShifts.count),   // the shifts you're trading away
-                              onGenerate: { f in if !selectedIDs.isEmpty { runSearch { await search(generation: f, lucky: true) } } },
-                              onReset: { if !selectedIDs.isEmpty { runSearch { await searchFast() } } })
-        }
         .onDisappear {
             // Leaving Trade Solutions resets the search — no auto-re-search on return (per user). Clear the
             // in-flight task, local state, and the cached snapshot so coming back shows a clean day picker.
@@ -156,7 +153,7 @@ struct FindCandidatesSection: View {
             if snap.hasSearched { calendarExpanded = false }
             if snap.hasSearched, !selectedIDs.isEmpty,
                snap.signature != TradeFeedCache.signature(selectedIDs: selectedIDs, whatIf: whatIf) {
-                runSearch { await searchFast() }
+                runSearch { await searchAtCurrentDepth() }
             }
         }
         .sheet(isPresented: $showQualSwaps) {
@@ -248,32 +245,19 @@ struct FindCandidatesSection: View {
                     }
 
                     // Primary action.
-                    Button { TradeHistoryStore.shared.recordSearch(at: Date()); runSearch { await searchFast() } } label: {
+                    Button { TradeHistoryStore.shared.recordSearch(at: Date()); runSearch { await searchAtCurrentDepth() } } label: {
                         Label("Find", systemImage: "magnifyingglass")
                     }
                     .buttonStyle(.borderedProminent).controlSize(.small)
                     .disabled(selectedIDs.isEmpty || isSearching)
-
-                    // Everything secondary lives in the overflow — no clutter by default.
-                    Menu {
-                        if !selectedIDs.isEmpty {
-                            Button(role: .destructive) {
-                                selectedIDs = []; packages = []; candidates = []; hasSearched = false
-                            } label: { Label("Clear selection", systemImage: "xmark.circle") }
-                        }
-                        Button { showFilter = true } label: { Label(luckyTitle, systemImage: "wand.and.stars") }
-                        // "Look up a dispatcher" is now its own Find-Trades mode (DispatcherLookupView).
-                        Button { emailSelectedToDispatch() } label: { Label("Email to dispatch DL", systemImage: "envelope") }
-                            .disabled(selectedIDs.isEmpty)
-                    } label: {
-                        Image(systemName: "ellipsis.circle").font(.title3)
-                            .foregroundStyle(searchFilter.isActive ? AppColor.primary : .secondary)   // orange = a Lucky filter is on
-                    }
-                    .accessibilityLabel("More trade options")
                 }
 
-                // Trade size appears only once Lucky is engaged; calendar only when expanded.
-                if searchFilter.isActive { MaxPeoplePicker() }
+                // Comprehensive filters + the "Deeper" escalation, always visible (re-runs at the current
+                // depth once shifts are selected).
+                FindTradesFilterBar(filter: $searchFilter, deeper: $deeper, people: rosterPeople,
+                                    availableQuals: availableQuals, searchShiftCount: max(1, selectedShifts.count),
+                                    onApply: { if !selectedIDs.isEmpty { runSearch { await searchAtCurrentDepth() } } })
+
                 if calendarExpanded {
                     ShiftSelectCalendar(shifts: store.shifts, selection: $selectedIDs)
                         .transition(.move(edge: .top).combined(with: .opacity))
@@ -282,10 +266,10 @@ struct FindCandidatesSection: View {
         }
         .padding(.horizontal).padding(.vertical, 8)
         .background(.bar)
-        // Re-run FAST when inputs change (What If / saved intents / max-people). Heavy 3+/N-Way is Lucky-only.
-        .onChange(of: whatIf) { _, _ in if hasSearched { runSearch { await searchFast() } } }
-        .onChange(of: DayIntentStore.shared.intentsRevision) { _, _ in if hasSearched { runSearch { await searchFast() } } }
-        .onChange(of: SettingsManager.shared.normalMaxPeople) { _, _ in if hasSearched { runSearch { await searchFast() } } }
+        // Re-run at the CURRENT depth when inputs change (What If / saved intents / max-people).
+        .onChange(of: whatIf) { _, _ in if hasSearched { runSearch { await searchAtCurrentDepth() } } }
+        .onChange(of: DayIntentStore.shared.intentsRevision) { _, _ in if hasSearched { runSearch { await searchAtCurrentDepth() } } }
+        .onChange(of: SettingsManager.shared.normalMaxPeople) { _, _ in if hasSearched { runSearch { await searchAtCurrentDepth() } } }
     }
 
     @ViewBuilder
@@ -358,14 +342,8 @@ struct FindCandidatesSection: View {
         }
     }
 
-    /// A1/A2: the "I'm Feeling Lucky" filter bar for Trade Solutions + active-choice chips.
-    private var luckyTitle: String {
-        searchFilter.summary(nameFor: { id in rosterPeople.first { $0.id == id }?.name ?? id })
-            .map { "Lucky: \($0)" } ?? "I'm Feeling Lucky"
-    }
-
-    // (Old always-on lucky bar / look-up capsule / chip removed — their actions now live in the
-    // trade bar's overflow ⋯ menu. `luckyTitle` above is still used as that menu item's label.)
+    // (Search depth is now the "Deeper" toggle on the shared FindTradesFilterBar; comprehensive
+    // filters live in that bar's Filters sheet + inline date-range chip.)
 
     private var resultsHeader: some View {
         HStack(spacing: 10) {
@@ -419,12 +397,18 @@ struct FindCandidatesSection: View {
         }
     }
 
-    /// Find: fast 2-person generation, with any Lucky filter cleared so the results show.
-    private func searchFast() async {
-        searchFilter = .normal
-        // Step 4: Find searches up to the user's N-max toggle (default 3); floor + N-penalty keep
-        // small trades on top.
-        await search(generation: SearchFilter(engine: .both, maxPeople: SettingsManager.shared.normalMaxPeople))
+    /// Find: run at the CURRENT depth. "Deeper" OFF = fast (up to the N-max toggle, default 2/3); ON = the
+    /// intensive 3+/N-Way generation (`lucky` applies the openness override). The comprehensive filters in
+    /// `searchFilter` are preserved across depth changes — they filter the display, not the generation.
+    private func searchAtCurrentDepth() async {
+        let gen: SearchFilter
+        if deeper {
+            gen = SearchFilter(engine: .both, maxPeople: max(3, searchFilter.maxPeople),
+                               myOpennessOverride: searchFilter.myOpennessOverride)
+        } else {
+            gen = SearchFilter(engine: .both, maxPeople: SettingsManager.shared.normalMaxPeople)
+        }
+        await search(generation: gen, lucky: deeper)
     }
 
     /// `generation` bounds the engine work: `.fast` (2-person, the Find default) or the user's Lucky
@@ -544,15 +528,6 @@ struct FindCandidatesSection: View {
         }.value
         allDispatchers = out
         TradeFeedCache.shared.allDispatchers = out
-    }
-
-    /// #7: email the selected give-days to the dispatch DL (Outlook draft) + Must-Be-Off blackout days.
-    private func emailSelectedToDispatch() {
-        let me = settings.displayName.isEmpty ? settings.username : settings.displayName
-        let give = selectedShifts.map { prettyDay($0.id) }
-        let blackout = DayIntentStore.shared.mustBeOffDayIDs.sorted().map { prettyDay($0) }
-        openDispatchDraft(subject: TradeEmail.dispatchSubject(giver: me),
-                          body: TradeEmail.dispatchBody(giver: me, giveDays: give, blackoutDays: blackout))
     }
 
     /// Greedy package: send a cover request to each assigned dispatcher. A qual-swap package
@@ -2333,7 +2308,8 @@ struct ECBAccountingView: View {
                 statusChip(e)
             }
         }
-        .opacity(pending ? 0.6 : 1)
+        // A force-through'd line reads as active in YOUR ledger (full opacity), not dimmed like a true pending.
+        .opacity(pending && !store.isForcedThrough(e.id) ? 0.6 : 1)
     }
 
     /// Right-aligned status under the amount: confirmation state first, else cleared vs scheduled.
@@ -2341,7 +2317,19 @@ struct ECBAccountingView: View {
         if e.isShared && e.state == .pendingIncoming {
             Text("Confirm in Inbox").font(.caption2).foregroundStyle(AppColor.pending)
         } else if e.isShared && e.state == .pendingOutgoing {
-            Text("Awaiting confirm").font(.caption2).foregroundStyle(AppColor.pending)
+            // Awaiting the other side — but you can FORCE it into your own accounting (local only; they're
+            // unaffected). Tap to force / undo.
+            if store.isForcedThrough(e.id) {
+                Button { store.unforceThrough(e.id) } label: {
+                    Label("Forced · your ledger", systemImage: "checkmark.seal.fill").font(.caption2)
+                }
+                .buttonStyle(.borderless).foregroundStyle(AppColor.success)
+            } else {
+                Button { store.forceThrough(e.id) } label: {
+                    Label("Awaiting · Force through", systemImage: "arrow.right.circle").font(.caption2)
+                }
+                .buttonStyle(.borderless).foregroundStyle(AppColor.pending)
+            }
         } else if !e.cleared {
             Text(e.isShared ? "Scheduled · swipe to receive" : "Scheduled · swipe to clear")
                 .font(.caption2).foregroundStyle(AppColor.pending)

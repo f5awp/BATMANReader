@@ -282,6 +282,43 @@ final class SettingsManager {
     var ecbDefault: Double {
         didSet { defaults.set(ecbDefault, forKey: Keys.ecbDefault); markPrefsChanged() }
     }
+    /// Default ACCEPTED ECB — incoming ECB offers below this amount are hidden from you. Local view
+    /// filter (not published). Clamped to the 5–25 (0.5-step) range. Default 9.
+    var defaultAcceptedECB: Double {
+        didSet { defaults.set(defaultAcceptedECB, forKey: Keys.defaultAcceptedECB) }
+    }
+    /// Whether to surface ECB offers that are IOUs (paid on a later date). Off = hide IOU offers. Default on.
+    var considerIOUs: Bool {
+        didSet { defaults.set(considerIOUs, forKey: Keys.considerIOUs) }
+    }
+
+    // MARK: Chat & message notification preferences (push subscriptions reconcile off these).
+    /// Push me when I receive a 1:1 direct message. Default ON.
+    var notifyDirectMessages: Bool {
+        didSet { defaults.set(notifyDirectMessages, forKey: Keys.notifyDMs) }
+    }
+    /// Push me on every new post in the broadcast channels. Default ON.
+    var notifyChannelPosts: Bool {
+        didSet { defaults.set(notifyChannelPosts, forKey: Keys.notifyChannel) }
+    }
+    /// Push me when I'm @-mentioned in a channel post. Default ON.
+    var notifyMentions: Bool {
+        didSet { defaults.set(notifyMentions, forKey: Keys.notifyMentions) }
+    }
+
+    // MARK: Trade & match notification prefs (server-push subscriptions reconciled by CloudPush.setup()).
+    /// Server push when a coworker's radar AUTO-MATCHES one of your days. Default ON.
+    var notifyAutoMatch: Bool { didSet { defaults.set(notifyAutoMatch, forKey: Keys.notifyAutoMatch) } }
+    /// Server push for a manual incoming trade request / ECB offer / Perfect Match. Default ON.
+    var notifyTradeRequests: Bool { didSet { defaults.set(notifyTradeRequests, forKey: Keys.notifyTradeRequests) } }
+    /// Server push for a qual-swap request to you (bridge blast) or an update on your qual-swap. Default ON.
+    var notifyQualSwap: Bool { didSet { defaults.set(notifyQualSwap, forKey: Keys.notifyQualSwap) } }
+    /// Server push when someone RESPONDS to a request/offer of yours (accept / decline / counter). Default ON.
+    var notifyTradeResponses: Bool { didSet { defaults.set(notifyTradeResponses, forKey: Keys.notifyTradeResponses) } }
+    /// Periodic LOCAL summary of auto-match + suggested counts per date (replaces per-watched-day pings). Default ON.
+    var matchSummaryEnabled: Bool { didSet { defaults.set(matchSummaryEnabled, forKey: Keys.matchSummaryEnabled) } }
+    /// How often (hours) the match summary fires. Default 6.
+    var matchSummaryIntervalHours: Int { didSet { defaults.set(matchSummaryIntervalHours, forKey: Keys.matchSummaryInterval) } }
     /// Private 2000-char scratch notes — synced privately across YOUR devices (A3).
     var privateNotes: String {
         didSet { defaults.set(String(privateNotes.prefix(2000)), forKey: Keys.privateNotes) }
@@ -344,6 +381,17 @@ final class SettingsManager {
         dailyDigestHour          = (defaults.object(forKey: Keys.dailyDigestHour) as? Int) ?? 8
         standingOfferAutoMatch   = (defaults.object(forKey: Keys.standingOfferAutoMatch) as? Bool) ?? true   // default ON
         ecbDefault               = (defaults.object(forKey: Keys.ecbDefault) as? Double) ?? 9   // default 9 ECB
+        defaultAcceptedECB       = (defaults.object(forKey: Keys.defaultAcceptedECB) as? Double) ?? 9   // default 9
+        considerIOUs             = (defaults.object(forKey: Keys.considerIOUs) as? Bool) ?? true   // default ON
+        notifyDirectMessages     = (defaults.object(forKey: Keys.notifyDMs) as? Bool) ?? true   // default ON
+        notifyChannelPosts       = (defaults.object(forKey: Keys.notifyChannel) as? Bool) ?? true   // default ON
+        notifyMentions           = (defaults.object(forKey: Keys.notifyMentions) as? Bool) ?? true   // default ON
+        notifyAutoMatch          = (defaults.object(forKey: Keys.notifyAutoMatch) as? Bool) ?? true
+        notifyTradeRequests      = (defaults.object(forKey: Keys.notifyTradeRequests) as? Bool) ?? true
+        notifyQualSwap           = (defaults.object(forKey: Keys.notifyQualSwap) as? Bool) ?? true
+        notifyTradeResponses     = (defaults.object(forKey: Keys.notifyTradeResponses) as? Bool) ?? true
+        matchSummaryEnabled      = (defaults.object(forKey: Keys.matchSummaryEnabled) as? Bool) ?? true
+        matchSummaryIntervalHours = (defaults.object(forKey: Keys.matchSummaryInterval) as? Int) ?? 6
         normalMaxPeople          = (defaults.object(forKey: Keys.normalMaxPeople) as? Int) ?? 3   // default: pairs + 3-way
         isMercenaryMode          = defaults.bool(forKey: Keys.isMercenaryMode)
         statusBroadcast          = defaults.string(forKey: Keys.statusBroadcast) ?? ""
@@ -385,6 +433,17 @@ final class SettingsManager {
         static let dailyDigestHour = "batman.dailyDigestHour"
         static let standingOfferAutoMatch = "batman.standingOfferAutoMatch"
         static let ecbDefault   = "batman.ecbDefault"
+        static let defaultAcceptedECB = "batman.defaultAcceptedECB"
+        static let considerIOUs = "batman.considerIOUs"
+        static let notifyDMs     = "batman.notifyDirectMessages"
+        static let notifyChannel = "batman.notifyChannelPosts"
+        static let notifyMentions = "batman.notifyMentions"
+        static let notifyAutoMatch = "batman.notifyAutoMatch"
+        static let notifyTradeRequests = "batman.notifyTradeRequests"
+        static let notifyQualSwap = "batman.notifyQualSwap"
+        static let notifyTradeResponses = "batman.notifyTradeResponses"
+        static let matchSummaryEnabled = "batman.matchSummaryEnabled"
+        static let matchSummaryInterval = "batman.matchSummaryIntervalHours"
         static let normalMaxPeople = "batman.normalMaxPeople"
         static let isMercenaryMode = "batman.isMercenaryMode"
         static let statusBroadcast = "batman.statusBroadcast"

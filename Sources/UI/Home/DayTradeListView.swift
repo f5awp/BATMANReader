@@ -97,10 +97,10 @@ struct DayTradeListPane: View {
                     Toggle(isOn: Binding(
                         get: { radar.isWatched(target.dayID) },
                         set: { radar.setWatched(target.dayID, $0) })) {
-                        Label("Watch Day", systemImage: "star")
+                        Label("Watch Day", systemImage: "bell")
                     }
                 } footer: {
-                    Text("Get an alert when a new shift you can pick up appears on this day — checked each time you open the app.")
+                    Text("Marks this day with a blue dot and alerts you the moment a new shift you can pick up appears on it — checked each time you open the app. (The green star is separate: it means a match already exists here.)")
                 }
 
                 if loading {

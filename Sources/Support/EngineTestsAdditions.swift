@@ -19,6 +19,62 @@ extension TradeEngineTests {
     private static var noneBook:     LegFeatures { fleg(false, false, bookend: true) }
     private static var noneSplit:    LegFeatures { fleg(false, false, bookend: false) }
 
+    // MARK: - DM platform — pure conversation/unread logic (DMLogic)
+
+    static func runDirectMessageTests() -> [String] {
+        var fails: [String] = []
+        func check(_ cond: Bool, _ msg: String) { if !cond { fails.append("❌ \(msg)") } }
+
+        // Canonical id is order-independent — A→B and B→A resolve to ONE thread.
+        check(Conversation.canonicalID("100", "200") == Conversation.canonicalID("200", "100"),
+              "DM: canonicalID is order-independent")
+        check(Conversation.canonicalID("200", "100") == "dm_100_200", "DM: canonicalID sorts ascending")
+
+        let base = Date(timeIntervalSince1970: 1_000_000)
+        func msg(_ id: String, conv: String, from: String, to: String, at: TimeInterval, del: Bool = false) -> DirectMessage {
+            DirectMessage(id: id, conversationID: conv, senderID: from, senderName: from, toID: to,
+                          text: "hi", createdAt: base.addingTimeInterval(at), deleted: del ? true : nil)
+        }
+
+        // Unread: a message FROM the peer AFTER my last-seen counts; my own / pre-seen / deleted don't.
+        let msgs = [
+            msg("m1", conv: "c1", from: "200", to: "100", at: 10),   // peer, after seen → unread
+            msg("m2", conv: "c1", from: "100", to: "200", at: 20),   // mine → never unread
+            msg("m3", conv: "c2", from: "200", to: "100", at: 5),    // peer, BEFORE seen → read
+            msg("m4", conv: "c3", from: "200", to: "100", at: 30, del: true),  // deleted → ignored
+        ]
+        check(DMLogic.hasUnread(messages: msgs, convID: "c1", since: base, myID: "100"),
+              "DM: peer message after last-seen is unread")
+        check(!DMLogic.hasUnread(messages: msgs, convID: "c1", since: base.addingTimeInterval(100), myID: "100"),
+              "DM: nothing newer than last-seen → read")
+        check(!DMLogic.hasUnread(messages: msgs, convID: "c2", since: base.addingTimeInterval(10), myID: "100"),
+              "DM: peer message before last-seen → read")
+        check(!DMLogic.hasUnread(messages: msgs, convID: "c3", since: base, myID: "100"),
+              "DM: deleted peer message never counts as unread")
+
+        // Never-opened conversation (no last-seen) with a peer message → unread.
+        check(DMLogic.hasUnread(messages: msgs, convID: "c1", since: nil, myID: "100"),
+              "DM: never-opened thread with peer message is unread")
+
+        // Preview: image-only → 📷 Photo; deleted → empty; text trimmed.
+        check(DMLogic.preview(msg("x", conv: "c", from: "200", to: "100", at: 0, del: true)).isEmpty,
+              "DM: deleted message previews empty")
+        let imgOnly = DirectMessage(id: "i", conversationID: "c", senderID: "200", senderName: "P",
+                                    toID: "100", text: "   ", createdAt: base, imageBase64: "x")
+        check(DMLogic.preview(imgOnly) == "📷 Photo", "DM: image-only previews as photo")
+
+        // sorted() orders newest-activity first.
+        let c1 = Conversation(id: "c1", participantIDs: ["100", "200"], participantNames: ["Me", "P1"],
+                              createdAt: base, lastMessageAt: base.addingTimeInterval(10), lastMessagePreview: "")
+        let c2 = Conversation(id: "c2", participantIDs: ["100", "300"], participantNames: ["Me", "P2"],
+                              createdAt: base, lastMessageAt: base.addingTimeInterval(50), lastMessagePreview: "")
+        check(DMLogic.sorted([c1, c2]).map(\.id) == ["c2", "c1"], "DM: sorted newest-activity first")
+        check(c1.otherID(myID: "100") == "200" && c1.otherName(myID: "100") == "P1",
+              "DM: otherID/otherName resolve the peer")
+
+        return fails
+    }
+
     // MARK: - U-N2: the intent-aware people penalty (the owner's N-penalty requirement)
 
     static func runNPenaltyTests() -> [String] {

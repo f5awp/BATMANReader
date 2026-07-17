@@ -2145,6 +2145,36 @@ enum TradeEngineTests {
                   "#5: an isolated give-day is NOT a bookend (Jun-18 mislabel bug)")
         }
 
+        // MARK: NET-BOOKEND — a bookend must NOT count when trading a day away adjacently in the
+        // SAME trade breaks it at the same time. Pickup of Jul 5 anchors ONLY because Jul 4 (or Jul 6)
+        // is worked; if Jul 4 is given away in this same package, Jul 5 becomes an isolated island → the
+        // net-aware `removed` set demotes it.
+        do {
+            let cal = Calendar.current
+            func entry(_ iso: String, off: Bool) -> RosterEntry {
+                RosterEntry(workerID: "M", workerName: "M", quals: [], day: iso,
+                            startHour: off ? 0 : 13, desk: "29", isOff: off)
+            }
+            func d(_ iso: String) -> Date { TradeMatcher.dayDate(fromISO: iso) ?? Date.distantPast }
+            // I work Jul 4 & Jul 5 (a 2-day block), off around them. Picking up… well, take the reverse
+            // case: Jul 5 anchored to Jul 4's work.
+            let map: [String: RosterEntry] = [
+                "2026-07-04": entry("2026-07-04", off: false),
+                "2026-07-05": entry("2026-07-05", off: false),
+            ]
+            // Base: Jul 6 pickup anchors because Jul 5 is worked (contiguous block Jul 4-5-6).
+            check(TradeMatcher.anchored(day: d("2026-07-06"), map: map, plan: ["2026-07-06"], cal: cal),
+                  "NET-BOOKEND: base — Jul 6 pickup anchors to the Jul 4-5 work block")
+            // Give away BOTH Jul 4 and Jul 5 in the same trade → Jul 6 pickup is now an isolated island.
+            check(!TradeMatcher.anchored(day: d("2026-07-06"), map: map, plan: ["2026-07-06"],
+                                         removed: ["2026-07-04", "2026-07-05"], cal: cal),
+                  "NET-BOOKEND: an adjacent give-away in the same trade breaks the bookend → demoted")
+            // Removing only the far day (Jul 4) still leaves Jul 5 as the anchor → still a bookend.
+            check(TradeMatcher.anchored(day: d("2026-07-06"), map: map, plan: ["2026-07-06"],
+                                        removed: ["2026-07-04"], cal: cal),
+                  "NET-BOOKEND: a give-away that doesn't touch the anchor leaves the bookend intact")
+        }
+
         // MARK: R-B — cross-device profile round-trip. The CloudKit publish/fetch path
         // JSON-encodes the whole TradeProfile into one `payload`; status + intents MUST
         // survive encode→decode (else peers see blank status / no uploaded intents).
@@ -2172,6 +2202,7 @@ enum TradeEngineTests {
         #if DEBUG
         fails += runNPenaltyTests() + runObjectiveTests() + runPruningBoundTests()
                + runRankerTests() + runFinalizeTests() + runOptimalMatcherTests()
+               + runDirectMessageTests()
         #endif
 
         return fails

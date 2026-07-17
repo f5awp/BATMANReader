@@ -656,13 +656,29 @@ enum TradeRouter {
                                                                  myMap: maps[selfID] ?? [:], wantToWork: myWantToWork)
             } else {
                 var fire = 0, book = 0, dirty = 0
+                let myMap = maps[selfID] ?? [:]
                 for a in pkg.assignments {
                     let plan = plansByPeer[a.workerID]
                     let giveByDay = Dictionary((plan?.iGive ?? []).map { ($0.dayID, $0) }, uniquingKeysWith: { x, _ in x })
                     let takeByDay = Dictionary((plan?.iTake ?? []).map { ($0.dayID, $0) }, uniquingKeysWith: { x, _ in x })
-                    for d in a.giveDayIDs { if let l = giveByDay[d] { if l.bookend { book += 1 }; if l.wanted { fire += 1 } } }
+                    // NET-SCHEDULE bookend rule: a bookend doesn't count if trading a day away in THIS same
+                    // package breaks it at the same time. Re-check each leg's anchor with the trade's opposite
+                    // side removed from work — demote-only (never invents a bookend the base didn't have).
+                    let myGives = Set(a.giveDayIDs)   // my work days leaving → removed from MY schedule
+                    let myTakes = Set(a.takeDayIDs)   // peer's work days leaving → removed from THEIRS (peer gives them)
+                    let peerMap = maps[a.workerID] ?? [:]
+                    for d in a.giveDayIDs { if let l = giveByDay[d] {
+                        // Give leg's bookend is for the PEER (they pick it up): net out the peer's give-aways (my takes).
+                        let stillBookend = l.bookend && TradeMatcher.anchored(day: l.date, map: peerMap,
+                                                            plan: [l.dayID], removed: myTakes, cal: Calendar.current)
+                        if stillBookend { book += 1 }
+                        if l.wanted { fire += 1 }
+                    } }
                     for d in a.takeDayIDs { if let l = takeByDay[d] {
-                        if l.bookend { book += 1 } else if !myWantToWork.contains(d) { dirty += 1 }   // a non-bookend island I receive
+                        // Take leg's bookend is for ME: net out the days I give away in this same trade.
+                        let stillBookend = l.bookend && TradeMatcher.anchored(day: l.date, map: myMap,
+                                                            plan: [l.dayID], removed: myGives, cal: Calendar.current)
+                        if stillBookend { book += 1 } else if !myWantToWork.contains(d) { dirty += 1 }   // a net non-bookend island I receive
                         if l.wanted { fire += 1 }
                     } }
                 }
@@ -685,6 +701,58 @@ enum TradeRouter {
         // across 2-way, multi-person, AND circular. Open-to-all keeps them (ranked below clean via rankLess).
         let gated = myBookendsOnly ? rescored.filter { $0.dirtyReceives == 0 } : rescored
         return finalize(gated, lucky: lucky)
+    }
+
+    /// A single best day-for-day swap package with ONE specific dispatcher — for the Dispatcher tab's
+    /// "Find Trades". Runs the two-way explorer for just that peer (NO global acceptance floor, so a valid
+    /// swap always surfaces), and returns up to `maxOptions` ranked give-back dates in `takeOptions`.
+    /// nil when no reciprocal swap exists. `giveShifts` = my upcoming working days.
+    static func swapPackage(withWorker workerID: String, name: String,
+                            forGiveShifts giveShifts: [Shift], excluding selfID: String,
+                            maxOptions: Int = 10) async -> TradePackage? {
+        let giveDayIDs = Set(giveShifts.filter { !$0.isOff }.map(\.id))
+        guard !giveDayIDs.isEmpty else { return nil }
+        let ctx = await MatchContext.build(selfID: selfID)
+        let myProfile = TradeProfileStore.shared.myProfile()
+        let myBookendsOnly = myProfile.opennessLevel == .bookends
+        let mySeeking = DayIntentStore.shared.seekingDayIDs
+        let myWantToWork = DayIntentStore.shared.wantToWorkDayIDs
+        let maps = ctx.maps, priors = ctx.priors, qualsDict = ctx.qualsDict
+        let profile = ctx.profile(for: workerID, name: name)
+
+        func wouldTake(_ prof: TradeProfile, _ leg: TwoWayLeg) -> Bool {
+            let cal = Calendar.current
+            return prof.wouldPickUp(onDay: leg.dayID, weekday: cal.component(.weekday, from: leg.date),
+                                    desk: leg.desk, shiftType: ShiftAvailabilityType.infer(fromStartHour: leg.startHour).rawValue,
+                                    region: DeskRules.region(forDesk: leg.desk).rawValue, isBookend: leg.bookend)
+        }
+
+        let plan = TradeMatcher.twoWayExploreCore(
+            withWorker: workerID, name: name, windowStart: ctx.start, windowEnd: ctx.end,
+            mySeeking: mySeeking, theirSeeking: profile.seekingDayIDs,
+            myProfile: myProfile, theirProfile: profile, ignoreOwnBlacklist: false,
+            myEntries: ctx.mineEntries, peerEntries: Array((maps[workerID] ?? [:]).values))
+
+        let canTake = modelRankedLegs(
+            plan.iGive.filter { giveDayIDs.contains($0.dayID) && wouldTake(profile, $0) },
+            giverID: selfID, receiverID: workerID, maps: maps, quals: qualsDict, priors: priors,
+            start: ctx.start, selfID: selfID, mySeeking: mySeeking, myWantToWork: myWantToWork,
+            profilesByID: ctx.profilesByID).map(\.dayID)
+        let givesBack = modelRankedLegs(
+            cleanReceiveLegs(plan.iTake.filter { wouldTake(myProfile, $0) },
+                             wantToWork: myWantToWork, bookendsOnly: myBookendsOnly),
+            giverID: workerID, receiverID: selfID, maps: maps, quals: qualsDict, priors: priors,
+            start: ctx.start, selfID: selfID, mySeeking: mySeeking, myWantToWork: myWantToWork,
+            profilesByID: ctx.profilesByID).map(\.dayID)
+
+        let cover = Array(giveDayIDs).filter { canTake.contains($0) }
+        guard !cover.isEmpty, givesBack.count >= cover.count else { return nil }
+        let assignment = PackageAssignment(workerID: workerID, name: name,
+                                           giveDayIDs: cover,
+                                           takeDayIDs: Array(givesBack.prefix(cover.count)),
+                                           takeOptions: Array(givesBack.prefix(max(maxOptions, cover.count))))
+        return TradePackage(id: "find-\(workerID)", methodology: .greedy, assignments: [assignment],
+                            route: nil, urgency: 0, isOptimal: true)
     }
 
     // MARK: - Intents marketplace (DISTINCT from packages — intent-for-intent, intent-first ranking)
@@ -1227,7 +1295,8 @@ enum TradeRouter {
                             receiverQuals: [String], maps: [String: DayMap], priors: [String: Double],
                             selfID: String, start: Date,
                             mySeeking: Set<String>, myWantToWork: Set<String>,
-                            profilesByID: [String: TradeProfile]) -> LegFeatures {
+                            profilesByID: [String: TradeProfile],
+                            removedForReceiver: Set<String> = []) -> LegFeatures {
         // Snapshots instead of `.shared` reads → pure, runs off-main.
         func seeking(_ id: String) -> Set<String> {
             id == selfID ? mySeeking : (profilesByID[id]?.seekingDayIDs ?? [])
@@ -1237,7 +1306,9 @@ enum TradeRouter {
         }
         let bookend: Bool = {
             guard let d = TradeMatcher.dayDate(fromISO: day), let m = maps[receiverID] else { return false }
-            return TradeMatcher.isAnchored(day: d, map: m, plan: [day])
+            // Net out the receiver's own give-aways in this trade — a bookend broken by an adjacent give
+            // no longer counts.
+            return TradeMatcher.isAnchored(day: d, map: m, plan: [day], removed: removedForReceiver)
         }()
         let daysUntil = max(0, Int((TradeMatcher.dayDate(fromISO: day)?.timeIntervalSince(start) ?? 0) / 86400))
         return LegFeatures(
@@ -1271,11 +1342,24 @@ enum TradeRouter {
             }
         }
         guard !legs.isEmpty else { q.acceptanceScore = 0; q.rankScore = 0; return q }
+        // NET-SCHEDULE bookend rule: per receiver, the days they GIVE AWAY in this same package are removed
+        // from their schedule, so they can't anchor a pickup. An adjacent give that breaks a bookend then
+        // stops it from counting toward the leg's quality (applies to 2-way AND circular).
+        var removedByReceiver: [String: Set<String>] = [:]
+        if let route = pkg.route {
+            for l in route.legs { removedByReceiver[l.fromID, default: []].insert(l.dayID) }
+        } else {
+            for a in pkg.assignments {
+                removedByReceiver[selfID, default: []].formUnion(a.giveDayIDs)      // I give these away
+                removedByReceiver[a.workerID, default: []].formUnion(a.takeDayIDs)  // the peer gives these away (I take them)
+            }
+        }
         let feats = legs.map { legFeatures(giverID: $0.g, receiverID: $0.r, day: $0.day, desk: $0.desk,
                                            receiverQuals: quals[$0.r] ?? [], maps: maps, priors: priors,
                                            selfID: selfID, start: start,
                                            mySeeking: mySeeking, myWantToWork: myWantToWork,
-                                           profilesByID: profilesByID) }
+                                           profilesByID: profilesByID,
+                                           removedForReceiver: removedByReceiver[$0.r] ?? []) }
         q.legCount = feats.count
         q.mutualLegCount = TradeScore.mutualLegCount(feats)
         q.coverageFrac = coverageFrac

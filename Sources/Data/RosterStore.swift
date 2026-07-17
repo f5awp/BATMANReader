@@ -58,16 +58,21 @@ actor RosterModelActor {
         return Set(try modelContext.fetch(desc).map(\.workerID)).count
     }
 
+    /// Retired/removed dispatchers are dropped from every roster read (schedule, matching, Dispatcher list).
+    private static func live(_ entries: [RosterEntry]) -> [RosterEntry] {
+        entries.filter { !DispatcherDirectory.retiredEmpIDs.contains($0.workerID) }
+    }
+
     /// Everyone OFF on the given ISO day.
     func dispatchersOff(onDay day: String, generation gen: Date) throws -> [RosterEntry] {
         let predicate = #Predicate<RosterShift> { $0.day == day && $0.isOff && $0.importedVersion == gen }
-        return try modelContext.fetch(FetchDescriptor(predicate: predicate)).map(Self.snapshot)
+        return Self.live(try modelContext.fetch(FetchDescriptor(predicate: predicate)).map(Self.snapshot))
     }
 
     /// Everyone WORKING on the given ISO day.
     func dispatchersWorking(onDay day: String, generation gen: Date) throws -> [RosterEntry] {
         let predicate = #Predicate<RosterShift> { $0.day == day && !$0.isOff && $0.importedVersion == gen }
-        return try modelContext.fetch(FetchDescriptor(predicate: predicate)).map(Self.snapshot)
+        return Self.live(try modelContext.fetch(FetchDescriptor(predicate: predicate)).map(Self.snapshot))
     }
 
     /// Every worker's entries within [lower, upper] — one query used to build the
@@ -76,7 +81,7 @@ actor RosterModelActor {
         let predicate = #Predicate<RosterShift> {
             $0.date >= lower && $0.date <= upper && $0.importedVersion == gen
         }
-        return try modelContext.fetch(FetchDescriptor(predicate: predicate)).map(Self.snapshot)
+        return Self.live(try modelContext.fetch(FetchDescriptor(predicate: predicate)).map(Self.snapshot))
     }
 
     /// A single worker's full schedule (for cross-checking mutual swaps).
@@ -84,7 +89,7 @@ actor RosterModelActor {
         let predicate = #Predicate<RosterShift> { $0.workerID == workerID && $0.importedVersion == gen }
         var desc = FetchDescriptor(predicate: predicate)
         desc.sortBy = [SortDescriptor(\.day)]
-        return try modelContext.fetch(desc).map(Self.snapshot)
+        return Self.live(try modelContext.fetch(desc).map(Self.snapshot))
     }
 
     private static func snapshot(_ r: RosterShift) -> RosterEntry {

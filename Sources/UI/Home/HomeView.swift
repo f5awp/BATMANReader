@@ -56,7 +56,6 @@ struct HomeView: View {
     @State private var kindBrush: TradeKind = .both   // Day/ECB/Both applied when painting want-to-trade / want-to-work
     @State private var noteBrush = ""   // F2: when set, each tapped day also gets this note
     @State private var eraseMode = false   // when on, tapping a day ERASES its intent + note (cleared state)
-    @State private var showColorKey = false    // color key / legend (its own button, left of the layers toggle)
     @State private var pendingConflict: PendingConflict?
     @State private var overwriteConfirmed = false   // #10: ask-overwrite ONCE per mass-action session
     @State private var showLeaveGuard = false        // C1 phase-2: Save-or-Discard when leaving with unsaved edits
@@ -75,9 +74,8 @@ struct HomeView: View {
                         markIntentsPill
                         Spacer(minLength: 8)
                         // Successful-trade stats moved to the shared bottom bar (TradeStatsBar) so the top
-                        // of the calendar isn't crowded (B6-STATS). Color Key sits just left of the layers toggle.
+                        // of the calendar isn't crowded (B6-STATS). Colors & Legend now lives in the top-bar ⋯ menu.
                         calendarLayoutButton
-                        colorKeyButton
                         VisibilityToolbar(layers: $layers)
                     }
                     .padding(.horizontal).padding(.vertical, 6)
@@ -132,7 +130,6 @@ struct HomeView: View {
                 editTarget = DayEditTarget(dayID: day, isOff: isOff, showTradeList: true, startOnTradeList: true)
                 MatchStore.shared.pendingDayID = nil
             }
-            .sheet(isPresented: $showColorKey) { IntentKeySheet() }
             .alert("Overwrite existing marks?", isPresented: Binding(
                 get: { pendingConflict != nil }, set: { if !$0 { pendingConflict = nil } })) {
                 Button("Overwrite", role: .destructive) { pendingConflict?.apply(); pendingConflict = nil }
@@ -181,14 +178,15 @@ struct HomeView: View {
     /// Enters Mark-Intents (edit) mode — lives on the left of the header row.
     private var markIntentsPill: some View {
         Button { withAnimation(.snappy) { mode = .workingShifts } } label: {
-            // §7: the compact bar's primary action — a NEUTRAL glazed control tile (same surface as the
-            // dock's icon squircles) with the system accent as the LABEL, not a standalone neon-blue pill.
+            // Primary action, styled like the "on" state of the toggles to its right (VisibilityToolbar /
+            // calendar-layout): white label on the accent fill, glazed — consistent in light + dark.
             Label("Mark Intents", systemImage: "pencil.and.list.clipboard")
                 .font(.subheadline.weight(.semibold))
-                .foregroundStyle(Color.accentColor)
+                .foregroundStyle(Color.white)
                 .frame(height: DS.controlSize)
                 .padding(.horizontal, 14)
-                .dxControlTile()
+                .background(Color.accentColor, in: RoundedRectangle(cornerRadius: DS.controlRadius, style: .continuous))
+                .dxGlaze(radius: DS.controlRadius)
         }
         .buttonStyle(.plain)
     }
@@ -206,22 +204,6 @@ struct HomeView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(continuousCalendar ? "Continuous calendar on" : "Continuous calendar off")
-    }
-
-    /// Color key / legend — a dedicated icon button just left of the layers (visibility) toggle. Same
-    /// control shape as VisibilityToolbar; opens the shared `IntentKeySheet`.
-    private var colorKeyButton: some View {
-        Button { showColorKey = true } label: {
-            Image(systemName: "paintpalette")
-                .font(.system(size: 15, weight: .semibold))
-                .frame(width: DS.controlSize, height: DS.controlSize)
-                .foregroundStyle(Color.primary)
-                .background(Color(.tertiarySystemFill),
-                            in: RoundedRectangle(cornerRadius: DS.controlRadius, style: .continuous))
-                .dxGlaze(radius: DS.controlRadius)
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Colors & legend")
     }
 
     /// Read-only one-line view of your private notes (from Trade Settings), swipe to

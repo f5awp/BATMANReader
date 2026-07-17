@@ -110,13 +110,16 @@ struct Avatar: View {
     let name: String
     let id: String
     var size: CGFloat = 36
+    /// Optional tile color override (e.g. the Dispatcher list groups by dispatch-start date). nil = the
+    /// default per-id hash color.
+    var color: Color? = nil
 
     var body: some View {
         Text(SlackStyle.initials(name))
             .font(.system(size: size * 0.4, weight: .bold))
             .foregroundStyle(.white)
             .frame(width: size, height: size)
-            .background(SlackStyle.color(for: id), in: RoundedRectangle(cornerRadius: size * 0.24))
+            .background(color ?? SlackStyle.color(for: id), in: RoundedRectangle(cornerRadius: size * 0.24))
     }
 }
 

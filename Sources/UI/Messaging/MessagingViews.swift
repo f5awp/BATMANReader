@@ -17,6 +17,23 @@ enum DayFmt {
     static func list(_ ids: [String]) -> String {
         ids.sorted().map(nice).joined(separator: ", ")
     }
+    /// Short relative time ("5m", "2h", "3d") for message-list rows.
+    static func relative(_ date: Date) -> String {
+        let f = RelativeDateTimeFormatter(); f.unitsStyle = .abbreviated
+        return f.localizedString(for: date, relativeTo: Date())
+    }
+}
+
+/// Best-effort high-impact holiday name for a TRADED day, given the day's owner. For MY day we know the
+/// shift, so the MID = night-before rule applies (a Midnight shift into a holiday counts; a MID on the
+/// holiday date does not). For a peer we only have the date, so it's a day-level check.
+@MainActor
+func tradedDayHoliday(_ dayID: String, ownerID: String) -> String? {
+    if ownerID == SettingsManager.shared.username,
+       let sh = ShiftStore.shared.shifts.first(where: { $0.id == dayID }), !sh.isOff {
+        return Holidays.name(forDay: dayID, startHour: sh.startHour)
+    }
+    return Holidays.name(forDay: dayID)
 }
 
 extension MessagingStore {
@@ -321,20 +338,34 @@ struct InboxView: View {
         return MessagingStore.dedupeLoops(inThisTab).count
     }
 
+    // MARK: Top-tab TOTAL + NEW counts (drives the segmented badges).
+    /// Auto: new = proposed loops (day-for-day + my ECB offer folders) with unseen activity.
+    private var autoNewCount: Int {
+        proposedOther.reduce(0) { $0 + (store.loopHasNewActivity($1.groupKey) ? 1 : 0) }
+        + proposedECBOffers.reduce(0) { $0 + ($1.requests.contains { store.loopHasNewActivity($0.groupKey) } ? 1 : 0) }
+    }
+    /// Requests: all manual (non-auto) active loops across the Search / ECB / Qual-Swap sub-tabs.
+    private var requestsTotal: Int { tabCount(1) + tabCount(2) + tabCount(3) }
+    private var requestsNewCount: Int {
+        let loops = MessagingStore.dedupeLoops(
+            MessagingStore.active(store.requests, archived: store.archivedRequestIDs).filter { !$0.isAutoProposed })
+        return loops.reduce(0) { $0 + (store.loopHasNewActivity($1.groupKey) ? 1 : 0) }
+    }
+
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
                 // Three lanes: Auto (the app sent it) · Suggested (radar found, you propose) · Requests (manual).
                 DXSegmented(selection: $topMode, options: [
-                    .init(0, "Auto", badge: proposedECBOffers.count + proposedOther.count),
-                    .init(1, "Suggested", badge: suggestedMatches.count),
-                    .init(2, "Requests", badge: 0),
+                    .init(0, "Auto", badge: proposedECBOffers.count + proposedOther.count, newBadge: autoNewCount),
+                    .init(1, "Suggested", badge: suggestedMatches.count, newBadge: radar.newSuggestedCount(suggestedMatches)),
+                    .init(2, "Requests", badge: requestsTotal, newBadge: requestsNewCount),
                 ], color: { v in [0: AppColor.success, 1: AppColor.pending, 2: AppColor.primary][v] })
                 .padding([.horizontal, .top])
 
                 switch topMode {
                 case 0: autoLane
-                case 1: suggestedLane
+                case 1: suggestedLane.onAppear { radar.markSuggestedSeen(suggestedBase) }
                 default:
                     DXSegmented(selection: $filter, options: [
                         .init(1, "Search", badge: tabCount(1)),
@@ -357,7 +388,14 @@ struct InboxView: View {
 
     /// ECB tab: outgoing offers as tappable folders, incoming offers, and ledger-line confirmations.
     @ViewBuilder private var ecbTab: some View {
-        let incomingECB = store.incoming.filter { $0.isECB && !$0.isAutoProposed }.sorted { ($0.ecbAmount ?? 0) > ($1.ecbAmount ?? 0) }
+        // Honor Trade Settings → ECB: only surface offers at/above your Default Accepted ECB, and hide IOUs
+        // unless "Consider IOUs" is on.
+        let s = SettingsManager.shared
+        let incomingECB = store.incoming.filter {
+            $0.isECB && !$0.isAutoProposed
+                && ($0.ecbAmount ?? 0) >= s.defaultAcceptedECB
+                && (s.considerIOUs || !$0.isECBIOU)
+        }.sorted { ($0.ecbAmount ?? 0) > ($1.ecbAmount ?? 0) }
         if store.ecbOffers.isEmpty && incomingECB.isEmpty && ecb.pendingConfirmations.isEmpty {
             ContentUnavailableView("No ECB Offers", systemImage: "star.circle",
                 description: Text("One-way ECB trade offers show here, sorted by most ECB offered."))
@@ -393,8 +431,15 @@ struct InboxView: View {
             .sorted { ($0.requests.first?.createdAt ?? .distantPast) > ($1.requests.first?.createdAt ?? .distantPast) }
     }
     /// Everything else proposed (day-for-day / Both, plus all INCOMING incl. incoming ECB) → normal cards.
+    /// Incoming AUTO-MATCHED pure-ECB offers honor your Minimum Accepted ECB + Consider IOUs (parity with the
+    /// manual ECB tab) — a radar auto-match below your floor, or an IOU you've opted out of, never surfaces.
     private var proposedOther: [TradeRequest] {
-        MessagingStore.dedupeLoops(allProposed.filter { !($0.isECB && $0.fromID == myID) })
+        let s = SettingsManager.shared
+        return MessagingStore.dedupeLoops(allProposed.filter { !($0.isECB && $0.fromID == myID) })
+            .filter { r in
+                guard r.isECB, r.toID == myID else { return true }   // gate INCOMING pure-ECB auto-matches only
+                return (r.ecbAmount ?? 0) >= s.defaultAcceptedECB && (s.considerIOUs || !r.isECBIOU)
+            }
             .sorted { $0.createdAt > $1.createdAt }
     }
     /// SUGGESTED (SSOT from MatchStore) — 3-/2-mutual, minus any peer already in Proposed (one-section rule).
@@ -758,6 +803,25 @@ struct RequestRow: View {
 
     init(request: TradeRequest, myID: String) { self.request = request; self.myID = myID }
 
+    /// Each traded day paired with its OWNER (giver owns give-days, taker owns take-days).
+    private var tradedDays: [(day: String, owner: String)] {
+        request.giveDayIDs.map { ($0, request.fromID) } + request.takeDayIDs.map { ($0, request.toID) }
+    }
+    /// The published (non-private) trade-option note each party wrote for a traded day — mine local, peers' from their profile.
+    private var dayNoteLines: [(day: String, note: String)] {
+        tradedDays.compactMap { d in
+            let msg = d.owner == myID ? DayIntentStore.shared.note(forDay: d.day)?.message
+                                      : TradeProfileStore.shared.profile(forWorker: d.owner)?.dayNotes?[d.day]
+            guard let m = msg, !m.isEmpty else { return nil }
+            return (d.day, m)
+        }
+    }
+    /// Comma-joined holiday names touched by this trade's days (empty → nil).
+    private var holidayLine: String? {
+        let names = Array(Set(tradedDays.compactMap { tradedDayHoliday($0.day, ownerID: $0.owner) })).sorted()
+        return names.isEmpty ? nil : names.joined(separator: ", ")
+    }
+
     var body: some View {
         let mine = request.fromID == myID            // I sent it
         // A standing-offer BROADCAST I sent shows as ONE card aggregating its legs (first-accept-wins); a
@@ -798,6 +862,16 @@ struct RequestRow: View {
                 }
                 if !request.note.isEmpty {
                     mdText(request.note).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                }
+                // The trade-option notes the parties published for the traded days (why they're trading).
+                ForEach(dayNoteLines, id: \.day) { line in
+                    Label("\(DayFmt.nice(line.day)): \(line.note)", systemImage: "quote.bubble")
+                        .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                }
+                // High-impact / holiday dates in this trade (MID shifts credited to the night-before holiday).
+                if let hol = holidayLine {
+                    Label(hol, systemImage: "exclamationmark.circle.fill")
+                        .font(.caption2.weight(.semibold)).foregroundStyle(AppColor.heat).lineLimit(1)
                 }
                 HStack(spacing: 8) {
                     StatusBadge(status: status)
@@ -898,6 +972,11 @@ struct ThreadView: View {
                 Label("\(ecbText(ecb)) ECB offered", systemImage: "star.circle.fill")
                     .font(.subheadline.weight(.semibold)).foregroundStyle(AppColor.pending)
             }
+            // High-impact / holiday dates in this trade (MID shifts credited to the night-before holiday).
+            if let hol = holidayLine {
+                Label(hol, systemImage: "exclamationmark.circle.fill")
+                    .font(.caption.weight(.semibold)).foregroundStyle(AppColor.heat)
+            }
             // Each person's note for the day being traded, so the matcher sees WHY (their non-private note).
             ForEach(dayNoteLines, id: \.day) { line in
                 Label("\(DayFmt.nice(line.day)) — \(line.note)", systemImage: "quote.bubble")
@@ -912,6 +991,12 @@ struct ThreadView: View {
         if request.offersChoice { return ("Day + ECB", AppColor.special) }
         if request.isECB || request.offerKind == .ecb { return ("ECB", AppColor.pending) }
         return ("Day", AppColor.primary)
+    }
+    /// Comma-joined holiday names touched by this trade's days (MID = night-before rule for my own shifts).
+    private var holidayLine: String? {
+        let owned = request.giveDayIDs.map { ($0, request.fromID) } + request.takeDayIDs.map { ($0, request.toID) }
+        let names = Array(Set(owned.compactMap { tradedDayHoliday($0.0, ownerID: $0.1) })).sorted()
+        return names.isEmpty ? nil : names.joined(separator: ", ")
     }
     /// The note each party wrote for a traded day — mine from my local store, the peer's from their published
     /// (non-private) profile notes. Give-days are the sender's; take-days are the recipient's.
@@ -1511,6 +1596,8 @@ struct ChannelView: View {
     @State private var editingReply: BroadcastReply?
     @State private var editReplyDraft = ""
     @State private var channel = "trades"
+    @State private var topGroup = 0   // 0 Channels (broadcast) · 1 Messages (1:1 DMs) — separate groups
+    private var dmStore = DirectMessageStore.shared
     @State private var pickerItem: PhotosPickerItem?   // B5: photo attach
     @State private var pendingImage: UIImage?
 
@@ -1544,11 +1631,30 @@ struct ChannelView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                DXSegmented(selection: $channel, options: [
-                    .init("general", "# general"), .init("trades", "# trades"), .init("feedback", "# feedback"),
-                ], color: { v in ["general": AppColor.primary, "trades": AppColor.special, "feedback": AppColor.pending][v] })
-                .padding(.horizontal).padding(.top, 6).padding(.bottom, 7)
-                .onAppear { store.markBroadcastsSeen() }   // clears the unread badge (A2)
+                // Two separate groups: broadcast Channels vs 1:1 Messages (the DM platform).
+                DXSegmented(selection: $topGroup, options: [
+                    .init(0, "Channels"), .init(1, "Messages", badge: dmStore.totalUnread),
+                ], color: { v in [0: AppColor.special, 1: AppColor.primary][v] })
+                .padding(.horizontal).padding(.top, 8).padding(.bottom, 2)
+                if topGroup == 1 {
+                    ConversationListView()
+                } else {
+                    channelsPane
+                }
+            }
+            .navigationTitle("Channels & Messages")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .confirmationAction) { DXCloseButton { dismiss() } } }
+        }
+    }
+
+    private var channelsPane: some View {
+        VStack(spacing: 0) {
+            DXSegmented(selection: $channel, options: [
+                .init("general", "# general"), .init("trades", "# trades"), .init("feedback", "# feedback"),
+            ], color: { v in ["general": AppColor.primary, "trades": AppColor.special, "feedback": AppColor.pending][v] })
+            .padding(.horizontal).padding(.top, 6).padding(.bottom, 7)
+            .onAppear { store.markBroadcastsSeen() }   // clears the unread badge (A2)
                 Divider()
                 if posts.isEmpty {
                     ContentUnavailableView(channelMeta.emptyTitle, systemImage: channelMeta.icon,
@@ -1606,9 +1712,6 @@ struct ChannelView: View {
                     }
                 }
             }
-            .navigationTitle(channelMeta.title)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { DXCloseButton { dismiss() } } }
             .task { await store.refresh(); await TradeProfileStore.shared.refreshOthers() }   // E2: load peers so statuses render
             .sheet(item: $editingPost) { post in EditPostSheet(post: post) }
             .alert("Edit reply", isPresented: Binding(get: { editingReply != nil }, set: { if !$0 { editingReply = nil } })) {
@@ -1616,7 +1719,6 @@ struct ChannelView: View {
                 Button("Save") { if let r = editingReply { Task { await store.editReply(r, newText: editReplyDraft) } }; editingReply = nil }
                 Button("Cancel", role: .cancel) { editingReply = nil }
             }
-        }
     }
 
     /// E2: the author's published status — mine from Settings, peers from the loaded profiles.
