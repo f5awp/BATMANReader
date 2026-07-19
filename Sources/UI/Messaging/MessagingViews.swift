@@ -421,7 +421,7 @@ struct InboxView: View {
                 if !store.ecbOffers.isEmpty {
                     Section("Your ECB offers · tap to see who you sent it to") {
                         ForEach(store.ecbOffers, id: \.offerID) { offer in
-                            NavigationLink { ECBOfferView(offerID: offer.offerID) } label: { ECBOfferRow(offer: offer) }
+                            ecbOfferLink(offer)
                         }
                     }
                 }
@@ -492,7 +492,7 @@ struct InboxView: View {
         } else {
             List {
                 ForEach(ecbOffers, id: \.offerID) { offer in
-                    NavigationLink { ECBOfferView(offerID: offer.offerID) } label: { ECBOfferRow(offer: offer) }
+                    ecbOfferLink(offer)
                 }
                 ForEach(other) { row($0) }
             }
@@ -598,12 +598,15 @@ struct InboxView: View {
     /// Intents / Search / Misc tabs: the usual sectioned request list, filtered to the active tab.
     @ViewBuilder private var requestList: some View {
         let arch = store.archivedRequestIDs
-        // Dedupe circular-loop legs to ONE representative card per loop (TRADE-INBOX Stage 3).
+        // Dedupe circular-loop legs to ONE representative card per loop (TRADE-INBOX Stage 3). Expired requests
+        // (deadline passed) drop out of the ACTIVE sections and fold into Archived — nothing can act on them.
         let pending = MessagingStore.dedupeLoops(MessagingStore.active(store.pendingIncoming, archived: arch).filter(inTab))
+            .filter { !$0.isExpired }
         let handledIncoming = MessagingStore.dedupeLoops(MessagingStore.active(store.incoming, archived: arch)
-            .filter { store.status(of: $0) != .pending && inTab($0) })
+            .filter { store.status(of: $0) != .pending && inTab($0) && !$0.isExpired })
         let sent = MessagingStore.dedupeLoops(MessagingStore.active(store.outgoing, archived: arch).filter(inTab))
-        let archived = MessagingStore.dedupeLoops(store.requests.filter { arch.contains($0.id) && inTab($0) })
+            .filter { !$0.isExpired }
+        let archived = MessagingStore.dedupeLoops(store.requests.filter { (arch.contains($0.id) || $0.isExpired) && inTab($0) })
         if pending.isEmpty && handledIncoming.isEmpty && sent.isEmpty && archived.isEmpty {
             ContentUnavailableView(emptyTitle, systemImage: "tray", description: Text(emptyMessage))
         } else {
@@ -616,15 +619,12 @@ struct InboxView: View {
         }
     }
 
-    private var emptyTitle: String {
-        switch filter { case 0: return "No Intent Trades"; case 1: return "No Search Trades"; default: return "No Qual Swaps" }
-    }
+    // requestList only renders the Search (1) and Qual Swap (3) sub-tabs — ECB (2) uses `ecbTab`, which has
+    // its own empty state — so these two cases cover it.
+    private var emptyTitle: String { filter == 1 ? "No Search Trades" : "No Qual Swaps" }
     private var emptyMessage: String {
-        switch filter {
-        case 0:  return "Swaps you send or receive from the Intents feed show here."
-        case 1:  return "Swaps from Trade Solutions searches show here."
-        default: return "Qual-swap trades and bridge requests show here."
-        }
+        filter == 1 ? "Swaps from Trade Solutions searches show here."
+                    : "Qual-swap trades and bridge requests show here."
     }
 
     /// A shared ECB line the counterparty logged, awaiting my confirm. Confirm → posts on both ledgers.
@@ -652,17 +652,36 @@ struct InboxView: View {
     }
 
     private func row(_ req: TradeRequest) -> some View {
-        NavigationLink { ThreadView(request: req) } label: { RequestRow(request: req, myID: myID) }
-            .swipeActions(edge: .trailing) {
-                Button(role: .destructive) { Task { await store.cancelRequest(req.id) } } label: {
-                    Label("Delete", systemImage: "trash")   // gone forever
-                }
-                if store.archivedRequestIDs.contains(req.id) {
-                    Button { store.unarchiveRequest(req.id) } label: { Label("Unarchive", systemImage: "tray.and.arrow.up") }.tint(AppColor.primary)
-                } else {
-                    Button { store.archiveRequest(req.id) } label: { Label("Archive", systemImage: "archivebox") }.tint(AppColor.neutral)
-                }
+        // App-style card on a clear list row. The NavigationLink is an invisible layer BEHIND the card so the
+        // whole card taps through to the thread without the grouped-list disclosure chevron (card parity).
+        ZStack {
+            NavigationLink { ThreadView(request: req) } label: { EmptyView() }.opacity(0)
+            RequestRow(request: req, myID: myID).dxCard()
+        }
+        .listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
+        .listRowBackground(Color.clear)
+        .listRowSeparator(.hidden)
+        .swipeActions(edge: .trailing) {
+            Button(role: .destructive) { Task { await store.cancelRequest(req.id) } } label: {
+                Label("Delete", systemImage: "trash")   // gone forever
             }
+            if store.archivedRequestIDs.contains(req.id) {
+                Button { store.unarchiveRequest(req.id) } label: { Label("Unarchive", systemImage: "tray.and.arrow.up") }.tint(AppColor.primary)
+            } else {
+                Button { store.archiveRequest(req.id) } label: { Label("Archive", systemImage: "archivebox") }.tint(AppColor.neutral)
+            }
+        }
+    }
+
+    /// An ECB-offer folder as an app-style card row (mirrors `row` — invisible NavigationLink behind the card).
+    private func ecbOfferLink(_ offer: (offerID: String, requests: [TradeRequest])) -> some View {
+        ZStack {
+            NavigationLink { ECBOfferView(offerID: offer.offerID) } label: { EmptyView() }.opacity(0)
+            ECBOfferRow(offer: offer).dxCard()
+        }
+        .listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
+        .listRowBackground(Color.clear)
+        .listRowSeparator(.hidden)
     }
 }
 
@@ -688,7 +707,7 @@ struct ECBOfferRow: View {
             Text(count == 0 ? "No acceptances yet" : "^[\(count) accepted](inflect: true) · tap to confirm")
                 .font(.caption.bold()).foregroundStyle(count > 0 ? AppColor.success : .secondary)
         }
-        .padding(.vertical, 2)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -873,7 +892,8 @@ struct RequestRow: View {
             ? MessagingStore.broadcastStatus(legStatuses)
             : (request.loopID == nil ? store.status(of: request)
                                      : MessagingStore.loopStatus(legStatuses))
-        let needsMe = status == .pending && !mine     // action required from me
+        let expired = request.isExpired && status == .pending   // deadline passed while still open
+        let needsMe = status == .pending && !mine && !expired    // action required from me
         let otherName = mine ? request.toName : request.fromName
         let otherID   = mine ? request.toID : request.fromID
         return HStack(alignment: .top, spacing: 12) {
@@ -914,14 +934,21 @@ struct RequestRow: View {
                         .font(.caption2.weight(.semibold)).foregroundStyle(AppColor.heat).lineLimit(1)
                 }
                 HStack(spacing: 8) {
-                    StatusBadge(status: status)
+                    // Expired = the request's deadline passed while it was still open. It reads as inert
+                    // (neutral) and suppresses the "act now" prompts below, since nothing can be done.
+                    if expired {
+                        Label("Expired", systemImage: "clock.badge.xmark")
+                            .font(.caption2.bold()).foregroundStyle(AppColor.neutral)
+                    } else {
+                        StatusBadge(status: status)
+                    }
                     // S-VALID: a traded day is no longer worked → this request is invalid.
-                    if store.isInvalid(request) {
+                    if !expired, store.isInvalid(request) {
                         Label("Invalid", systemImage: "exclamationmark.octagon.fill")
                             .font(.caption2.bold()).foregroundStyle(BrickPalette.critical)
                     }
                     // Same-day lock: a day here is already committed to another accepted trade.
-                    if let clash = store.committedConflictDay(request) {
+                    if !expired, let clash = store.committedConflictDay(request) {
                         Label("You traded \(DayFmt.nice(clash)) — pick another day", systemImage: "lock.fill")
                             .font(.caption2.bold()).foregroundStyle(BrickPalette.critical)
                     }
@@ -930,7 +957,7 @@ struct RequestRow: View {
                             .font(.caption2.bold()).foregroundStyle(AppColor.pending)
                     }
                     // 🔥 the incoming request hits one of my own marked intents (U6).
-                    if !mine, store.matchesMyIntents(request) {
+                    if !mine, !expired, store.matchesMyIntents(request) {
                         Label("Matches your intent", systemImage: "flame.fill")
                             .font(.caption2.weight(.bold)).foregroundStyle(AppColor.heat)
                     }
@@ -941,7 +968,7 @@ struct RequestRow: View {
                 }
             }
         }
-        .padding(.vertical, 4)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -1141,7 +1168,7 @@ struct ThreadView: View {
                 .frame(maxWidth: .infinity)
         }
         .buttonStyle(.borderedProminent).tint(AppColor.success)
-        .disabled(!staleDays.isEmpty || acceptDays.isEmpty || store.committedConflictDay(request) != nil)
+        .disabled(!staleDays.isEmpty || acceptDays.isEmpty || store.committedConflictDay(request) != nil || request.isExpired)
         if let clash = store.committedConflictDay(request) {
             Label("You already accepted a trade for \(DayFmt.nice(clash)) — this day is no longer available. Offer a different day.",
                   systemImage: "lock.fill")
@@ -1232,7 +1259,11 @@ struct ThreadView: View {
                 auditRow(icon: "paperplane.fill", tint: AppColor.primary,
                          who: request.fromName, what: "proposed this trade", when: request.createdAt,
                          note: request.note)
-                ForEach(store.responses(forLoop: request.groupKey)) { r in
+                let convo = store.responses(forLoop: request.groupKey)
+                // Only the NEWEST counter from the other side stays actionable; older ones read as history.
+                let latestCounterID = convo.filter { $0.statusValue == .countered && $0.responderID != myID }
+                    .max { $0.createdAt < $1.createdAt }?.id
+                ForEach(convo) { r in
                     if r.statusValue == .message {
                         // Free-form chat → iMessage-style bubble (§4): mine trailing/blue, theirs leading.
                         let mine = r.responderID == myID
@@ -1263,8 +1294,10 @@ struct ThreadView: View {
                             // When the OTHER side countered my proposal, accept/decline it RIGHT HERE — the card
                             // acts on the reciprocal request (which holds the trimmed terms the commit path uses).
                             if r.statusValue == .countered, let days = r.acceptedDayIDs, !days.isEmpty {
+                                // Actionable buttons only on the newest other-side counter; superseded ones are read-only.
+                                let actionable = r.responderID != myID && r.id == latestCounterID
                                 counterPackageCard(days: days,
-                                                   counter: r.responderID != myID ? counterRequest(inLoop: request.groupKey) : nil)
+                                                   counter: actionable ? counterRequest(inLoop: request.groupKey) : nil)
                             }
                         }
                     }
@@ -1336,6 +1369,13 @@ struct ThreadView: View {
                 } header: {
                     Text("Accept shifts — \(ecbText(request.ecbAmount ?? 0)) ECB each")
                 }
+            } else if isIncoming && status == .pending && request.isExpired {
+                // The offer's deadline passed before I answered — nothing to accept; guide to archive/delete.
+                cardSection {
+                    Label("This request expired before it was answered. Archive or delete it.",
+                          systemImage: "clock.badge.xmark")
+                        .font(.subheadline.weight(.semibold)).foregroundStyle(AppColor.neutral)
+                }
             } else if isIncoming && status == .pending {
                 cardSection {
                     respondCard
@@ -1353,7 +1393,7 @@ struct ThreadView: View {
                                     .frame(maxWidth: .infinity)
                             }
                             .buttonStyle(.borderedProminent).tint(AppColor.pending)
-                            .disabled(store.committedConflictDay(request) != nil)
+                            .disabled(store.committedConflictDay(request) != nil || request.isExpired)
                         }
                         .padding(DS.m)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1546,13 +1586,14 @@ struct ThreadView: View {
     /// The reciprocal counter-request (a counter also arrives as a new pending request in the same loop,
     /// addressed to me — that's the one I accept). nil when there's nothing pending for me.
     private func counterRequest(inLoop loop: String) -> TradeRequest? {
-        store.requests.first { (r: TradeRequest) -> Bool in
+        // The LATEST reciprocal (a counter-of-a-counter creates a newer one) — older ones are superseded.
+        store.requests.filter { (r: TradeRequest) -> Bool in
             r.groupKey == loop && r.toID == myID && r.fromID != myID
-        }
+        }.max { $0.createdAt < $1.createdAt }
     }
 
     private func counterPackageCard(days: [String], counter: TradeRequest? = nil) -> some View {
-        let shape = RoundedRectangle(cornerRadius: 12)
+        let shape = RoundedRectangle(cornerRadius: DS.rowRadius, style: .continuous)
         let canAccept = counter.map { store.status(of: $0) == .pending } ?? false
         return VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .top, spacing: 8) {
