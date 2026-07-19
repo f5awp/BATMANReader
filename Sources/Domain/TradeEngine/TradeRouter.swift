@@ -726,7 +726,8 @@ enum TradeRouter {
         guard !giveDayIDs.isEmpty else { return nil }
         let ctx = await MatchContext.build(selfID: selfID)
         let myProfile = TradeProfileStore.shared.myProfile()
-        let mySeeking = DayIntentStore.shared.seekingDayIDs
+        let mySeeking = DayIntentStore.shared.seekingDayIDs           // days I MARKED to trade away (give intents)
+        let myWantToWork = DayIntentStore.shared.wantToWorkDayIDs     // days I MARKED to pick up (receive intents)
         let maps = ctx.maps
         let profile = ctx.profile(for: workerID, name: name)
 
@@ -748,16 +749,40 @@ enum TradeRouter {
             peerCoverSoftGates: false,
             myEntries: ctx.mineEntries, peerEntries: Array((maps[workerID] ?? [:]).values))
 
-        // Rank BOTH "You give" and "You get" by MY preferences (soft gate): days that fit my prefs (openness /
-        // bookend / blacklisted quals·shift types·weekends) come first, the rest behind — each group tie-broken
-        // by SOONEST. Nothing is filtered out; prefs only set the order.
-        func prefSorted(_ legs: [TwoWayLeg]) -> [String] {
-            let fit  = legs.filter { wouldTake(myProfile, $0) }.sorted { $0.dayID < $1.dayID }
-            let rest = legs.filter { !wouldTake(myProfile, $0) }.sorted { $0.dayID < $1.dayID }
-            return (fit + rest).map(\.dayID)
+        // Rank each side DIRECTIONALLY, exactly like the 1:1 matcher: a "You give" leg is good when the PEER
+        // (their real profile, or a robot's assumed default) would pick it up; a "You get" leg is good when
+        // *I* would (my prefs — openness / bookend / blacklisted quals·shifts·weekends). MARKED intents rank
+        // highest (my trade-away days on give, my want-to-work days on get). Nothing is filtered out — prefs +
+        // intents set the ORDER, each tier tie-broken by SOONEST. `wouldTake` already honors bookend gating,
+        // so a mid-week non-bookend day for a bookends-only party lands behind the fitting ones, not on top.
+        func rankGives(_ legs: [TwoWayLeg]) -> [String] {
+            func tier(_ l: TwoWayLeg) -> Int {
+                let intent = mySeeking.contains(l.dayID)   // I marked this day to trade away
+                let peerFit = wouldTake(profile, l)        // peer (or robot default) would pick it up
+                if intent && peerFit { return 0 }
+                if peerFit { return 1 }
+                if intent { return 2 }
+                return 3
+            }
+            return legs.sorted { a, b in
+                let (ta, tb) = (tier(a), tier(b)); return ta != tb ? ta < tb : a.dayID < b.dayID
+            }.map(\.dayID)
         }
-        let canTake   = prefSorted(plan.iGive.filter { giveDayIDs.contains($0.dayID) })
-        let givesBack = prefSorted(plan.iTake)
+        func rankTakes(_ legs: [TwoWayLeg]) -> [String] {
+            func tier(_ l: TwoWayLeg) -> Int {
+                let intent = myWantToWork.contains(l.dayID)   // I marked this day to pick up
+                let myFit = wouldTake(myProfile, l)           // fits my prefs (bookend / quals / shifts / weekends)
+                if intent && myFit { return 0 }
+                if myFit { return 1 }
+                if intent { return 2 }
+                return 3
+            }
+            return legs.sorted { a, b in
+                let (ta, tb) = (tier(a), tier(b)); return ta != tb ? ta < tb : a.dayID < b.dayID
+            }.map(\.dayID)
+        }
+        let canTake   = rankGives(plan.iGive.filter { giveDayIDs.contains($0.dayID) })
+        let givesBack = rankTakes(plan.iTake)
 
         // Largest balanced k-for-k. Each side is pref-first, so the default pick is the mutually-good swap;
         // the ranked alternates below it degrade to one-way, then physical-only.
