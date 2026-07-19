@@ -49,6 +49,9 @@ struct PackageAssignment: Sendable, Hashable, Identifiable {
     /// `takeDayIDs`. Lets the UI offer the alternatives (e.g. Jul 15 under Sep) instead of only the top pick.
     /// Empty = no alternatives surfaced (multi-day/circular/qual-swap packages).
     var takeOptions: [String] = []
+    /// All eligible days I could GIVE this peer, ranked — a superset of `giveDayIDs`. Lets the two-way picker
+    /// offer give-side alternates (mirrors `takeOptions`). Empty = no alternates (multi-day/circular/qual-swap).
+    var giveOptions: [String] = []
     var id: String { workerID }
     var dayIDs: [String] { giveDayIDs }   // back-compat for simple displays
 }
@@ -748,13 +751,18 @@ enum TradeRouter {
             myEntries: ctx.mineEntries, peerEntries: Array((maps[workerID] ?? [:]).values))
         _ = myBookendsOnly
 
-        // "You give" = my days the peer could work; days THEIR prefs accept rank first (one-way beneficial → them).
+        // "You give" = my days the peer could work, in honest tier/soonest order (modelRankedLegs). Only when
+        // the peer is a REAL configured account do we float the days their published prefs accept to the top —
+        // an unconfigured peer's fabricated Bookends-Only default would otherwise scramble the order.
         let giveRanked = modelRankedLegs(
             plan.iGive.filter { giveDayIDs.contains($0.dayID) },
             giverID: selfID, receiverID: workerID, maps: maps, quals: qualsDict, priors: priors,
             start: ctx.start, selfID: selfID, mySeeking: mySeeking, myWantToWork: myWantToWork,
             profilesByID: ctx.profilesByID)
-        let canTake = (giveRanked.filter { wouldTake(profile, $0) } + giveRanked.filter { !wouldTake(profile, $0) }).map(\.dayID)
+        let peerConfigured = TradeProfileStore.shared.isActiveAccount(workerID)
+        let canTake: [String] = peerConfigured
+            ? (giveRanked.filter { wouldTake(profile, $0) } + giveRanked.filter { !wouldTake(profile, $0) }).map(\.dayID)
+            : giveRanked.map(\.dayID)
 
         // "You get" = the peer's days I could work; days MY prefs accept rank first (one-way beneficial → me).
         let getRanked = modelRankedLegs(
@@ -771,7 +779,8 @@ enum TradeRouter {
         let assignment = PackageAssignment(workerID: workerID, name: name,
                                            giveDayIDs: Array(canTake.prefix(k)),
                                            takeDayIDs: Array(givesBack.prefix(k)),
-                                           takeOptions: Array(givesBack.prefix(max(maxOptions, k))))
+                                           takeOptions: Array(givesBack.prefix(max(maxOptions, k))),
+                                           giveOptions: Array(canTake.prefix(max(maxOptions, k))))
         return TradePackage(id: "find-\(workerID)", methodology: .greedy, assignments: [assignment],
                             route: nil, urgency: 0, isOptimal: true)
     }
