@@ -413,6 +413,19 @@ enum TradeScore {
     /// RELATIVE match strength (weights are hand-tuned, not fit) — see `matchStrength`.
     static func legProb(_ f: LegFeatures) -> Double { 1.0 / (1.0 + exp(-legLogit(f))) }
 
+    /// The UNIVERSAL display band for one option day, derived from the SAME `LegFeatures` the score
+    /// uses. Coarser than `legProb` (which orders WITHIN a band); this is what draws the `|` tier
+    /// dividers and enforces "intents highest" consistently across every option list:
+    ///   0  both sides marked an intent (mutual)      · 1  one side marked an intent
+    ///   2  no intent but it's a clean bookend          · 3  no intent, splits a break (unpreferred)
+    static func displayTier(_ f: LegFeatures) -> Int {
+        switch f.intentLevel {
+        case 2:  return 0
+        case 1:  return 1
+        default: return f.bookend ? 2 : 3
+        }
+    }
+
     /// Q — geometric mean of per-leg quality, in (0,1]. Size/people-neutral by design: this is
     /// the FLOOR + DISPLAY signal, so a clean full-cover reads like a clean single-day and the
     /// floor constants keep their single-leg calibration. Empty → 0.
