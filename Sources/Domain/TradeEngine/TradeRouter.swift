@@ -341,7 +341,7 @@ enum TradeRouter {
         let priors = ctx.priors                // U-PERF: built once in ctx (one responses scan, not per-leg)
 
         // Per-peer reciprocal capacity via two-way exploration, gated by BOTH parties' real rules.
-        // `*Tiers` map each ranked day → its display band (TradeScore.displayTier) for the `|` dividers.
+        // `*Tiers` map each ranked day → its display band (from `rankLegs`) for the `|` dividers.
         struct PeerSwap {
             let id: String; let name: String; let canTake: [String]; let givesBack: [String]
             let canTakeTiers: [String: Int]; let givesBackTiers: [String: Int]
@@ -366,7 +366,7 @@ enum TradeRouter {
                 plan.iGive.filter { giveDayIDs.contains($0.dayID) && wouldTake(profile, $0) },
                 giverID: selfID, receiverID: cand.workerID,
                 maps: maps, quals: qualsDict, priors: priors, start: start, selfID: selfID,
-                mySeeking: mySeeking, myWantToWork: myWantToWork, profilesByID: ctx.profilesByID)
+                myProfile: myProfile, mySeeking: mySeeking, myWantToWork: myWantToWork, profilesByID: ctx.profilesByID)
             let canTake = canTakeRanked.legs.map(\.dayID)
             var canTakeTiers: [String: Int] = [:]
             for (i, l) in canTakeRanked.legs.enumerated() { canTakeTiers[l.dayID] = canTakeRanked.tiers[i] }
@@ -386,7 +386,7 @@ enum TradeRouter {
                                              wantToWork: myWantToWork, bookendsOnly: myBookendsOnly),
                 giverID: cand.workerID, receiverID: selfID,
                 maps: maps, quals: qualsDict, priors: priors, start: start, selfID: selfID,
-                mySeeking: mySeeking, myWantToWork: myWantToWork, profilesByID: ctx.profilesByID)
+                myProfile: myProfile, mySeeking: mySeeking, myWantToWork: myWantToWork, profilesByID: ctx.profilesByID)
             let givesBack = givesBackRanked.legs.map(\.dayID).filter(inReceiveWindow)   // honor the receive window
             var givesBackTiers: [String: Int] = [:]
             for (i, l) in givesBackRanked.legs.enumerated() { givesBackTiers[l.dayID] = givesBackRanked.tiers[i] }
@@ -478,7 +478,7 @@ enum TradeRouter {
                                                  wantToWork: myWantToWork, bookendsOnly: myBookendsOnly),
                     giverID: cand.workerID, receiverID: selfID,
                     maps: maps, quals: qualsDict, priors: priors, start: start, selfID: selfID,
-                    mySeeking: mySeeking, myWantToWork: myWantToWork, profilesByID: ctx.profilesByID)
+                    myProfile: myProfile, mySeeking: mySeeking, myWantToWork: myWantToWork, profilesByID: ctx.profilesByID)
                     .map(\.dayID).filter(inReceiveWindow)
                 guard !givesBack.isEmpty else { continue }
                 // A bridge must exist, else it's a true dead end — don't surface it. (buildQualSwapLeg = nil.)
@@ -759,19 +759,19 @@ enum TradeRouter {
             peerCoverSoftGates: false,
             myEntries: ctx.mineEntries, peerEntries: Array((maps[workerID] ?? [:]).values))
 
-        // Rank BOTH sides through the ONE universal ranker (`rankLegs` → displayTier + legProb), the SAME
-        // objective Trade Solutions uses. "You give": my day → the PEER receives it (giver = me, receiver =
-        // peer), so it's ordered by the peer's fit/intent. "You get": the peer's day → I receive it (giver =
-        // peer, receiver = me), ordered by my fit/intent. The exploratory view caps the unpreferred band at 5.
+        // Rank BOTH sides through the ONE universal ranker (`rankLegs`), the SAME objective Trade Solutions
+        // uses. "You give": my day → the PEER receives it (giver = me), so the tier keys off MY clean-give-away.
+        // "You get": the peer's day → I receive it (receiver = me), so the tier keys off whether I'd pick it up
+        // under my soft prefs (blacklist/openness/…). The exploratory view caps the unpreferred band at 5.
         let giveRanked = TradeRouter.rankLegs(
             plan.iGive.filter { giveDayIDs.contains($0.dayID) },
             giverID: selfID, receiverID: workerID, maps: maps, quals: ctx.qualsDict, priors: ctx.priors,
-            start: ctx.start, selfID: selfID, mySeeking: mySeeking, myWantToWork: myWantToWork,
+            start: ctx.start, selfID: selfID, myProfile: myProfile, mySeeking: mySeeking, myWantToWork: myWantToWork,
             profilesByID: ctx.profilesByID, capUnpreferred: 5)
         let takeRanked = TradeRouter.rankLegs(
             plan.iTake,
             giverID: workerID, receiverID: selfID, maps: maps, quals: ctx.qualsDict, priors: ctx.priors,
-            start: ctx.start, selfID: selfID, mySeeking: mySeeking, myWantToWork: myWantToWork,
+            start: ctx.start, selfID: selfID, myProfile: myProfile, mySeeking: mySeeking, myWantToWork: myWantToWork,
             profilesByID: ctx.profilesByID, capUnpreferred: 5)
         let canTake   = giveRanked.legs.map(\.dayID)
         let givesBack = takeRanked.legs.map(\.dayID)
@@ -1213,11 +1213,11 @@ enum TradeRouter {
                 let myTakeable = modelRankedLegs(plan.iGive.filter { wouldTake(profile, $0) },
                     giverID: selfID, receiverID: cand.workerID,
                     maps: maps, quals: qualsDict, priors: priors, start: start, selfID: selfID,
-                    mySeeking: mySeeking, myWantToWork: myWantToWork, profilesByID: profilesByID)
+                    myProfile: myProfile, mySeeking: mySeeking, myWantToWork: myWantToWork, profilesByID: profilesByID)
                 let theirTakeable = modelRankedLegs(plan.iTake.filter { wouldTake(myProfile, $0) },
                     giverID: cand.workerID, receiverID: selfID,
                     maps: maps, quals: qualsDict, priors: priors, start: start, selfID: selfID,
-                    mySeeking: mySeeking, myWantToWork: myWantToWork, profilesByID: profilesByID)
+                    myProfile: myProfile, mySeeking: mySeeking, myWantToWork: myWantToWork, profilesByID: profilesByID)
                 let pairing = IntentPairing(
                     myGiveMarked:    myTakeable.filter { $0.wanted }.map(\.dayID),
                     myGivePref:      myTakeable.filter { !$0.wanted }.map(\.dayID),
@@ -1423,29 +1423,64 @@ enum TradeRouter {
 
     /// THE ONE universal option-ranker (U-OBJ). Every option list — Trade Solutions give-backs, the
     /// dispatcher Find Trades swap, the Intents marketplace — orders days by the SAME rule:
-    ///   1. `TradeScore.displayTier` (the intent/bookend band — keeps intents highest + groups the `|` dividers)
-    ///   2. SOONEST within a band (an equally-good earlier day is never buried under a later one)
-    /// The band itself is derived from the full per-leg model (`legFeatures`: both intents, bookend, qual,
-    /// ECB, learned prior), so the model still decides WHICH band a day lands in — recency only orders inside
-    /// a band. `capUnpreferred` soft-limits the bottom band (tier 3) to N days (exploratory single-peer view).
-    /// Returns the ordered legs with a PARALLEL tier array for the divider UI.
+    ///   1. rank TIER (below), which keeps intents highest and groups the `|` dividers
+    ///   2. SOONEST within a tier (an equally-good earlier day is never buried under a later one)
+    ///
+    /// The tier is CHOOSER-CENTRIC — it reflects whether a day suits ME (the person picking):
+    ///   0  both sides marked an intent (mutual)          · 1  one side marked an intent
+    ///   2  no intent but it SUITS me                       · 3  doesn't suit me (unpreferred / bottom)
+    /// "Suits me" depends on the side. On the GIVE side (I'm the giver) it's a CLEAN GIVE-AWAY — giving the
+    /// day extends MY break (a neighbour is off), computed on MY *current* schedule (so a day stays a good
+    /// give until I actually take an adjacent day back). On the GET side (I'm the receiver) it's whether I'd
+    /// actually PICK IT UP under my soft prefs — blacklist / openness / weekend / qual / shift. A get-day I
+    /// won't take HARD-demotes to tier 3, overriding intent: a blacklisted day never ranks above the fold.
+    /// `capUnpreferred` soft-limits tier 3 to N days (exploratory single-peer view). Returns the ordered legs
+    /// with a PARALLEL tier array for the divider UI.
     // `private`: the signature uses the file-private `DayMap` typealias, so it can't be internal.
     nonisolated private static func rankLegs(_ legs: [TwoWayLeg], giverID: String, receiverID: String,
                                              maps: [String: DayMap], quals: [String: [String]],
                                              priors: [String: Double], start: Date, selfID: String,
+                                             myProfile: TradeProfile,
                                              mySeeking: Set<String>, myWantToWork: Set<String>,
                                              profilesByID: [String: TradeProfile],
                                              capUnpreferred: Int? = nil) -> (legs: [TwoWayLeg], tiers: [Int]) {
+        let cal = Calendar.current
+        let iAmGiver = giverID == selfID
+        let receiverProfile: TradeProfile = receiverID == selfID
+            ? myProfile
+            : (profilesByID[receiverID] ?? TradeProfile.defaultForUnpublished(workerID: receiverID, name: ""))
+        func fitsPickUp(_ prof: TradeProfile, _ l: TwoWayLeg) -> Bool {
+            prof.wouldPickUp(onDay: l.dayID, weekday: cal.component(.weekday, from: l.date),
+                             desk: l.desk, shiftType: ShiftAvailabilityType.infer(fromStartHour: l.startHour).rawValue,
+                             region: DeskRules.region(forDesk: l.desk).rawValue, isBookend: l.bookend)
+        }
         let scored = legs.map { l -> (leg: TwoWayLeg, tier: Int) in
             let f = legFeatures(giverID: giverID, receiverID: receiverID, day: l.dayID, desk: l.desk,
                                 receiverQuals: quals[receiverID] ?? [], maps: maps, priors: priors,
                                 selfID: selfID, start: start, mySeeking: mySeeking, myWantToWork: myWantToWork,
                                 profilesByID: profilesByID)
-            return (l, TradeScore.displayTier(f))
+            let tier: Int
+            if iAmGiver {
+                // GIVE side: suits me = a clean give-away on my CURRENT schedule (a neighbour day is off).
+                let clean = TradeMatcher.isCleanGiveAway(day: l.date, map: maps[selfID] ?? [:], cal: cal)
+                switch f.intentLevel {
+                case 2:  tier = 0
+                case 1:  tier = 1
+                default: tier = clean ? 2 : 3
+                }
+            } else {
+                // GET side (or a peer receiver): the receiver must actually want it under their soft prefs.
+                // A day I won't pick up (blacklist/openness/…) drops to the bottom, overriding any intent.
+                if !fitsPickUp(receiverProfile, l) { tier = 3 }
+                else if f.intentLevel == 2 { tier = 0 }
+                else if f.intentLevel == 1 { tier = 1 }
+                else { tier = 2 }
+            }
+            return (l, tier)
         }
         let sorted = scored.sorted { a, b in
-            if a.tier != b.tier { return a.tier < b.tier }        // intents highest, groups dividers
-            return a.leg.dayID < b.leg.dayID                       // within a band: SOONEST first
+            if a.tier != b.tier { return a.tier < b.tier }        // intents/fit highest, groups dividers
+            return a.leg.dayID < b.leg.dayID                       // within a tier: SOONEST first
         }
         var outLegs: [TwoWayLeg] = [], outTiers: [Int] = [], unpref = 0
         for s in sorted {
@@ -1460,10 +1495,11 @@ enum TradeRouter {
     nonisolated private static func modelRankedLegs(_ legs: [TwoWayLeg], giverID: String, receiverID: String,
                                             maps: [String: DayMap], quals: [String: [String]],
                                             priors: [String: Double], start: Date, selfID: String,
+                                            myProfile: TradeProfile,
                                             mySeeking: Set<String>, myWantToWork: Set<String>,
                                             profilesByID: [String: TradeProfile]) -> [TwoWayLeg] {
         rankLegs(legs, giverID: giverID, receiverID: receiverID, maps: maps, quals: quals, priors: priors,
-                 start: start, selfID: selfID, mySeeking: mySeeking, myWantToWork: myWantToWork,
+                 start: start, selfID: selfID, myProfile: myProfile, mySeeking: mySeeking, myWantToWork: myWantToWork,
                  profilesByID: profilesByID).legs
     }
 
