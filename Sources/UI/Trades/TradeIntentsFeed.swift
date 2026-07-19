@@ -1159,6 +1159,27 @@ struct PackageDetailView: View {
         if chosenTakes.count > takeTargetCount { chosenTakes.removeFirst() }
     }
 
+    // MARK: Rank-tier dividers
+    // A day's rank tier (0 both-marked · 1 one-marked · 2 fits · 3 unpreferred), looked up from the
+    // assignment's parallel tier arrays. nil when the package carries no tier data (then no dividers show).
+    private var firstAssign: PackageAssignment? { package.assignments.first }
+    private func giveTier(_ dayID: String) -> Int? {
+        guard let a = firstAssign, let i = a.giveOptions.firstIndex(of: dayID),
+              a.giveOptionTiers.indices.contains(i) else { return nil }
+        return a.giveOptionTiers[i]
+    }
+    private func takeTier(_ dayID: String) -> Int? {
+        guard let a = firstAssign, let i = a.takeOptions.firstIndex(of: dayID),
+              a.takeOptionTiers.indices.contains(i) else { return nil }
+        return a.takeOptionTiers[i]
+    }
+    private func stepTier(_ s: Step) -> Int? { s.fromID == myID ? giveTier(s.dayID) : takeTier(s.dayID) }
+    /// A thin vertical rule dropped between two chips that belong to different rank tiers.
+    private var tierDivider: some View {
+        RoundedRectangle(cornerRadius: 1).fill(Color.secondary.opacity(0.35))
+            .frame(width: 1.5, height: 18).padding(.horizontal, 1)
+    }
+
 
     /// One tappable step per handoff. Circular = the loop legs; reciprocal = legs
     /// synthesized from each assignment (you→them for your gives, them→you for theirs).
@@ -1439,7 +1460,10 @@ struct PackageDetailView: View {
                 .frame(width: 52, alignment: .leading)
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
-                    ForEach(Array(takeOpts.enumerated()), id: \.element) { i, d in takeOptChip(d, isTop: i == 0) }
+                    ForEach(takeOpts.indices, id: \.self) { i in
+                        if i > 0, let t = takeTier(takeOpts[i]), let pt = takeTier(takeOpts[i - 1]), t != pt { tierDivider }
+                        takeOptChip(takeOpts[i], isTop: i == 0)
+                    }
                 }
             }
         }
@@ -1481,7 +1505,9 @@ struct PackageDetailView: View {
                 .frame(width: 52, alignment: .leading)
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
-                    ForEach(items, id: \.element.id) { i, s in
+                    ForEach(items.indices, id: \.self) { pos in
+                        let (i, s) = items[pos]
+                        if pos > 0, let t = stepTier(s), let pt = stepTier(items[pos - 1].element), t != pt { tierDivider }
                         Button { tapChip(i, s) } label: { chip(i, s) }
                             .buttonStyle(.plain)
                     }

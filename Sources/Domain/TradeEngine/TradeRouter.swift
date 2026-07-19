@@ -52,6 +52,10 @@ struct PackageAssignment: Sendable, Hashable, Identifiable {
     /// All eligible days I could GIVE this peer, ranked — a superset of `giveDayIDs`. Lets the two-way picker
     /// offer give-side alternates (mirrors `takeOptions`). Empty = no alternates (multi-day/circular/qual-swap).
     var giveOptions: [String] = []
+    /// Per-option rank TIER, parallel to `takeOptions` / `giveOptions` (see `TradeRouter.optionTier`): 0 both
+    /// marked intent · 1 one side marked · 2 fits prefs · 3 unpreferred. Empty = untiered (no tier dividers).
+    var takeOptionTiers: [Int] = []
+    var giveOptionTiers: [Int] = []
     var id: String { workerID }
     var dayIDs: [String] { giveDayIDs }   // back-compat for simple displays
 }
@@ -715,6 +719,30 @@ enum TradeRouter {
         return finalize(gated, lucky: lucky)
     }
 
+    /// The shared 4-tier rank for one option day. 0 = both parties marked an intent, 1 = one side marked an
+    /// intent, 2 = no intent but it fits the receiving party's prefs, 3 = neither (an unpreferred alternate).
+    nonisolated static func optionTier(mineIntent: Bool, theirIntent: Bool, fits: Bool) -> Int {
+        if mineIntent && theirIntent { return 0 }
+        if mineIntent || theirIntent { return 1 }
+        if fits { return 2 }
+        return 3
+    }
+
+    /// Sort legs by (tier, soonest) and return the day IDs with a PARALLEL tier array. The unpreferred
+    /// bottom tier (3) is soft-filtered to at most 5 days (soonest-first) so it never floods the list.
+    nonisolated static func rankByTier(_ legs: [TwoWayLeg], tierOf: (TwoWayLeg) -> Int) -> (days: [String], tiers: [Int]) {
+        let sorted = legs.sorted { a, b in
+            let (ta, tb) = (tierOf(a), tierOf(b)); return ta != tb ? ta < tb : a.dayID < b.dayID
+        }
+        var days: [String] = [], tiers: [Int] = [], unpref = 0
+        for l in sorted {
+            let t = tierOf(l)
+            if t == 3 { if unpref >= 5 { continue }; unpref += 1 }
+            days.append(l.dayID); tiers.append(t)
+        }
+        return (days, tiers)
+    }
+
     /// A single best day-for-day swap package with ONE specific dispatcher — for the Dispatcher tab's
     /// "Find Trades". Runs the two-way explorer for just that peer (NO global acceptance floor, so a valid
     /// swap always surfaces), and returns up to `maxOptions` ranked give-back dates in `takeOptions`.
@@ -749,50 +777,44 @@ enum TradeRouter {
             peerCoverSoftGates: false,
             myEntries: ctx.mineEntries, peerEntries: Array((maps[workerID] ?? [:]).values))
 
-        // Rank each side DIRECTIONALLY, exactly like the 1:1 matcher: a "You give" leg is good when the PEER
-        // (their real profile, or a robot's assumed default) would pick it up; a "You get" leg is good when
-        // *I* would (my prefs — openness / bookend / blacklisted quals·shifts·weekends). MARKED intents rank
-        // highest (my trade-away days on give, my want-to-work days on get). Nothing is filtered out — prefs +
-        // intents set the ORDER, each tier tie-broken by SOONEST. `wouldTake` already honors bookend gating,
-        // so a mid-week non-bookend day for a bookends-only party lands behind the fitting ones, not on top.
-        func rankGives(_ legs: [TwoWayLeg]) -> [String] {
-            func tier(_ l: TwoWayLeg) -> Int {
-                let intent = mySeeking.contains(l.dayID)   // I marked this day to trade away
-                let peerFit = wouldTake(profile, l)        // peer (or robot default) would pick it up
-                if intent && peerFit { return 0 }
-                if peerFit { return 1 }
-                if intent { return 2 }
-                return 3
-            }
-            return legs.sorted { a, b in
-                let (ta, tb) = (tier(a), tier(b)); return ta != tb ? ta < tb : a.dayID < b.dayID
-            }.map(\.dayID)
+        // Rank each side DIRECTIONALLY by the SAME 4-tier scale (TradeRouter.optionTier), both parties'
+        // intents considered — a match is strongest when BOTH marked it:
+        //   tier 0  BOTH marked an intent (I want to trade this day away ↔ peer wants to work it, or vice-versa)
+        //   tier 1  EITHER side marked an intent
+        //   tier 2  no intent, but it fits the receiving party's prefs (openness/bookend/quals/shifts/weekends)
+        //   tier 3  neither — an "unpreferred" alternate (soft-filtered: at most 5, soonest-first, at the end)
+        // For "You give" the receiving party is the PEER (their real profile, or a robot's assumed default);
+        // for "You get" it's ME. Each tier is tie-broken by SOONEST.
+        let peerSeeking   = profile.seekingDayIDs                 // days the PEER marked to trade away
+        let peerWantWork  = profile.wantToWorkDayIDs ?? []        // days the PEER marked to pick up
+        func giveTier(_ l: TwoWayLeg) -> Int {                    // my day → peer picks it up
+            TradeRouter.optionTier(mineIntent: mySeeking.contains(l.dayID),
+                                   theirIntent: peerWantWork.contains(l.dayID),
+                                   fits: wouldTake(profile, l))
         }
-        func rankTakes(_ legs: [TwoWayLeg]) -> [String] {
-            func tier(_ l: TwoWayLeg) -> Int {
-                let intent = myWantToWork.contains(l.dayID)   // I marked this day to pick up
-                let myFit = wouldTake(myProfile, l)           // fits my prefs (bookend / quals / shifts / weekends)
-                if intent && myFit { return 0 }
-                if myFit { return 1 }
-                if intent { return 2 }
-                return 3
-            }
-            return legs.sorted { a, b in
-                let (ta, tb) = (tier(a), tier(b)); return ta != tb ? ta < tb : a.dayID < b.dayID
-            }.map(\.dayID)
+        func takeTier(_ l: TwoWayLeg) -> Int {                    // peer's day → I pick it up
+            TradeRouter.optionTier(mineIntent: myWantToWork.contains(l.dayID),
+                                   theirIntent: peerSeeking.contains(l.dayID),
+                                   fits: wouldTake(myProfile, l))
         }
-        let canTake   = rankGives(plan.iGive.filter { giveDayIDs.contains($0.dayID) })
-        let givesBack = rankTakes(plan.iTake)
+        let giveRanked = TradeRouter.rankByTier(plan.iGive.filter { giveDayIDs.contains($0.dayID) }, tierOf: giveTier)
+        let takeRanked = TradeRouter.rankByTier(plan.iTake, tierOf: takeTier)
+        let canTake   = giveRanked.days
+        let givesBack = takeRanked.days
 
-        // Largest balanced k-for-k. Each side is pref-first, so the default pick is the mutually-good swap;
-        // the ranked alternates below it degrade to one-way, then physical-only.
+        // Largest balanced k-for-k. Each side is tier-first, so the default pick is the mutually-good swap;
+        // the ranked alternates below it degrade to one-sided intent, then fit, then unpreferred.
         let k = min(canTake.count, givesBack.count)
         guard k >= 1 else { return nil }
+        let giveCap = min(canTake.count, max(maxOptions, k))
+        let takeCap = min(givesBack.count, max(maxOptions, k))
         let assignment = PackageAssignment(workerID: workerID, name: name,
                                            giveDayIDs: Array(canTake.prefix(k)),
                                            takeDayIDs: Array(givesBack.prefix(k)),
-                                           takeOptions: Array(givesBack.prefix(max(maxOptions, k))),
-                                           giveOptions: Array(canTake.prefix(max(maxOptions, k))))
+                                           takeOptions: Array(givesBack.prefix(takeCap)),
+                                           giveOptions: Array(canTake.prefix(giveCap)),
+                                           takeOptionTiers: Array(takeRanked.tiers.prefix(takeCap)),
+                                           giveOptionTiers: Array(giveRanked.tiers.prefix(giveCap)))
         return TradePackage(id: "find-\(workerID)", methodology: .greedy, assignments: [assignment],
                             route: nil, urgency: 0, isOptimal: true)
     }
