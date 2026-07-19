@@ -1454,7 +1454,18 @@ enum TradeRouter {
                              desk: l.desk, shiftType: ShiftAvailabilityType.infer(fromStartHour: l.startHour).rawValue,
                              region: DeskRules.region(forDesk: l.desk).rawValue, isBookend: l.bookend)
         }
-        let scored = legs.map { l -> (leg: TwoWayLeg, tier: Int) in
+        // HARD BLACKLIST: a day the RECEIVER would NEVER accept — a blacklisted weekday/desk/shift/region or a
+        // Must-Be-Off day — is REMOVED entirely (not just demoted). This is stronger than the soft prefs below,
+        // which only push a day into the bottom tier. On the GET side this drops my blacklisted receive-days;
+        // on the GIVE side it drops days the peer flatly refuses. (Soft openness/bookend stays a tier-3 alternate.)
+        func receiverHardBlocks(_ l: TwoWayLeg) -> Bool {
+            if receiverProfile.mustBeOffDayIDs?.contains(l.dayID) == true { return true }
+            return !receiverProfile.passesBlacklist(
+                weekday: cal.component(.weekday, from: l.date), desk: l.desk,
+                shiftType: ShiftAvailabilityType.infer(fromStartHour: l.startHour).rawValue,
+                region: DeskRules.region(forDesk: l.desk).rawValue)
+        }
+        let scored = legs.filter { !receiverHardBlocks($0) }.map { l -> (leg: TwoWayLeg, tier: Int) in
             let f = legFeatures(giverID: giverID, receiverID: receiverID, day: l.dayID, desk: l.desk,
                                 receiverQuals: quals[receiverID] ?? [], maps: maps, priors: priors,
                                 selfID: selfID, start: start, mySeeking: mySeeking, myWantToWork: myWantToWork,
