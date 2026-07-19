@@ -448,12 +448,12 @@ struct InboxView: View {
     }
     /// SUGGESTED (SSOT from MatchStore) — 3-/2-mutual, minus any peer already in Proposed (one-section rule).
     private var suggestedBase: [MatchStore.SuggestedMatch] {
-        // Exclude any peer I already have an ACTIVE trade with — auto-matched (Auto lane) OR manually
-        // proposed anywhere (Trade List, the two-way calendar, etc.), either direction. So proposing in one
-        // place removes it from Suggested and vice-versa — you can't double-propose the same peer.
-        let engaged = Set(MessagingStore.active(store.requests, archived: store.archivedRequestIDs)
-            .map { $0.fromID == myID ? $0.toID : $0.fromID })
-        return radar.suggestedMatches.filter { !engaged.contains($0.peerID) }
+        // Hide a suggestion only when I've already proposed THAT peer on one of THOSE give-days (auto or
+        // manual, via the shared proposedGiveDays SSOT) — the SAME per-peer/per-day rule as the Trade List's
+        // "Sent" gate, so the two surfaces track together while a different day with the same peer stays open.
+        radar.suggestedMatches.filter { m in
+            Set(m.giveDayIDs).isDisjoint(with: store.proposedGiveDays(to: m.peerID))
+        }
     }
     /// After applying the Trade Date / Give-back Date / Shift / Qual filter chips.
     private var suggestedMatches: [MatchStore.SuggestedMatch] {
