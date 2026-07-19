@@ -121,7 +121,9 @@ struct FindTradesFilterBar: View {
         }
     }
 
-    /// A borderless tappable filter chip: icon · value · caret.
+    /// A borderless tappable filter chip: icon · value · caret. Active = SOLID app-accent + white (the same
+    /// selected-state convention used across the app), so a set filter reads clearly instead of low-contrast
+    /// blue-on-gray.
     private func chip(_ text: String, systemImage: String, active: Bool) -> some View {
         HStack(spacing: 4) {
             Image(systemName: systemImage).font(.caption2)
@@ -129,8 +131,8 @@ struct FindTradesFilterBar: View {
             Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold)).opacity(0.5)
         }
         .padding(.horizontal, 11).padding(.vertical, 7)
-        .foregroundStyle(active ? AppColor.primary : .primary)
-        .background(active ? AppColor.primary.opacity(0.16) : Color(.secondarySystemBackground), in: Capsule())
+        .foregroundStyle(active ? .white : .primary)
+        .background(active ? AppColor.primary : Color(.secondarySystemBackground), in: Capsule())
     }
 
     /// A menu row with a trailing checkmark when selected.

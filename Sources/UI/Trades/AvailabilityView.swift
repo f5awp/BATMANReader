@@ -69,9 +69,10 @@ struct FindCandidatesSection: View {
     private var hasQualSwapPackages: Bool {
         searchFilter.filter(packages, selfID: settings.username).filter(criteriaMatch).contains { $0.needsQualSwap }
     }
-    /// Quals present across the current results — the qual filter's option list (real desk-qual codes only).
+    /// The qual filter's option list = YOUR own desk quals (you can only pick up desks you're qualified for),
+    /// so the chip is always available in Date Range too and never lists quals you don't hold.
     private var availableQuals: [String] {
-        Set(dayQual.values).union(myDayQual.values).filter(DispatcherDirectory.isQualCode).sorted()
+        SettingsManager.shared.cachedQuals.filter(DispatcherDirectory.isQualCode).sorted()
     }
     /// Apply the roster-backed More-filter criteria (receive shift-type + desk qual). Date range,
     /// engine, max-people and required-person are handled by `searchFilter.filter`.

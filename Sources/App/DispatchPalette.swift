@@ -383,9 +383,10 @@ struct InfoBubble: View {
         .popover(isPresented: $show) {
             Text(text)
                 .font(.callout)
-                .padding()
-                .frame(maxWidth: 300)
+                .multilineTextAlignment(.leading)
                 .fixedSize(horizontal: false, vertical: true)
+                .frame(width: 260, alignment: .leading)
+                .padding()
                 .presentationCompactAdaptation(.popover)
         }
         .accessibilityLabel("More info")

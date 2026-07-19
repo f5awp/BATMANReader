@@ -70,13 +70,12 @@ struct DXSegmented<T: Hashable>: View {
                                 .padding(.horizontal, 5).padding(.vertical, 1)
                                 .background(active ? Color.white.opacity(0.95) : (tint ?? AppColor.primary), in: Capsule())
                         }
-                        // NEW/unread count — always the alerting heat color so it reads as "needs attention".
+                        // NEW/unread → a single compact heat dot (not "N new" text, which packed the strip
+                        // when several tabs had news). The total badge already carries the number; this dot
+                        // just says "something in here needs attention".
                         if opt.newBadge > 0 {
-                            Text("\(min(opt.newBadge, 99)) new")
-                                .font(.system(size: 9, weight: .bold))
-                                .foregroundStyle(.white)
-                                .padding(.horizontal, 5).padding(.vertical, 1)
-                                .background(AppColor.heat, in: Capsule())
+                            Circle().fill(AppColor.heat).frame(width: 7, height: 7)
+                                .accessibilityLabel("\(opt.newBadge) new")
                         }
                     }
                         .frame(maxWidth: .infinity)

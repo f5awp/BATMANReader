@@ -843,6 +843,7 @@ struct IntentCalendarView: View {
 
 struct DayIntentEditor: View {
     let target: DayEditTarget
+    var readOnly = false   // a day that has already passed is view-only (can't be traded)
 
     private var intents = DayIntentStore.shared
     @Environment(\.dismiss) private var dismiss
@@ -867,11 +868,19 @@ struct DayIntentEditor: View {
     @State private var ecbIsIOU = false                        // pay the ECB on a future date (IOU) rather than now
     @State private var ecbAvailable = Date()                   // the IOU pay date (when ecbIsIOU)
 
-    init(target: DayEditTarget) { self.target = target }
+    init(target: DayEditTarget, readOnly: Bool = false) { self.target = target; self.readOnly = readOnly }
 
     private var prettyDate: String {
         guard let d = TradeMatcher.dayDate(fromISO: target.dayID) else { return target.dayID }
         let f = DateFormatter(); f.dateFormat = "EEEE, MMM d, yyyy"; return f.string(from: d)
+    }
+
+    // Scope-pill look: picked = solid accent; none picked = neutral "any"; picked-exists-but-not-this = dim off.
+    private func scopePillFill(on: Bool, anySelected: Bool) -> Color {
+        on ? AppColor.primary : (anySelected ? Color(.tertiarySystemFill) : Color(.secondarySystemFill))
+    }
+    private func scopePillText(on: Bool, anySelected: Bool) -> Color {
+        on ? .white : (anySelected ? .secondary : .primary)
     }
 
     /// Trade options (kind + accept scope + note) show for a day you're trading away or an off day you want
@@ -907,6 +916,12 @@ struct DayIntentEditor: View {
     var body: some View {
         NavigationStack {
             Form {
+                if readOnly {
+                    Section {
+                        Label("View Only", systemImage: "clock.badge.xmark")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
                 Section("Intent") {
                     if target.isOff {
                         Picker("Day off", selection: Binding(
@@ -950,19 +965,25 @@ struct DayIntentEditor: View {
                         if tradeKind != .ecb {
                             VStack(alignment: .leading, spacing: 6) {
                                 Text("Accept only these shift types").font(.caption).foregroundStyle(.secondary)
+                                // Nothing picked = "any" → all pills neutral/available. Once you pick one, it goes
+                                // solid blue and the rest dim — so it's clear you're choosing what to INCLUDE.
+                                let anyType = !acceptTypes.isEmpty
                                 HStack(spacing: 8) {
                                     ForEach(ShiftAvailabilityType.allCases, id: \.self) { t in
                                         let on = acceptTypes.contains(t)
                                         Button {
                                             if on { acceptTypes.remove(t) } else { acceptTypes.insert(t) }
                                         } label: {
-                                            Text(t.rawValue)
-                                                .font(.dsBadge)
+                                            HStack(spacing: 3) {
+                                                if on { Image(systemName: "checkmark").font(.system(size: 9, weight: .bold)) }
+                                                Text(t.rawValue).font(.dsBadge)
+                                            }
                                                 .frame(maxWidth: .infinity)
                                                 .padding(.vertical, 6)
-                                                .background(on ? AppColor.primary.opacity(DS.pillFill) : Color(.tertiarySystemFill),
+                                                .background(scopePillFill(on: on, anySelected: anyType),
                                                             in: RoundedRectangle(cornerRadius: DS.pillRadius, style: .continuous))
-                                                .foregroundStyle(on ? AppColor.primary : Color.secondary)
+                                                .foregroundStyle(scopePillText(on: on, anySelected: anyType))
+                                                .opacity(anyType && !on ? 0.5 : 1)
                                         }
                                         .buttonStyle(.plain)
                                     }
@@ -973,6 +994,7 @@ struct DayIntentEditor: View {
                             if !quals.isEmpty {
                                 VStack(alignment: .leading, spacing: 6) {
                                     Text("Accept only these quals").font(.caption).foregroundStyle(.secondary)
+                                    let anyQual = !acceptQuals.isEmpty
                                     ScrollView(.horizontal, showsIndicators: false) {
                                         HStack(spacing: 8) {
                                             ForEach(quals, id: \.self) { q in
@@ -980,11 +1002,15 @@ struct DayIntentEditor: View {
                                                 Button {
                                                     if on { acceptQuals.remove(q) } else { acceptQuals.insert(q) }
                                                 } label: {
-                                                    Text(q).font(.dsBadge)
+                                                    HStack(spacing: 3) {
+                                                        if on { Image(systemName: "checkmark").font(.system(size: 9, weight: .bold)) }
+                                                        Text(q).font(.dsBadge)
+                                                    }
                                                         .padding(.horizontal, 10).padding(.vertical, 6)
-                                                        .background(on ? AppColor.primary.opacity(DS.pillFill) : Color(.tertiarySystemFill),
+                                                        .background(scopePillFill(on: on, anySelected: anyQual),
                                                                     in: RoundedRectangle(cornerRadius: DS.pillRadius, style: .continuous))
-                                                        .foregroundStyle(on ? AppColor.primary : Color.secondary)
+                                                        .foregroundStyle(scopePillText(on: on, anySelected: anyQual))
+                                                        .opacity(anyQual && !on ? 0.5 : 1)
                                                 }
                                                 .buttonStyle(.plain)
                                             }
@@ -1052,20 +1078,24 @@ struct DayIntentEditor: View {
                     }
                 }
             }
+            .disabled(readOnly)   // past day → view-only; all pickers/buttons inert (Cancel stays in the toolbar)
             .navigationTitle(prettyDate)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") { Task { await save() } }.disabled(saving)
+                ToolbarItem(placement: .cancellationAction) { Button(readOnly ? "Done" : "Cancel") { dismiss() } }
+                if !readOnly {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Save") { Task { await save() } }.disabled(saving)
+                    }
                 }
             }
             // Load ONCE — the Info tab re-fires .onAppear each time you switch back to it, which used to
             // overwrite your in-progress edits with the stored (default) values.
             .onAppear { if !loaded { load(); loaded = true } }
             // Persist when leaving the Info tab (e.g. switching to Trade List) so the store reflects your
-            // trade options BEFORE the Trade List recomputes — and nothing is lost on tab switch.
-            .onDisappear { persistOptions() }
+            // trade options BEFORE the Trade List recomputes — and nothing is lost on tab switch. Skipped for
+            // a read-only past day so we never rewrite its stored marks.
+            .onDisappear { if !readOnly { persistOptions() } }
         }
     }
 
@@ -1561,14 +1591,35 @@ struct ProfileSections: View {
     var body: some View {
         Group {
             Section {
-                TextField("e.g. \"😀 Happy to take weekend PMs\" — emojis welcome", text: Binding(
-                    get: { settings.statusBroadcast },
-                    set: { settings.statusBroadcast = String($0.prefix(140)) }), axis: .vertical)
-                    .lineLimit(1...3)
-                    .onSubmit { publishProfile() }
-                HStack { Spacer(); CharCounter(text: settings.statusBroadcast, limit: 140) }
+                // TextField + counter share ONE row/cell so the count sits under the field without a
+                // second bordered box.
+                VStack(alignment: .leading, spacing: 4) {
+                    TextField("e.g. \"😀 Happy to take weekend PMs\" — emojis welcome", text: Binding(
+                        get: { settings.statusBroadcast },
+                        set: { settings.statusBroadcast = String($0.prefix(140)) }), axis: .vertical)
+                        .lineLimit(1...3)
+                        .onSubmit { publishProfile() }
+                    HStack { Spacer(); CharCounter(text: settings.statusBroadcast, limit: 140) }
+                }
             } header: {
                 HStack(spacing: 6) { Text("Status"); InfoBubble(text: "A public one-liner shown to coworkers (140 chars). Emojis welcome.") }
+            }
+            // Private notes sits directly under Status but in its own section (its own box + header) so
+            // it's clearly separate and NOT part of the public status.
+            Section {
+                Button { editingNotes = true } label: {
+                    HStack(spacing: 8) {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            Text(settings.privateNotes.isEmpty ? "Tap to add private notes" : settings.privateNotes)
+                                .font(.subheadline)
+                                .foregroundStyle(settings.privateNotes.isEmpty ? .secondary : .primary)
+                                .lineLimit(1).fixedSize(horizontal: true, vertical: false).padding(.vertical, 2)
+                        }
+                        Image(systemName: "pencil").font(.caption).foregroundStyle(.secondary)
+                    }
+                }.buttonStyle(.plain)
+            } header: {
+                HStack(spacing: 6) { Text("Private notes"); InfoBubble(text: "Stored on your device only and never shared. Tap to edit; swipe to read.") }
             }
             Section {
                 if myQuals.isEmpty {
@@ -1584,21 +1635,6 @@ struct ProfileSections: View {
                 }
             } header: {
                 HStack(spacing: 6) { Text("Qualifications"); InfoBubble(text: "Your desk qualifications, read from the roster.") }
-            }
-            Section {
-                Button { editingNotes = true } label: {
-                    HStack(spacing: 8) {
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            Text(settings.privateNotes.isEmpty ? "Tap to add private notes" : settings.privateNotes)
-                                .font(.subheadline)
-                                .foregroundStyle(settings.privateNotes.isEmpty ? .secondary : .primary)
-                                .lineLimit(1).fixedSize(horizontal: true, vertical: false).padding(.vertical, 2)
-                        }
-                        Image(systemName: "pencil").font(.caption).foregroundStyle(.secondary)
-                    }
-                }.buttonStyle(.plain)
-            } header: {
-                HStack(spacing: 6) { Text("Private notes"); InfoBubble(text: "Stored on your device only and never shared. Tap to edit; swipe to read.") }
             }
         }
         .sheet(isPresented: $editingNotes) { PrivateNotesEditor() }

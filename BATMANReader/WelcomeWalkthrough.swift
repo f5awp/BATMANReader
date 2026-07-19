@@ -192,6 +192,7 @@ struct WelcomeWalkthrough: View {
 
     private var homeCard: some View {
         ScreenshotCard(
+            page: 1, current: index,
             title: "Everything from Home",
             subtitle: "Home does it all — your schedule, your intents, and the top-bar hubs: Trade Inbox, Channels & Messages, ECB Accounting, and a Compact view. It stays current automatically.",
             image: "wt-home",
@@ -204,6 +205,7 @@ struct WelcomeWalkthrough: View {
 
     private var compactCard: some View {
         ScreenshotCard(
+            page: 2, current: index,
             title: "Compact view when you want it",
             subtitle: "Tap the compact icon to switch to a continuous, denser calendar — more months at a glance for planning ahead. Same colors, same marks.",
             image: "wt-compact",
@@ -216,6 +218,7 @@ struct WelcomeWalkthrough: View {
 
     private var intentsCard: some View {
         ScreenshotCard(
+            page: 3, current: index,
             title: "Mark Your Intents",
             subtitle: "Choose what each day is: trade away, want to work, keep, or must-be-off. Keep and must-be-off are never crossed.",
             image: "wt-intents",
@@ -228,6 +231,7 @@ struct WelcomeWalkthrough: View {
 
     private var findsCard: some View {
         ScreenshotCard(
+            page: 10, current: index,
             title: "Find Trades Searches Further",
             subtitle: "Go beyond a single day — search the whole roster by complex intents, a date range, or ECB out. It shows only trades that pass every rule, best ones on top.",
             image: "wt-solutions",
@@ -278,6 +282,7 @@ struct WelcomeWalkthrough: View {
 
     private var respondCard: some View {
         ScreenshotCard(
+            page: 13, current: index,
             title: "Respond your way",
             subtitle: "Pick and choose right on the two calendars — keep just the days that work. The most optimal match comes first; alternate dates show up after.",
             image: "wt-package",
@@ -290,6 +295,7 @@ struct WelcomeWalkthrough: View {
 
     private var ecbCard: some View {
         ScreenshotCard(
+            page: 11, current: index,
             title: "Broadcast your ECB Requests",
             subtitle: "Give a shift away one-way for ECB credit — broadcast it to a first-come queue everyone can see and claim.",
             image: "wt-ecb-queue",
@@ -302,6 +308,7 @@ struct WelcomeWalkthrough: View {
 
     private var ledgerCard: some View {
         ScreenshotCard(
+            page: 6, current: index,
             title: "Track your ECB",
             subtitle: "The ledger keeps score — what's cleared, what's coming, and who owes whom.",
             image: "wt-ecb-ledger",
@@ -316,6 +323,7 @@ struct WelcomeWalkthrough: View {
 
     private var tradeOptionsCard: some View {
         ScreenshotCard(
+            page: 4, current: index,
             title: "Specify and Search By Day",
             subtitle: "Tune exactly how a day trades — Day-for-Day or ECB, an optional later pay date (IOU), and what you'll accept back by shift type, qual, or date range — then search matches right here.",
             image: "wt-trade-options",
@@ -329,6 +337,7 @@ struct WelcomeWalkthrough: View {
 
     private var tradeListCard: some View {
         ScreenshotCard(
+            page: 5, current: index,
             title: "Match ⇄ Match",
             subtitle: "Matches are built specifically from your trade-option selections — so you see only the people who fit, strongest first, and propose right from the list.",
             image: "wt-tradelist",
@@ -341,6 +350,7 @@ struct WelcomeWalkthrough: View {
 
     private var dispatcherCard: some View {
         ScreenshotCard(
+            page: 12, current: index,
             title: "Find a Dispatcher",
             subtitle: "Look anyone up and see all their info — quals, contact, seniority. Then find trades with just them, or send a direct message.",
             image: "wt-dispatcher",
@@ -353,6 +363,7 @@ struct WelcomeWalkthrough: View {
 
     private var channelsCard: some View {
         ScreenshotCard(
+            page: 7, current: index,
             title: "Channels & Messages",
             subtitle: "Talk to the whole group in channels, or direct-message your fellow dispatchers about a trade — or anything else.",
             image: "wt-channels",
@@ -543,29 +554,44 @@ struct WelcomeWalkthrough: View {
 // MARK: - Screenshot card with percentage-anchored callouts
 
 private struct ScreenshotCard: View {
+    let page: Int
+    let current: Int
     let title: String
     let subtitle: String
     let image: String
     let callouts: [Callout]
+
+    // The .page TabView builds every page up front. Each screenshot is a full-res JPEG (~14 MB decoded),
+    // so decoding all ~10 at once was the source of the lag. Decode only the visible page and its immediate
+    // neighbours; the rest render a cheap placeholder of the same aspect ratio (no layout jump on swipe).
+    private var showImage: Bool { abs(page - current) <= 1 }
+    private static let aspect: CGFloat = 1290.0 / 2796.0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(title).font(.system(size: 22, weight: .heavy)).foregroundColor(WT.text)
             Text(subtitle).font(.system(size: 13.5)).lineSpacing(2.5).foregroundColor(WT.dim)
             GeometryReader { _ in
-                Image(image)
-                    .resizable().scaledToFit()
-                    .clipShape(RoundedRectangle(cornerRadius: 16))
-                    .overlay(RoundedRectangle(cornerRadius: 16).stroke(WT.stroke, lineWidth: 1))
-                    .overlay(
-                        GeometryReader { geo in
-                            ForEach(callouts) { c in
-                                dot(c.id)
-                                    .position(x: geo.size.width * c.x, y: geo.size.height * c.y)
+                if showImage {
+                    Image(image)
+                        .resizable().scaledToFit()
+                        .clipShape(RoundedRectangle(cornerRadius: 16))
+                        .overlay(RoundedRectangle(cornerRadius: 16).stroke(WT.stroke, lineWidth: 1))
+                        .overlay(
+                            GeometryReader { geo in
+                                ForEach(callouts) { c in
+                                    dot(c.id)
+                                        .position(x: geo.size.width * c.x, y: geo.size.height * c.y)
+                                }
                             }
-                        }
-                    )
-                    .frame(maxWidth: .infinity)
+                        )
+                        .frame(maxWidth: .infinity)
+                } else {
+                    RoundedRectangle(cornerRadius: 16).fill(WT.card)
+                        .aspectRatio(Self.aspect, contentMode: .fit)
+                        .overlay(RoundedRectangle(cornerRadius: 16).stroke(WT.stroke, lineWidth: 1))
+                        .frame(maxWidth: .infinity)
+                }
             }
             VStack(alignment: .leading, spacing: 7) {
                 ForEach(callouts) { c in

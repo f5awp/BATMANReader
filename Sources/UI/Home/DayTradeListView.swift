@@ -25,15 +25,21 @@ struct DayDetailSheet: View {
             || DayIntentStore.shared.offIntent(forDay: target.dayID) == .mustBeOff
     }
 
+    /// A day that has already passed can't be traded — no Trade List, and the Info editor is read-only.
+    private var pastDay: Bool {
+        guard let d = TradeMatcher.dayDate(fromISO: target.dayID) else { return false }
+        return d < Calendar.current.startOfDay(for: Date())
+    }
+
     var body: some View {
         // The Info tab is always present (stable identity, so its editor keeps its in-progress state); the
         // Trade List tab is conditional on the LIVE intent. Because the intent pickers write to the store
         // immediately, changing a Keep/Blackout day to a tradeable intent makes the Trade List tab appear
         // right away — no Save, no dismiss, no re-entering.
         TabView(selection: $tab) {
-            DayIntentEditor(target: target)
+            DayIntentEditor(target: target, readOnly: pastDay)
                 .tabItem { Label("Info", systemImage: "info.circle") }.tag(Tab.info)
-            if !protectedDay {
+            if !protectedDay && !pastDay {
                 // Tab-gated: the Trade List only computes/loads once its tab is actually selected.
                 DayTradeListPane(target: target, isActive: tab == .tradeList)
                     .tabItem { Label("Trade List", systemImage: "arrow.left.arrow.right") }.tag(Tab.tradeList)
@@ -103,30 +109,31 @@ struct DayTradeListPane: View {
                     Text("Flags this day with a blue “!” in its top-left corner so it's easy to spot, and keeps it front-and-center in your daily summary. New and existing matches roll up in your periodic Match Summary (Settings › Notifications). The orange disc on a date means a match already exists there.")
                 }
 
-                if loading {
-                    Section { HStack { Spacer(); ProgressView(); Spacer() } }
-                } else {
-                    filterBar
-                    Section {
-                        if shownPackages.isEmpty {
+                if !loading { filterBar }
+                Section {
+                    // Empty text only once loading has settled — the overlay owns the "in flight" state so the
+                    // spinner is reliable (the old inline list-row spinner sometimes didn't render).
+                    if shownPackages.isEmpty {
+                        if !loading {
                             emptyRow(packages.isEmpty
                                      ? (target.isOff ? "No swaps found to pick up this day." : "No swaps found for this day.")
                                      : "No swaps match that date range.")
-                        } else {
-                            ForEach(shownPackages) { pkg in
-                                CompactSwapCard(package: pkg,
-                                                onPropose: { p in Task { await propose(p) } },
-                                                onOpen: { detailPackage = pkg })
-                                    .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
-                                    .listRowBackground(Color.clear)
-                            }
                         }
-                    } header: {
-                        Label(target.isOff ? "Shifts you can pick up" : "Who could work this day",
-                              systemImage: target.isOff ? "tray.and.arrow.down" : "hand.raised")
-                    } footer: { radarStamp }
-                }
+                    } else {
+                        ForEach(shownPackages) { pkg in
+                            CompactSwapCard(package: pkg,
+                                            onPropose: { p in Task { await propose(p) } },
+                                            onOpen: { detailPackage = pkg })
+                                .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
+                                .listRowBackground(Color.clear)
+                        }
+                    }
+                } header: {
+                    Label(target.isOff ? "Shifts you can pick up" : "Who could work this day",
+                          systemImage: target.isOff ? "tray.and.arrow.down" : "hand.raised")
+                } footer: { if !loading { radarStamp } }
             }
+            .loadingOverlay(loading, label: "Finding trades…")
             .navigationTitle(prettyDate)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

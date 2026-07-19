@@ -29,8 +29,11 @@ struct TradesView: View {
                     .padding(.horizontal).padding(.top, 6).padding(.bottom, 8)   // cushion below the top bar
 
                 if segment == 0 {
+                    // The intent-match count belongs to Complex Intents (it's the marked-intent solutions),
+                    // so it rides that sub-tab's label rather than the parent Find Trades toggle.
                     Picker("Find mode", selection: $findMode) {
-                        Text("Complex Intents").tag(2)   // leftmost
+                        Text(feedCache.intentMatchCount > 0 ? "Complex Intents (\(feedCache.intentMatchCount))"
+                                                            : "Complex Intents").tag(2)   // leftmost
                         Text("Date Range").tag(0)        // default selection
                         Text("ECB").tag(1)
                     }

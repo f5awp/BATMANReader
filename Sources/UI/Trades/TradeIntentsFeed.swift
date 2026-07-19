@@ -129,10 +129,13 @@ struct TradeByIntentsFeed: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
                 if !loading {
+                    // Complex Intents runs ONLY on the explicit Search button (below). Filter changes just
+                    // update state — shift/qual filter the shown results client-side, and depth/dates/connection
+                    // apply on the next Search tap — so dismissing a filter no longer auto-fires a heavy search.
                     FindTradesFilterBar(filter: $searchFilter, deeper: $deeper, people: rosterPeople,
                                         availableQuals: SettingsManager.shared.cachedQuals.filter(DispatcherDirectory.isQualCode).sorted(),
                                         searchShiftCount: max(1, DayIntentStore.shared.seekingDayIDs.count),
-                                        onApply: { runSearch { await runCurrentDepth() } })
+                                        onApply: {})
                     // Mutual = both sides marked (true intent matches). All = also one-sided deals where
                     // an ACTIVE peer could take days you marked. Robots/inactives are excluded in both.
                     DXSegmented(selection: $mutualOnly, options: [.init(true, "Mutual"), .init(false, "All")],
