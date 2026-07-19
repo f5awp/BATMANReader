@@ -726,10 +726,8 @@ enum TradeRouter {
         guard !giveDayIDs.isEmpty else { return nil }
         let ctx = await MatchContext.build(selfID: selfID)
         let myProfile = TradeProfileStore.shared.myProfile()
-        let myBookendsOnly = myProfile.opennessLevel == .bookends
         let mySeeking = DayIntentStore.shared.seekingDayIDs
-        let myWantToWork = DayIntentStore.shared.wantToWorkDayIDs
-        let maps = ctx.maps, priors = ctx.priors, qualsDict = ctx.qualsDict
+        let maps = ctx.maps
         let profile = ctx.profile(for: workerID, name: name)
 
         func wouldTake(_ prof: TradeProfile, _ leg: TwoWayLeg) -> Bool {
@@ -749,28 +747,17 @@ enum TradeRouter {
             myProfile: myProfile, theirProfile: profile, ignoreOwnBlacklist: true,
             peerCoverSoftGates: false,
             myEntries: ctx.mineEntries, peerEntries: Array((maps[workerID] ?? [:]).values))
-        _ = myBookendsOnly
 
-        // "You give" = my days the peer could work, in honest tier/soonest order (modelRankedLegs). Only when
-        // the peer is a REAL configured account do we float the days their published prefs accept to the top —
-        // an unconfigured peer's fabricated Bookends-Only default would otherwise scramble the order.
-        let giveRanked = modelRankedLegs(
-            plan.iGive.filter { giveDayIDs.contains($0.dayID) },
-            giverID: selfID, receiverID: workerID, maps: maps, quals: qualsDict, priors: priors,
-            start: ctx.start, selfID: selfID, mySeeking: mySeeking, myWantToWork: myWantToWork,
-            profilesByID: ctx.profilesByID)
-        let peerConfigured = TradeProfileStore.shared.isActiveAccount(workerID)
-        let canTake: [String] = peerConfigured
-            ? (giveRanked.filter { wouldTake(profile, $0) } + giveRanked.filter { !wouldTake(profile, $0) }).map(\.dayID)
-            : giveRanked.map(\.dayID)
-
-        // "You get" = the peer's days I could work; days MY prefs accept rank first (one-way beneficial → me).
-        let getRanked = modelRankedLegs(
-            plan.iTake,
-            giverID: workerID, receiverID: selfID, maps: maps, quals: qualsDict, priors: priors,
-            start: ctx.start, selfID: selfID, mySeeking: mySeeking, myWantToWork: myWantToWork,
-            profilesByID: ctx.profilesByID)
-        let givesBack = (getRanked.filter { wouldTake(myProfile, $0) } + getRanked.filter { !wouldTake(myProfile, $0) }).map(\.dayID)
+        // Rank BOTH "You give" and "You get" by MY preferences (soft gate): days that fit my prefs (openness /
+        // bookend / blacklisted quals·shift types·weekends) come first, the rest behind — each group tie-broken
+        // by SOONEST. Nothing is filtered out; prefs only set the order.
+        func prefSorted(_ legs: [TwoWayLeg]) -> [String] {
+            let fit  = legs.filter { wouldTake(myProfile, $0) }.sorted { $0.dayID < $1.dayID }
+            let rest = legs.filter { !wouldTake(myProfile, $0) }.sorted { $0.dayID < $1.dayID }
+            return (fit + rest).map(\.dayID)
+        }
+        let canTake   = prefSorted(plan.iGive.filter { giveDayIDs.contains($0.dayID) })
+        let givesBack = prefSorted(plan.iTake)
 
         // Largest balanced k-for-k. Each side is pref-first, so the default pick is the mutually-good swap;
         // the ranked alternates below it degrade to one-way, then physical-only.
