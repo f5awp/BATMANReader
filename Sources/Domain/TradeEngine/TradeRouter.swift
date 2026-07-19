@@ -1424,12 +1424,11 @@ enum TradeRouter {
     /// THE ONE universal option-ranker (U-OBJ). Every option list — Trade Solutions give-backs, the
     /// dispatcher Find Trades swap, the Intents marketplace — orders days by the SAME rule:
     ///   1. `TradeScore.displayTier` (the intent/bookend band — keeps intents highest + groups the `|` dividers)
-    ///   2. `TradeScore.legProb` within a band (the full per-leg model: both intents, bookend, soonest, qual,
-    ///      ECB, learned partner prior)
-    ///   3. soonest, as a deterministic final tiebreak
-    /// `capUnpreferred` soft-limits the bottom band (tier 3) to N days (used by the exploratory single-peer
-    /// view so physically-feasible-but-unwanted days don't flood the list). Returns the ordered legs with a
-    /// PARALLEL tier array for the divider UI.
+    ///   2. SOONEST within a band (an equally-good earlier day is never buried under a later one)
+    /// The band itself is derived from the full per-leg model (`legFeatures`: both intents, bookend, qual,
+    /// ECB, learned prior), so the model still decides WHICH band a day lands in — recency only orders inside
+    /// a band. `capUnpreferred` soft-limits the bottom band (tier 3) to N days (exploratory single-peer view).
+    /// Returns the ordered legs with a PARALLEL tier array for the divider UI.
     // `private`: the signature uses the file-private `DayMap` typealias, so it can't be internal.
     nonisolated private static func rankLegs(_ legs: [TwoWayLeg], giverID: String, receiverID: String,
                                              maps: [String: DayMap], quals: [String: [String]],
@@ -1437,17 +1436,16 @@ enum TradeRouter {
                                              mySeeking: Set<String>, myWantToWork: Set<String>,
                                              profilesByID: [String: TradeProfile],
                                              capUnpreferred: Int? = nil) -> (legs: [TwoWayLeg], tiers: [Int]) {
-        let scored = legs.map { l -> (leg: TwoWayLeg, tier: Int, prob: Double) in
+        let scored = legs.map { l -> (leg: TwoWayLeg, tier: Int) in
             let f = legFeatures(giverID: giverID, receiverID: receiverID, day: l.dayID, desk: l.desk,
                                 receiverQuals: quals[receiverID] ?? [], maps: maps, priors: priors,
                                 selfID: selfID, start: start, mySeeking: mySeeking, myWantToWork: myWantToWork,
                                 profilesByID: profilesByID)
-            return (l, TradeScore.displayTier(f), TradeScore.legProb(f))
+            return (l, TradeScore.displayTier(f))
         }
         let sorted = scored.sorted { a, b in
             if a.tier != b.tier { return a.tier < b.tier }        // intents highest, groups dividers
-            if a.prob != b.prob { return a.prob > b.prob }         // full model within a band
-            return a.leg.dayID < b.leg.dayID                       // soonest, deterministic
+            return a.leg.dayID < b.leg.dayID                       // within a band: SOONEST first
         }
         var outLegs: [TwoWayLeg] = [], outTiers: [Int] = [], unpref = 0
         for s in sorted {
