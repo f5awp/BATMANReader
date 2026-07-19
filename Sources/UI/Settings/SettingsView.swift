@@ -213,6 +213,9 @@ struct SettingsView: View {
             DXIconRow(icon: "checkmark.bubble.fill", tint: AppColor.pending, title: "Responses to your trades") {
                 Toggle("", isOn: $settings.notifyTradeResponses).labelsHidden().tint(AppColor.success)
             }
+            DXIconRow(icon: "banknote.fill", tint: AppColor.pending, title: "ECB ledger updates") {
+                Toggle("", isOn: $settings.notifyECB).labelsHidden().tint(AppColor.success)
+            }
         } header: {
             infoHeader("Trade Notifications", "Server pushes (arrive even when the app is closed, needs iCloud sync on): a coworker's radar auto-matching one of your days, a manual request / ECB offer to you, a qual-swap request, and when someone accepts/declines/counters a trade of yours.")
         }
@@ -220,6 +223,7 @@ struct SettingsView: View {
         .onChange(of: settings.notifyTradeRequests) { _, _ in Task { await CloudPush.setup() }; publishPrefs() }
         .onChange(of: settings.notifyQualSwap) { _, _ in Task { await CloudPush.setup() }; publishPrefs() }
         .onChange(of: settings.notifyTradeResponses) { _, _ in Task { await CloudPush.setup() }; publishPrefs() }
+        .onChange(of: settings.notifyECB) { _, _ in Task { await CloudPush.setup() }; publishPrefs() }
 
         // Periodic match summary (local).
         Section {

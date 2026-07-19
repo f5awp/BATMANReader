@@ -2288,29 +2288,47 @@ struct ECBAccountingView: View {
     @ViewBuilder private func row(_ e: ECBEntry) -> some View {
         let signed = ECBAccounting.signedAmount(for: myID, e)
         let pending = e.isShared && e.state != .confirmed
+        let conflicted = store.isConflicted(e.id)
         // §9: leading tinted icon TILE — primary (trade) / danger (withdrawal) / success (credit).
         let tint: Color = e.isShared ? AppColor.primary : (signed < 0 ? AppColor.danger : AppColor.success)
-        HStack(spacing: 10) {
-            Image(systemName: e.category.symbol)
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(tint)
-                .frame(width: 26, height: 26)
-                .background(tint.opacity(0.15), in: RoundedRectangle(cornerRadius: DS.controlRadius, style: .continuous))
-            VStack(alignment: .leading, spacing: 1) {
-                Text(e.isShared ? "Trade · \(e.counterpartyName(myID: myID) ?? "dispatcher")" : e.category.label)
-                    .font(.subheadline.weight(.semibold)).lineLimit(1)
-                Text(subtitle(e)).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 10) {
+                Image(systemName: e.category.symbol)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(tint)
+                    .frame(width: 26, height: 26)
+                    .background(tint.opacity(0.15), in: RoundedRectangle(cornerRadius: DS.controlRadius, style: .continuous))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(e.isShared ? "Trade · \(e.counterpartyName(myID: myID) ?? "dispatcher")" : e.category.label)
+                        .font(.subheadline.weight(.semibold)).lineLimit(1)
+                    Text(subtitle(e)).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                }
+                Spacer(minLength: 6)
+                VStack(alignment: .trailing, spacing: 1) {
+                    Text("\(signed >= 0 ? "+" : "−")\(ecbText(abs(signed)))")
+                        .font(.subheadline.weight(.bold).monospacedDigit())
+                        .foregroundStyle(signed < 0 ? AppColor.danger : AppColor.success)
+                    statusChip(e)
+                }
             }
-            Spacer(minLength: 6)
-            VStack(alignment: .trailing, spacing: 1) {
-                Text("\(signed >= 0 ? "+" : "−")\(ecbText(abs(signed)))")
-                    .font(.subheadline.weight(.bold).monospacedDigit())
-                    .foregroundStyle(signed < 0 ? AppColor.danger : AppColor.success)
-                statusChip(e)
+            // CONFLICT: the other dispatcher removed this shared line but it still lives in your ledger. Don't
+            // auto-delete (could lose a just-created line) — flag it and let the user resolve.
+            if conflicted {
+                HStack(spacing: 10) {
+                    Label("Conflict — the other dispatcher removed this line", systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption2.weight(.semibold)).foregroundStyle(AppColor.danger).lineLimit(2)
+                    Spacer(minLength: 0)
+                    Button("Remove") { store.resolveConflictRemove(id: e.id) }
+                        .font(.caption2.weight(.bold)).buttonStyle(.borderless).tint(AppColor.danger)
+                    Button("Re-send") { store.resolveConflictReassert(id: e.id) }
+                        .font(.caption2.weight(.bold)).buttonStyle(.borderless).tint(AppColor.primary)
+                }
+                .padding(8)
+                .background(AppColor.danger.opacity(DS.pillFill), in: RoundedRectangle(cornerRadius: DS.rowRadius, style: .continuous))
             }
         }
         // A force-through'd line reads as active in YOUR ledger (full opacity), not dimmed like a true pending.
-        .opacity(pending && !store.isForcedThrough(e.id) ? 0.6 : 1)
+        .opacity(pending && !store.isForcedThrough(e.id) && !conflicted ? 0.6 : 1)
     }
 
     /// Right-aligned status under the amount: confirmation state first, else cleared vs scheduled.
@@ -2364,6 +2382,7 @@ struct ECBAddSheet: View {
     @State private var payDate = Date()         // effective / pay date this line posts
     @State private var alreadyPosted = false    // add/subtract that already hit the balance → cleared now
     @State private var overCapacity = false     // IOU/trade exceeds what I can promise
+    @State private var capOverage: Double? = nil // credit/trade-in would breach the 144 cap (withdraw first)
     // Trade
     @State private var dispatchers: [(id: String, name: String)] = []
     @State private var counterpartyID = ""
@@ -2442,6 +2461,11 @@ struct ECBAddSheet: View {
             } message: {
                 Text("You can only trade/IOU up to \(ecbText(store.payableCapacity)) ECB — your cleared balance plus scheduled deposits. Log the deposit first, or lower the amount.")
             }
+            .alert("Over the 144 cap", isPresented: Binding(get: { capOverage != nil }, set: { if !$0 { capOverage = nil } })) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text("This would put you \(ecbText(capOverage ?? 0)) over the 144 ECB cap. Record a withdrawal (Subtract) with its pay date first, then add this.")
+            }
             .task { await loadDispatchers(); preload() }
         }
     }
@@ -2500,10 +2524,19 @@ struct ECBAddSheet: View {
             return true
         }
         switch mode {
-        case .add:      store.addPersonal(category: creditCat, magnitude: amount, memo: memo, date: payDate, cleared: alreadyPosted)
+        case .add:
+            let over = store.overageIfReceiving(amount)   // a credit that would breach the 144 cap
+            if over > 0 { capOverage = over; return false }
+            store.addPersonal(category: creditCat, magnitude: amount, memo: memo, date: payDate, cleared: alreadyPosted)
         case .subtract: store.addPersonal(category: debitCat, magnitude: amount, memo: memo, date: payDate, cleared: alreadyPosted)
-        case .setBalance: store.setBalance(to: target, date: Date())
+        case .setBalance:
+            if !store.setBalance(to: target, date: Date()) { capOverage = max(0, target - ECBAccounting.maxBalance); return false }
         case .trade:
+            // Receiving side (they pay me): a trade-in that would breach the cap needs a withdrawal first.
+            if !iPaid {
+                let over = store.overageIfReceiving(amount)
+                if over > 0 { capOverage = over; return false }
+            }
             let name = dispatchers.first { $0.id == counterpartyID }?.name ?? counterpartyID
             if !store.addTradeLine(counterpartyID: counterpartyID, counterpartyName: name,
                                    magnitude: amount, iPaid: iPaid, memo: memo, date: payDate) {

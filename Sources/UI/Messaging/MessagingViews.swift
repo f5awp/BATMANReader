@@ -1020,6 +1020,7 @@ struct ThreadView: View {
     @State private var pendingImage: UIImage?
     @State private var showCalendars = false           // 4100a: multi-person card → two-calendar view
     @State private var counterTarget: TradeRequest?    // "Counter" on a counter card → open its thread's picker
+    @State private var ecbCapOverage: Double?          // accepting this ECB would breach the 144 cap
     @Environment(\.dismiss) private var dismiss
 
     init(request: TradeRequest) { self.request = request }
@@ -1399,7 +1400,11 @@ struct ThreadView: View {
                             get: { ecbSelectedDays.contains(d) },
                             set: { on in if on { ecbSelectedDays.insert(d) } else { ecbSelectedDays.remove(d) } }))
                     }
-                    Button { Task { await store.acceptECB(request, days: Array(ecbSelectedDays)); ecbSelectedDays = [] } } label: {
+                    Button {
+                        let over = ECBAccountingStore.shared.overageIfReceiving(request.ecbAmount ?? 0)
+                        if over > 0 { ecbCapOverage = over; return }
+                        Task { await store.acceptECB(request, days: Array(ecbSelectedDays)); ecbSelectedDays = [] }
+                    } label: {
                         Label("Accept selected", systemImage: "checkmark.circle.fill")
                     }
                     .tint(AppColor.success).disabled(ecbSelectedDays.isEmpty)
@@ -1426,7 +1431,11 @@ struct ThreadView: View {
                             if let iou = ecbIOUNote {
                                 Label(iou, systemImage: "clock.badge.checkmark").font(.caption).foregroundStyle(AppColor.pending)
                             }
-                            Button { Task { await store.acceptECB(request, days: request.giveDayIDs) } } label: {
+                            Button {
+                                let over = ECBAccountingStore.shared.overageIfReceiving(request.ecbAmount ?? 0)
+                                if over > 0 { ecbCapOverage = over; return }
+                                Task { await store.acceptECB(request, days: request.giveDayIDs) }
+                            } label: {
                                 Label("Accept for \(ecbText(request.ecbAmount ?? 0)) ECB (no swap)", systemImage: "checkmark.circle.fill")
                                     .frame(maxWidth: .infinity)
                             }
@@ -1454,6 +1463,11 @@ struct ThreadView: View {
         .navigationBarTitleDisplayMode(.inline)
         // "Counter" on a counter card → push the reciprocal request's own thread (its picker narrows further).
         .navigationDestination(item: $counterTarget) { ThreadView(request: $0) }
+        .alert("Over the 144 ECB cap", isPresented: Binding(get: { ecbCapOverage != nil }, set: { if !$0 { ecbCapOverage = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("Accepting this adds \(ecbText(request.ecbAmount ?? 0)) ECB and would put you \(ecbText(ecbCapOverage ?? 0)) over the 144 cap. Record an ECB withdrawal (with its pay date) in your ECB ledger first, then accept.")
+        }
         .alert("Edit message", isPresented: Binding(get: { editingMessage != nil }, set: { if !$0 { editingMessage = nil } })) {
             TextField("Message", text: $editMsgDraft)
             Button("Save") { if let m = editingMessage { Task { await store.editMessage(m, newText: editMsgDraft) } }; editingMessage = nil }
