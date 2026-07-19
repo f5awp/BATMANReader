@@ -295,6 +295,11 @@ enum ECBAccounting {
     static func wouldExceedCap(available: Double, clearing delta: Double) -> Bool {
         delta > 0 && available + delta > maxBalance + 0.0001
     }
+    /// Room left under the 144 cap on your PROJECTED balance — how much more ECB you can take on before you'd
+    /// eventually breach the cap. Never negative.
+    static func capHeadroom(_ entries: [ECBEntry], viewerID: String) -> Double {
+        max(0, maxBalance - projected(entries, viewerID: viewerID))
+    }
 
     /// How much you can still promise on an OUTGOING trade/IOU: your available (cleared) balance plus
     /// scheduled deposits not yet committed to other outgoing IOUs. Enforces "IOU only up to your
@@ -318,9 +323,18 @@ final class ECBAccountingStore {
     /// LOCAL ONLY — never published, so the shared record's real `state` (and the other dispatcher's ledger)
     /// is untouched. Treated as confirmed + cleared in MY balance math only. Reversible.
     private(set) var forcedThroughIDs: Set<String>
+    /// Shared lines that the counterparty DELETED from the shared record while they still live in MY ledger.
+    /// We don't auto-remove them (that could nuke an optimistic just-created line); instead they're flagged so
+    /// the register shows a conflict the user resolves. LOCAL-only, like `forcedThroughIDs`.
+    private(set) var conflictedIDs: Set<String>
+    /// Shared-line ids we've CONFIRMED present in the cloud at least once — the reference for "was deleted
+    /// remotely" (seen-before but now gone) vs "optimistic, not yet uploaded" (never seen).
+    private var cloudSeenIDs: Set<String>
     private static let key = "batman.v2.ecbLedger"
     private static let clockKey = "batman.v2.ecbLedgerUpdatedAt"
     private static let forcedKey = "batman.v2.ecbForcedThrough"
+    private static let conflictKey = "batman.v2.ecbConflicted"
+    private static let seenKey = "batman.v2.ecbCloudSeen"
     private var personalUpdatedAt: Date
     private let ecbCloud = CloudKitECBService()
     private let privateCloud = CloudKitPrivateStateService()
@@ -331,7 +345,28 @@ final class ECBAccountingStore {
         entries = (UserDefaults.standard.data(forKey: Self.key))
             .flatMap { try? JSONDecoder().decode([ECBEntry].self, from: $0) } ?? []
         forcedThroughIDs = Set(UserDefaults.standard.stringArray(forKey: Self.forcedKey) ?? [])
+        conflictedIDs = Set(UserDefaults.standard.stringArray(forKey: Self.conflictKey) ?? [])
+        cloudSeenIDs = Set(UserDefaults.standard.stringArray(forKey: Self.seenKey) ?? [])
         personalUpdatedAt = (UserDefaults.standard.object(forKey: Self.clockKey) as? Date) ?? .distantPast
+    }
+
+    func isConflicted(_ id: String) -> Bool { conflictedIDs.contains(id) }
+    private func saveConflicted() { UserDefaults.standard.set(Array(conflictedIDs), forKey: Self.conflictKey) }
+    private func saveSeen() { UserDefaults.standard.set(Array(cloudSeenIDs), forKey: Self.seenKey) }
+
+    /// Resolve a conflicted line by ACCEPTING the counterparty's removal — delete it from my ledger too.
+    func resolveConflictRemove(id: String) {
+        entries.removeAll { $0.id == id }
+        conflictedIDs.remove(id); cloudSeenIDs.remove(id); forcedThroughIDs.remove(id)
+        saveConflicted(); saveSeen()
+        UserDefaults.standard.set(Array(forcedThroughIDs), forKey: Self.forcedKey)
+    }
+    /// Resolve a conflicted line by RE-ASSERTING it — re-publish to the shared record so it comes back for both.
+    func resolveConflictReassert(id: String) {
+        guard let i = entries.firstIndex(where: { $0.id == id }) else { return }
+        conflictedIDs.remove(id); saveConflicted()
+        entries[i].state = .pendingOutgoing; entries[i].updatedAt = Date()   // re-propose for the counterparty
+        publishShared(entries[i])
     }
 
     // MARK: Derived
@@ -354,6 +389,16 @@ final class ECBAccountingStore {
     var owed: Double { ECBAccounting.owed(effectiveEntries, myID: myID) }
     /// How much you can still promise on an outgoing trade/IOU (cleared + uncommitted scheduled deposits).
     var payableCapacity: Double { ECBAccounting.payableCapacity(effectiveEntries, myID: myID) }
+    /// Room left under the 144 cap on your projected balance (how much ECB you can still take on).
+    var capHeadroom: Double { ECBAccounting.capHeadroom(effectiveEntries, viewerID: myID) }
+    /// How far OVER the 144 cap you'd be if you received `amount` more ECB (0 = it fits). Drives the
+    /// "withdraw first" prompt before accepting an incoming ECB trade.
+    func overageIfReceiving(_ amount: Double) -> Double { max(0, projected + amount - ECBAccounting.maxBalance) }
+    /// Record an ECB withdrawal (a debit) to make room under the cap. Scheduled by default (posts on `date`);
+    /// even scheduled it reduces PROJECTED, so it frees headroom immediately for the cap check.
+    func addWithdrawal(magnitude: Double, memo: String = "Withdrawal", date: Date, cleared: Bool = false) {
+        addPersonal(category: .withdrawal, magnitude: abs(magnitude), memo: memo, date: date, cleared: cleared)
+    }
 
     // MARK: Force-through (own-ledger only)
     /// Count a still-unconfirmed shared line in YOUR OWN balances now (confirmed + cleared for you). LOCAL
@@ -383,13 +428,17 @@ final class ECBAccountingStore {
         publishPersonal()
     }
     /// "Set my available balance to X" → a CLEARED Adjustment line carrying the delta (a correction to
-    /// what's posted right now, so it counts immediately toward Available).
-    func setBalance(to target: Double, date: Date) {
+    /// what's posted right now, so it counts immediately toward Available). The 144 cap is HARD: a target
+    /// above it is rejected (returns false) so the register can never be set over the ceiling.
+    @discardableResult
+    func setBalance(to target: Double, date: Date) -> Bool {
+        guard target <= ECBAccounting.maxBalance + 0.0001 else { return false }   // cap is followed
         let delta = ECBAccounting.adjustmentAmount(current: available, target: target)
-        guard abs(delta) > 0.0001 else { return }
+        guard abs(delta) > 0.0001 else { return true }
         entries.append(ECBEntry(date: date, amount: delta, category: .adjustment,
                                 memo: "Balance set to \(ecbText(target))", cleared: true))
         publishPersonal()
+        return true
     }
     /// Mark a scheduled line as posted (pay day happened / IOU received). Blocked if it would push the
     /// AVAILABLE balance over 144 — the user must add a withdrawal first. Returns false when blocked.
@@ -523,7 +572,26 @@ final class ECBAccountingStore {
             Task { await privateCloud.publishECB(json, updatedAt: at) }   // local newer → push
         }
         var byID = Dictionary(localShared.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
-        for e in shared { byID[e.id] = e }   // cloud wins per id
+        // #6 LWW: cloud wins per id ONLY when its `updatedAt` is at least as new as my local copy — a newer
+        // local edit (not yet published) is preserved instead of being clobbered by a stale fetch.
+        for e in shared {
+            if let local = byID[e.id], local.updatedAt > e.updatedAt { continue }
+            byID[e.id] = e
+        }
+        // #1 conflict + #5 auto-unforce — only when the fetch really returned records (not a keep-cache fallback).
+        if !remoteShared.isEmpty {
+            let cloudIDs = Set(remoteShared.map(\.id))
+            for e in localShared where cloudSeenIDs.contains(e.id) && !cloudIDs.contains(e.id) {
+                conflictedIDs.insert(e.id)   // was in the cloud before, now gone → the counterparty deleted it
+            }
+            for e in remoteShared {
+                conflictedIDs.remove(e.id)                                    // present again → resolved
+                if e.state == .confirmed { forcedThroughIDs.remove(e.id) }    // #5: real now → drop force-through
+            }
+            cloudSeenIDs.formUnion(cloudIDs)
+            saveConflicted(); saveSeen()
+            UserDefaults.standard.set(Array(forcedThroughIDs), forKey: Self.forcedKey)
+        }
         entries = personal + Array(byID.values)
     }
 

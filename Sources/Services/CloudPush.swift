@@ -46,6 +46,14 @@ enum CloudPush {
                    recordType: "TradeResponse",
                    predicate: NSPredicate(format: "notifyID == %@", myID),
                    alert: "Someone responded to your trade")
+        // A SHARED ECB ledger line involving you was created / confirmed / cleared / REMOVED by the other
+        // dispatcher — fires on all three so a decline (delete) reaches you too. The app re-syncs on foreground
+        // (ContentView scenePhase → ECBAccountingStore.syncOnLaunch), reconciling balance + any conflict flag.
+        await gate(s.notifyECB, id: "ecb-line-\(myID)",
+                   recordType: "ECBLedgerLine",
+                   predicate: NSPredicate(format: "payerID == %@ OR payeeID == %@", myID, myID),
+                   alert: "Your ECB ledger was updated",
+                   options: [.firesOnRecordCreation, .firesOnRecordUpdate, .firesOnRecordDeletion])
         // Qual-swap: a bridge blast to me, or an update (a bridge accepted / it finalized) on my qual-swap.
         await gate(s.notifyQualSwap, id: "qualswap-bridge-\(myID)",
                    recordType: "TradeRequest",

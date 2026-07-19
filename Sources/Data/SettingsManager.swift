@@ -315,6 +315,9 @@ final class SettingsManager {
     var notifyQualSwap: Bool { didSet { defaults.set(notifyQualSwap, forKey: Keys.notifyQualSwap) } }
     /// Server push when someone RESPONDS to a request/offer of yours (accept / decline / counter). Default ON.
     var notifyTradeResponses: Bool { didSet { defaults.set(notifyTradeResponses, forKey: Keys.notifyTradeResponses) } }
+    /// Server push when a SHARED ECB ledger line involving you is created / confirmed / cleared / removed by the
+    /// other dispatcher (so your balance stays in sync). Default ON.
+    var notifyECB: Bool { didSet { defaults.set(notifyECB, forKey: Keys.notifyECB) } }
     /// Periodic LOCAL summary of auto-match + suggested counts per date (replaces per-watched-day pings). Default ON.
     var matchSummaryEnabled: Bool { didSet { defaults.set(matchSummaryEnabled, forKey: Keys.matchSummaryEnabled) } }
     /// How often (hours) the match summary fires. Default 6.
@@ -390,6 +393,7 @@ final class SettingsManager {
         notifyTradeRequests      = (defaults.object(forKey: Keys.notifyTradeRequests) as? Bool) ?? true
         notifyQualSwap           = (defaults.object(forKey: Keys.notifyQualSwap) as? Bool) ?? true
         notifyTradeResponses     = (defaults.object(forKey: Keys.notifyTradeResponses) as? Bool) ?? true
+        notifyECB                = (defaults.object(forKey: Keys.notifyECB) as? Bool) ?? true
         matchSummaryEnabled      = (defaults.object(forKey: Keys.matchSummaryEnabled) as? Bool) ?? true
         matchSummaryIntervalHours = (defaults.object(forKey: Keys.matchSummaryInterval) as? Int) ?? 6
         normalMaxPeople          = (defaults.object(forKey: Keys.normalMaxPeople) as? Int) ?? 3   // default: pairs + 3-way
@@ -439,6 +443,7 @@ final class SettingsManager {
         static let notifyChannel = "batman.notifyChannelPosts"
         static let notifyMentions = "batman.notifyMentions"
         static let notifyAutoMatch = "batman.notifyAutoMatch"
+        static let notifyECB = "batman.notifyECB"
         static let notifyTradeRequests = "batman.notifyTradeRequests"
         static let notifyQualSwap = "batman.notifyQualSwap"
         static let notifyTradeResponses = "batman.notifyTradeResponses"
