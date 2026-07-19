@@ -937,6 +937,7 @@ struct ThreadView: View {
     @State private var pickerItem: PhotosPickerItem?   // #28: photo attach on 1:1 chat
     @State private var pendingImage: UIImage?
     @State private var showCalendars = false           // 4100a: multi-person card → two-calendar view
+    @State private var counterTarget: TradeRequest?    // "Counter" on a counter card → open its thread's picker
     @Environment(\.dismiss) private var dismiss
 
     init(request: TradeRequest) { self.request = request }
@@ -1351,6 +1352,8 @@ struct ThreadView: View {
         .background(Color(.systemGroupedBackground))
         .navigationTitle("Swap with \(isIncoming ? request.fromName : request.toName)")
         .navigationBarTitleDisplayMode(.inline)
+        // "Counter" on a counter card → push the reciprocal request's own thread (its picker narrows further).
+        .navigationDestination(item: $counterTarget) { ThreadView(request: $0) }
         .alert("Edit message", isPresented: Binding(get: { editingMessage != nil }, set: { if !$0 { editingMessage = nil } })) {
             TextField("Message", text: $editMsgDraft)
             Button("Save") { if let m = editingMessage { Task { await store.editMessage(m, newText: editMsgDraft) } }; editingMessage = nil }
@@ -1556,6 +1559,11 @@ struct ThreadView: View {
                 Text("Accept").font(.caption.weight(.bold)).frame(maxWidth: .infinity).padding(.vertical, 7)
             }
             .buttonStyle(.borderedProminent).controlSize(.small).tint(AppColor.success)
+            // Counter-back: open the reciprocal request's own thread, whose picker narrows it further.
+            Button { counterTarget = counter } label: {
+                Text("Counter").font(.caption.weight(.bold)).frame(maxWidth: .infinity).padding(.vertical, 7)
+            }
+            .buttonStyle(.bordered).controlSize(.small).tint(AppColor.primary)
             Button(role: .destructive) {
                 Task { await store.respond(to: counter, status: .declined, note: "Declined the counter-offer.") }
             } label: {
