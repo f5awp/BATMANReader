@@ -45,6 +45,7 @@ extension MessagingStore {
         case .pending:              return ("Pending",  AppColor.pending)
         case .countered:            return ("Replied",  AppColor.primary)
         case .declined, .cancelled: return ("Declined", AppColor.danger)
+        case .expired:              return ("Expired",  AppColor.neutral)
         case .message:              return ("", AppColor.neutral)
         }
     }
@@ -67,6 +68,7 @@ extension TradeRequestStatus {
         case .declined:  return "xmark.circle.fill"
         case .countered: return "arrow.uturn.left.circle.fill"
         case .cancelled: return "slash.circle"
+        case .expired:   return "clock.badge.xmark"
         case .message:   return "bubble.left.fill"
         }
     }
@@ -77,6 +79,7 @@ extension TradeRequestStatus {
         case .declined:  return AppColor.danger
         case .countered: return AppColor.primary
         case .cancelled: return AppColor.neutral
+        case .expired:   return AppColor.neutral
         case .message:   return .secondary
         }
     }
@@ -598,15 +601,18 @@ struct InboxView: View {
     /// Intents / Search / Misc tabs: the usual sectioned request list, filtered to the active tab.
     @ViewBuilder private var requestList: some View {
         let arch = store.archivedRequestIDs
-        // Dedupe circular-loop legs to ONE representative card per loop (TRADE-INBOX Stage 3). Expired requests
-        // (deadline passed) drop out of the ACTIVE sections and fold into Archived — nothing can act on them.
+        // Dedupe circular-loop legs to ONE representative card per loop (TRADE-INBOX Stage 3). A request that
+        // EXPIRED while pending (first-class `.expired` status) drops out of the ACTIVE sections and folds into
+        // Archived — nothing can act on it. (Keyed on the STATUS, not raw `isExpired`, so an already-accepted
+        // trade whose deadline later passed stays put in Incoming/Sent.)
+        let expired: (TradeRequest) -> Bool = { store.status(of: $0) == .expired }
         let pending = MessagingStore.dedupeLoops(MessagingStore.active(store.pendingIncoming, archived: arch).filter(inTab))
-            .filter { !$0.isExpired }
+            .filter { !expired($0) }
         let handledIncoming = MessagingStore.dedupeLoops(MessagingStore.active(store.incoming, archived: arch)
-            .filter { store.status(of: $0) != .pending && inTab($0) && !$0.isExpired })
+            .filter { store.status(of: $0) != .pending && !expired($0) && inTab($0) })
         let sent = MessagingStore.dedupeLoops(MessagingStore.active(store.outgoing, archived: arch).filter(inTab))
-            .filter { !$0.isExpired }
-        let archived = MessagingStore.dedupeLoops(store.requests.filter { (arch.contains($0.id) || $0.isExpired) && inTab($0) })
+            .filter { !expired($0) }
+        let archived = MessagingStore.dedupeLoops(store.requests.filter { (arch.contains($0.id) || expired($0)) && inTab($0) })
         if pending.isEmpty && handledIncoming.isEmpty && sent.isEmpty && archived.isEmpty {
             ContentUnavailableView(emptyTitle, systemImage: "tray", description: Text(emptyMessage))
         } else {
@@ -892,8 +898,8 @@ struct RequestRow: View {
             ? MessagingStore.broadcastStatus(legStatuses)
             : (request.loopID == nil ? store.status(of: request)
                                      : MessagingStore.loopStatus(legStatuses))
-        let expired = request.isExpired && status == .pending   // deadline passed while still open
-        let needsMe = status == .pending && !mine && !expired    // action required from me
+        let expired = status == .expired          // first-class, derived from the synced deadline
+        let needsMe = status == .pending && !mine // action required from me
         let otherName = mine ? request.toName : request.fromName
         let otherID   = mine ? request.toID : request.fromID
         return HStack(alignment: .top, spacing: 12) {
@@ -934,14 +940,9 @@ struct RequestRow: View {
                         .font(.caption2.weight(.semibold)).foregroundStyle(AppColor.heat).lineLimit(1)
                 }
                 HStack(spacing: 8) {
-                    // Expired = the request's deadline passed while it was still open. It reads as inert
-                    // (neutral) and suppresses the "act now" prompts below, since nothing can be done.
-                    if expired {
-                        Label("Expired", systemImage: "clock.badge.xmark")
-                            .font(.caption2.bold()).foregroundStyle(AppColor.neutral)
-                    } else {
-                        StatusBadge(status: status)
-                    }
+                    // StatusBadge renders "Expired" (neutral) via the first-class status; the act-now prompts
+                    // below are suppressed when expired since nothing can be done.
+                    StatusBadge(status: status)
                     // S-VALID: a traded day is no longer worked → this request is invalid.
                     if !expired, store.isInvalid(request) {
                         Label("Invalid", systemImage: "exclamationmark.octagon.fill")
@@ -1301,6 +1302,11 @@ struct ThreadView: View {
                             }
                         }
                     }
+                }
+                // History: a synthetic audit line so an expired trade reads its outcome, not a blank "pending".
+                if store.status(of: request) == .expired {
+                    auditRow(icon: "clock.badge.xmark", tint: AppColor.neutral,
+                             who: "This request", what: "expired", when: request.expiresAt, note: "")
                 }
             }
 

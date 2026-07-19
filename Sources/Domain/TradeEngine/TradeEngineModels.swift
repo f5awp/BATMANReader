@@ -258,7 +258,7 @@ enum StagingState: String, Codable, Sendable, CaseIterable, Identifiable {
         switch requestStatus {
         case .pending, .countered, .message: self = .pendingNegotiation
         case .accepted:            self = .acceptedInApp
-        case .declined, .cancelled: self = .denied
+        case .declined, .cancelled, .expired: self = .denied
         }
     }
 }

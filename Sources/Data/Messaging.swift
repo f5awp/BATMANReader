@@ -155,6 +155,9 @@ struct HiddenItem: Sendable, Codable, Identifiable, Hashable {
 
 enum TradeRequestStatus: String, Codable, Sendable, CaseIterable {
     case pending, accepted, declined, countered, cancelled
+    case expired   // deadline passed while still pending — DERIVED from the request's synced `expiresAt`
+                   // (never written as a response), so every device agrees without an extra write. First-class
+                   // so badges / reducers / history / archived treat it uniformly.
     case message   // a plain chat message — does NOT change the trade's accept/decline state
 
     var label: String {
@@ -164,6 +167,7 @@ enum TradeRequestStatus: String, Codable, Sendable, CaseIterable {
         case .declined:  return "Declined"
         case .countered: return "Counter-offer"
         case .cancelled: return "Cancelled"
+        case .expired:   return "Expired"
         case .message:   return "Message"
         }
     }
@@ -694,6 +698,7 @@ final class MessagingStore {
     static func loopStatus(_ legStatuses: [TradeRequestStatus]) -> TradeRequestStatus {
         if legStatuses.contains(.declined)  { return .declined }
         if legStatuses.contains(.cancelled) { return .cancelled }
+        if legStatuses.contains(.expired)   { return .expired }   // a lapsed leg kills the loop
         if legStatuses.contains(.countered) { return .countered }
         if legStatuses.contains(.pending)   { return .pending }
         return legStatuses.isEmpty ? .pending : .accepted   // all legs accepted
@@ -707,6 +712,7 @@ final class MessagingStore {
         if legStatuses.contains(.countered) { return .countered }
         if legStatuses.contains(.pending)   { return .pending }
         if legStatuses.contains(.declined)  { return .declined }
+        if legStatuses.contains(.expired)   { return .expired }    // whole fan-out lapsed
         return legStatuses.isEmpty ? .pending : .cancelled
     }
 
@@ -1292,7 +1298,11 @@ final class MessagingStore {
     /// The latest decision on a request (newest non-chat response, else pending).
     /// Plain chat messages don't change accept/decline state.
     func status(of request: TradeRequest) -> TradeRequestStatus {
-        responses(for: request.id).last { $0.statusValue != .message }?.statusValue ?? .pending
+        let base = responses(for: request.id).last { $0.statusValue != .message }?.statusValue ?? .pending
+        // Expiry is first-class but DERIVED: a still-open request whose deadline passed reads as `.expired`
+        // on every device (the deadline `expiresAt` is synced on the record). A real decision always wins.
+        if base == .pending, request.isExpired { return .expired }
+        return base
     }
 
     /// PURE, testable: a DIRECTION-AGNOSTIC key for "the same trade" — the unordered participant pair + the
