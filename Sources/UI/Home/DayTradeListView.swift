@@ -71,6 +71,17 @@ struct DayTradeListPane: View {
     @State private var dayQual: [String: String] = [:]                 // "peerID|dayID" → desk's required qual
     @State private var tlSheet: TLFilterSheet?
     private enum TLFilterSheet: Int, Identifiable { case dates, shifts, quals; var id: Int { rawValue } }
+    @State private var loadedSig: Int?   // cache key of the last load — skip recompute on tab flips
+
+    /// The inputs that change the results (day + its trade-options). Same signature ⇒ reuse the cached
+    /// packages instead of recomputing every time the Trade List tab is re-selected.
+    private var loadSignature: Int {
+        var h = Hasher()
+        h.combine(target.dayID)
+        h.combine(DayIntentStore.shared.acceptScope(forDay: target.dayID))
+        h.combine(DayIntentStore.shared.tradeKind(forDay: target.dayID))
+        return h.finalize()
+    }
 
     /// The days I'd actually WORK in a package (off-day pickup = the promoted take; trade-away = the returns).
     private func workedDays(_ a: PackageAssignment) -> [String] {
@@ -172,8 +183,9 @@ struct DayTradeListPane: View {
                         .disabled(loading)
                 }
             }
-            // Tab-gated: only load when the Trade List tab is active (keyed so it fires on activation + day change).
-            .task(id: "\(target.dayID)-\(isActive)") { if isActive { await reload(fullRadar: false) } }
+            // Tab-gated + cached: load when the tab is active AND the inputs changed since the last load, so
+            // flipping between Info ↔ Trade List reuses the cached results instead of recomputing each time.
+            .task(id: "\(target.dayID)-\(isActive)") { if isActive, loadedSig != loadSignature { await reload(fullRadar: false) } }
             // Tap a swap card → the schedule-comparison detail (twin calendars) to pick days + propose.
             .fullScreenCover(item: $detailPackage) { pkg in
                 PackageDetailView(package: pkg, onPropose: { p in Task { await propose(p) } }, onExecute: {})
@@ -316,6 +328,7 @@ struct DayTradeListPane: View {
             }
         }
         dayType = dt; dayQual = dq
+        loadedSig = loadSignature   // stamp the cache key so re-activation reuses this result
         loading = false
     }
 
