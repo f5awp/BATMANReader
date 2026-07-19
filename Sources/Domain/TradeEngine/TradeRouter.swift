@@ -1477,17 +1477,30 @@ enum TradeRouter {
                              desk: l.desk, shiftType: ShiftAvailabilityType.infer(fromStartHour: l.startHour).rawValue,
                              region: DeskRules.region(forDesk: l.desk).rawValue, isBookend: l.bookend)
         }
-        // HARD BLACKLIST: a day the RECEIVER would NEVER accept — a blacklisted weekday / desk / shift-type /
-        // region, a blacklisted QUAL (the desk's required qual flagged 0 = never accept), or a Must-Be-Off day
-        // — is REMOVED entirely (not just demoted). Stronger than the soft prefs below, which only push a day
-        // into the bottom tier. Drops my blacklisted receive-days on GET, days the peer refuses on GIVE.
+        // HARD FILTER: a day the RECEIVER would NEVER accept is REMOVED entirely (not just demoted) — stronger
+        // than the soft openness/bookend prefs below, which only push a day into the bottom tier. Covers:
+        //   • Must-Be-Off day                       • blacklisted weekday / desk / shift-type / region
+        //   • blacklisted QUAL (desk's required qual flagged 0 = never accept)
+        //   • published-availability MISMATCH — they posted pills and this day+shift isn't among them, so
+        //     they're declared UNAVAILABLE (mercenary ignores pills). A pill mismatch is a hard "no", not a pref.
+        // Availability parsing is hoisted so the per-leg check stays O(1). Drops my blocked receive-days on
+        // GET, days the peer flatly can't/won't take on GIVE. (Openness/bookend contiguity stays a tier-3 alt.)
+        let recvAvailability = receiverProfile.availabilityMap
+        let recvHasPills = receiverProfile.hasPublishedAvailability
+        let recvMercenary = receiverProfile.isMercenaryMode == true
         func receiverHardBlocks(_ l: TwoWayLeg) -> Bool {
             if receiverProfile.mustBeOffDayIDs?.contains(l.dayID) == true { return true }
+            let shiftType = ShiftAvailabilityType.infer(fromStartHour: l.startHour).rawValue
             if let rq = DeskRules.requiredQual(forDesk: l.desk), receiverProfile.qualValues?[rq] == 0 { return true }
-            return !receiverProfile.passesBlacklist(
-                weekday: cal.component(.weekday, from: l.date), desk: l.desk,
-                shiftType: ShiftAvailabilityType.infer(fromStartHour: l.startHour).rawValue,
-                region: DeskRules.region(forDesk: l.desk).rawValue)
+            if !receiverProfile.passesBlacklist(weekday: cal.component(.weekday, from: l.date), desk: l.desk,
+                                                shiftType: shiftType, region: DeskRules.region(forDesk: l.desk).rawValue) {
+                return true
+            }
+            if recvHasPills, !recvMercenary {
+                guard let t = ShiftAvailabilityType(rawValue: shiftType),
+                      recvAvailability[l.dayID]?.contains(t) == true else { return true }
+            }
+            return false
         }
         let scored = legs.filter { !receiverHardBlocks($0) }.map { l -> (leg: TwoWayLeg, tier: Int) in
             let f = legFeatures(giverID: giverID, receiverID: receiverID, day: l.dayID, desk: l.desk,

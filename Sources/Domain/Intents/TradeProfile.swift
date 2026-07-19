@@ -276,7 +276,7 @@ struct TradeProfile: Sendable, Hashable, Codable, Identifiable {
         guard passesBlacklist(weekday: weekday, desk: desk, shiftType: shiftType, region: region) else { return false }
         // Mercenary mode: take ANY qualifying shift — ignore availability pills,
         // openness, and bookend protection (the hard legal gates still apply
-        // outside this method: off + qualified + 8h rest + weekly cap).
+        // outside this method: off + qualified + 8h rest). No weekly-hours cap by design.
         if isMercenaryMode == true { return true }
         // Want-to-Work OVERRIDES the bookend requirement for THIS person (S-ENG-10):
         // they explicitly want this day regardless of contiguity. Does NOT override
