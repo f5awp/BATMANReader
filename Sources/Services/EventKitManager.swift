@@ -149,10 +149,36 @@ final class EventKitManager {
         let shiftsToAdd    = (diff.added + diff.changed.map { $0.new }).filter { !$0.isOff }
         removePersonalEvents(for: shiftsToRemove)
         addPersonalEvents(for: shiftsToAdd)
+        // Repair any tracked event whose CONTENT drifted (e.g. the notes format changed) — in place, only the
+        // ones that differ. So a schedule sync also brings existing events up to date without recreating them.
+        refreshStalePersonalEvents(for: ShiftStore.shared.shifts)
 
         if diff.hasChanges {
             print("✅ EventKit synced: \(diff.summary)")
         }
+    }
+
+    /// Update tracked events whose title/notes no longer match what they should be — saved in place, and ONLY
+    /// for the events that actually differ (no churn, no re-create). Fixes drift like an old notes format on
+    /// events that were created before the change. Returns how many were updated.
+    @discardableResult
+    func refreshStalePersonalEvents(for shifts: [Shift]) -> Int {
+        guard isAuthorized else { return 0 }
+        let map = personalEventIDMap
+        var changed = 0
+        for shift in shifts where !shift.isOff {
+            guard let eid = map[shift.id], let ev = ekStore.event(withIdentifier: eid),
+                  ev.calendar.allowsContentModifications else { continue }
+            let desiredTitle = shift.shiftShortLabel.isEmpty ? shift.title : shift.shiftShortLabel
+            let desiredNotes = buildPersonalNotes(for: shift)
+            guard ev.title != desiredTitle || ev.notes != desiredNotes else { continue }
+            ev.title = desiredTitle
+            ev.notes = desiredNotes
+            try? ekStore.save(ev, span: .thisEvent, commit: false)
+            changed += 1
+        }
+        if changed > 0 { try? ekStore.commit() }
+        return changed
     }
 
     /// Removes every calendar event the app ever wrote — scanning ALL calendars and matching by the
@@ -217,6 +243,7 @@ final class EventKitManager {
             return ekStore.event(withIdentifier: eid) == nil      // tracked but event gone → re-add
         }
         addPersonalEvents(for: missing)
+        refreshStalePersonalEvents(for: shifts)   // also bring existing events' content up to date (no churn)
         return missing.count
     }
 
