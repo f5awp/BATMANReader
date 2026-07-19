@@ -263,6 +263,18 @@ struct TradeRequest: Sendable, Codable, Identifiable, Hashable {
     }
 
     var isExpired: Bool { expiresAt < Date() }
+    /// HARD expiry cutoff: any traded day (give OR take) is BEFORE today — the shift already happened, so the
+    /// trade can never execute regardless of where the negotiation stood. ISO "yyyy-MM-dd" sorts chronologically,
+    /// so a plain string compare against today's ISO is correct and cheap (no per-day date parsing).
+    var hasPastDay: Bool {
+        let today = TradeRequest.isoToday
+        return (giveDayIDs + takeDayIDs).contains { $0 < today }
+    }
+    private static let isoDayFormatter: DateFormatter = {
+        let f = DateFormatter(); f.calendar = Calendar(identifier: .gregorian)
+        f.locale = Locale(identifier: "en_US_POSIX"); f.timeZone = .current; f.dateFormat = "yyyy-MM-dd"; return f
+    }()
+    static var isoToday: String { isoDayFormatter.string(from: Date()) }
     /// The ECB amount to display — new Double field, falling back to the legacy Int.
     var ecbAmount: Double? { ecbValue ?? ecb.map(Double.init) }
     /// A one-way ECB offer = sender gives days, takes nothing back, offers points.
@@ -1299,9 +1311,12 @@ final class MessagingStore {
     /// Plain chat messages don't change accept/decline state.
     func status(of request: TradeRequest) -> TradeRequestStatus {
         let base = responses(for: request.id).last { $0.statusValue != .message }?.statusValue ?? .pending
-        // Expiry is first-class but DERIVED: a still-open request whose deadline passed reads as `.expired`
-        // on every device (the deadline `expiresAt` is synced on the record). A real decision always wins.
-        if base == .pending, request.isExpired { return .expired }
+        // Expiry is first-class but DERIVED (every device agrees from synced data). HARD CUTOFF: a trade whose
+        // traded day already passed can never execute — so it reads `.expired` regardless of whether it was
+        // countered or merely pending. It NEVER overrides a real decision (accept/decline/cancel stay terminal).
+        // The 21-day `isExpired` deadline is a secondary trigger for still-future but stale offers.
+        let terminal: Set<TradeRequestStatus> = [.accepted, .declined, .cancelled]
+        if !terminal.contains(base), request.hasPastDay || request.isExpired { return .expired }
         return base
     }
 

@@ -249,7 +249,7 @@ enum StagingState: String, Codable, Sendable, CaseIterable, Identifiable {
         case .pendingNegotiation:  return "Pending"
         case .acceptedInApp:       return "Accepted"
         case .markedOfficialByUser: return "Official"
-        case .denied:              return "Denied"
+        case .denied:              return "Expired/Denied"
         }
     }
 

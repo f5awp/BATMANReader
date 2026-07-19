@@ -443,7 +443,8 @@ struct InboxView: View {
     /// Outgoing auto-match ECB offers, grouped by offerID → the giver's queue folder (ECBOfferView) so they
     /// can pick the accepter. Kept as folders (not plain rows) exactly like the manual ECB tab.
     private var proposedECBOffers: [(offerID: String, requests: [TradeRequest])] {
-        let ecb = allProposed.filter { $0.isECB && $0.fromID == myID && $0.offerID != nil }
+        // Drop expired offers (a passed shift or lapsed deadline) so the Auto lane only shows live folders.
+        let ecb = allProposed.filter { $0.isECB && $0.fromID == myID && $0.offerID != nil && store.status(of: $0) != .expired }
         return Dictionary(grouping: ecb, by: { $0.offerID! })
             .map { ($0.key, $0.value.sorted { $0.toName < $1.toName }) }
             .sorted { ($0.requests.first?.createdAt ?? .distantPast) > ($1.requests.first?.createdAt ?? .distantPast) }
@@ -455,6 +456,7 @@ struct InboxView: View {
         let s = SettingsManager.shared
         return MessagingStore.dedupeLoops(allProposed.filter { !($0.isECB && $0.fromID == myID) })
             .filter { r in
+                guard store.status(of: r) != .expired else { return false }   // a passed/lapsed auto-match drops out
                 guard r.isECB, r.toID == myID else { return true }   // gate INCOMING pure-ECB auto-matches only
                 return (r.ecbAmount ?? 0) >= s.defaultAcceptedECB && (s.considerIOUs || !r.isECBIOU)
             }
@@ -465,8 +467,11 @@ struct InboxView: View {
         // Keep a suggestion until ALL of its give-days are already proposed to that peer (auto or manual, via
         // the shared proposedGiveDays SSOT). A partially-proposed multi-day suggestion stays visible for its
         // remaining days; opening it offers only those (openSuggested), and the row flags how many are sent.
-        radar.suggestedMatches.filter { m in
-            !Set(m.giveDayIDs).isSubset(of: store.proposedGiveDays(to: m.peerID))
+        let today = TradeRequest.isoToday
+        return radar.suggestedMatches.filter { m in
+            // Expired suggestion: any of its days already passed → drop it (parity with the Auto/Requests lanes).
+            guard !(m.giveDayIDs + m.takeDayIDs).contains(where: { $0 < today }) else { return false }
+            return !Set(m.giveDayIDs).isSubset(of: store.proposedGiveDays(to: m.peerID))
         }
     }
     /// After applying the Trade Date / Give-back Date / Shift / Qual filter chips.
