@@ -65,6 +65,15 @@ struct DayTradeListPane: View {
     @State private var dateFrom = Date()
     @State private var dateTo = Date()
     @State private var specificDates: Set<DateComponents> = []
+    @State private var shiftFilter: Set<ShiftAvailabilityType> = []   // filter by the shift you'd work
+    @State private var qualFilter: Set<String> = []                    // filter by the pickup desk's qual
+    @State private var legTypeByPeer: [String: ShiftAvailabilityType] = [:]   // peerID → shift type of the leg
+    @State private var legQualByPeer: [String: String] = [:]           // peerID → required qual of the leg's desk
+    @State private var tlSheet: TLFilterSheet?
+    private enum TLFilterSheet: Int, Identifiable { case dates, shifts, quals; var id: Int { rawValue } }
+
+    /// Quals present among the shown legs — the qual chip's option list.
+    private var availableQuals: [String] { Set(legQualByPeer.values).sorted() }
 
     private static let isoF: DateFormatter = { let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; return f }()
     /// The allowed ISO days from the filter — a contiguous range OR a set of specific dates. nil = filter off.
@@ -80,14 +89,21 @@ struct DayTradeListPane: View {
         return out
     }
 
-    /// Packages after the date filter, applied to the FLEXIBLE side: on a working day that's the return I get
-    /// (their days); on an off day it's the day I give back (my days) — since the day I pick up is fixed.
+    /// Packages after Give-back Date + Shift + Qual filters. Date applies to the FLEXIBLE side (on a working
+    /// day that's the return I get; on an off day it's the day I give back). Shift/Qual apply to the leg I'd
+    /// work (looked up per peer); a package whose leg-info is unknown is never hidden.
     private var shownPackages: [TradePackage] {
-        guard let allowed = allowedDays, !allowed.isEmpty else { return packages }
-        return packages.filter { pkg in
-            pkg.assignments.flatMap { a -> [String] in
-                target.isOff ? a.giveDayIDs : (a.takeOptions.isEmpty ? a.takeDayIDs : a.takeOptions)
-            }.contains { allowed.contains($0) }
+        packages.filter { pkg in
+            if let allowed = allowedDays, !allowed.isEmpty {
+                let flex = pkg.assignments.flatMap { a -> [String] in
+                    target.isOff ? a.giveDayIDs : (a.takeOptions.isEmpty ? a.takeDayIDs : a.takeOptions)
+                }
+                if !flex.contains(where: allowed.contains) { return false }
+            }
+            let peer = pkg.assignments.first?.workerID
+            if !shiftFilter.isEmpty, let p = peer, let t = legTypeByPeer[p], !shiftFilter.contains(t) { return false }
+            if !qualFilter.isEmpty, let p = peer, let q = legQualByPeer[p], !qualFilter.contains(q) { return false }
+            return true
         }
     }
 
@@ -149,6 +165,21 @@ struct DayTradeListPane: View {
             .fullScreenCover(item: $detailPackage) { pkg in
                 PackageDetailView(package: pkg, onPropose: { p in Task { await propose(p) } }, onExecute: {})
             }
+            .sheet(item: $tlSheet) { which in
+                switch which {
+                case .dates: datesSheet
+                case .shifts:
+                    MultiSelectSheet(title: "Shift types",
+                                     options: ShiftAvailabilityType.allCases.map { ($0.rawValue, $0.rawValue) },
+                                     selected: Binding(get: { Set(shiftFilter.map(\.rawValue)) },
+                                                       set: { shiftFilter = Set($0.compactMap(ShiftAvailabilityType.init(rawValue:))) }),
+                                     onApply: {})
+                case .quals:
+                    MultiSelectSheet(title: "Desk quals",
+                                     options: availableQuals.map { ($0, "\($0) — \(DispatcherDirectory.qualName($0))") },
+                                     selected: $qualFilter, onApply: {})
+                }
+            }
         }
     }
 
@@ -156,22 +187,65 @@ struct DayTradeListPane: View {
         Text(text).font(.caption).foregroundStyle(.secondary)
     }
 
-    /// Date filter — a contiguous range OR specific dates. Narrows to swaps whose flexible day matches.
+    private var dateChipLabel: String {
+        guard limitDate else { return "Give-back Date" }
+        if dateMode == 1 {
+            return specificDates.isEmpty ? "Give-back Date" : "\(specificDates.count) date\(specificDates.count == 1 ? "" : "s")"
+        }
+        let f = DateFormatter(); f.dateFormat = "MMM d"
+        return "\(f.string(from: dateFrom))–\(f.string(from: dateTo))"
+    }
+
+    /// Unified chip-row filter: Give-back Date · Shift · Qual (Qual only when the pickups span quals).
     @ViewBuilder private var filterBar: some View {
         Section {
-            Toggle(target.isOff ? "Filter by give-back date" : "Filter by return date", isOn: $limitDate.animation())
-            if limitDate {
-                Picker("Mode", selection: $dateMode.animation()) {
-                    Text("Range").tag(0); Text("Specific dates").tag(1)
-                }.pickerStyle(.segmented)
-                if dateMode == 0 {
-                    DatePicker("From", selection: $dateFrom, displayedComponents: .date)
-                    DatePicker("To", selection: $dateTo, in: dateFrom..., displayedComponents: .date)
-                } else {
-                    MultiDatePicker("Dates", selection: $specificDates, in: Date()...).frame(minHeight: 300)
+            DXFilterChipRow {
+                Button { tlSheet = .dates } label: {
+                    dxFilterChipLabel(dateChipLabel, systemImage: "calendar", active: limitDate)
+                }.buttonStyle(.plain)
+                Button { tlSheet = .shifts } label: {
+                    dxFilterChipLabel(shiftFilter.isEmpty ? "Shift" : shiftFilter.map(\.rawValue).sorted().joined(separator: "/"),
+                                      systemImage: "clock", active: !shiftFilter.isEmpty)
+                }.buttonStyle(.plain)
+                if !availableQuals.isEmpty {
+                    Button { tlSheet = .quals } label: {
+                        dxFilterChipLabel(qualFilter.isEmpty ? "Qual" : qualFilter.sorted().joined(separator: "/"),
+                                          systemImage: "q.square", active: !qualFilter.isEmpty)
+                    }.buttonStyle(.plain)
                 }
             }
-        } header: { Text("Filter") }
+            .listRowInsets(EdgeInsets()).listRowBackground(Color.clear)
+        }
+    }
+
+    /// The Give-back Date editor (range OR specific), shown as a sheet from the date chip.
+    @ViewBuilder private var datesSheet: some View {
+        NavigationStack {
+            Form {
+                Toggle("Filter by give-back date", isOn: $limitDate.animation())
+                if limitDate {
+                    Picker("Mode", selection: $dateMode.animation()) {
+                        Text("Range").tag(0); Text("Specific dates").tag(1)
+                    }.pickerStyle(.segmented)
+                    if dateMode == 0 {
+                        DatePicker("From", selection: $dateFrom, displayedComponents: .date)
+                        DatePicker("To", selection: $dateTo, in: dateFrom..., displayedComponents: .date)
+                    } else {
+                        MultiDatePicker("Dates", selection: $specificDates, in: Date()...).frame(minHeight: 300)
+                    }
+                }
+            }
+            .navigationTitle("Give-back Date").navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                if limitDate {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Clear") { limitDate = false; specificDates = [] }
+                    }
+                }
+                ToolbarItem(placement: .confirmationAction) { DXCloseButton { tlSheet = nil } }
+            }
+        }
+        .presentationDetents([.medium, .large])
     }
 
     @ViewBuilder private var radarStamp: some View {
@@ -184,6 +258,7 @@ struct DayTradeListPane: View {
     /// one recompute; then packages() explores the reciprocal swaps.
     private func reload(fullRadar: Bool) async {
         loading = true
+        legTypeByPeer = [:]; legQualByPeer = [:]
         if fullRadar || !radar.hasComputed { await radar.recompute(scope: .local) }
         let me = SettingsManager.shared.username
         if target.isOff {
@@ -200,6 +275,11 @@ struct DayTradeListPane: View {
             let scope = DayIntentStore.shared.acceptScope(forDay: target.dayID)
             let pickupByPeer = Dictionary(radar.rows(forDay: target.dayID).pickups.map { ($0.peerID, $0) },
                                           uniquingKeysWith: { a, _ in a })
+            // Per-peer leg info (the shift you'd pick up) powers the Shift + Qual filters.
+            for (pid, row) in pickupByPeer {
+                legTypeByPeer[pid] = .infer(fromStartHour: row.startHour)
+                if let q = DeskRules.requiredQual(forDesk: row.desk) { legQualByPeer[pid] = q }
+            }
             packages = pkgs.compactMap { pkg -> TradePackage? in
                 guard pkg.usesCompactCard, let a = pkg.assignments.first else { return nil }
                 let opts = a.takeOptions.isEmpty ? a.takeDayIDs : a.takeOptions

@@ -224,16 +224,9 @@ struct DispatcherLookupView: View {
         }.buttonStyle(.plain)
     }
 
-    /// Borderless filter chip (matches the Find Trades bar).
+    /// Borderless filter chip — the single shared look (solid accent when active).
     private func filterChipLabel(_ text: String, systemImage: String, active: Bool) -> some View {
-        HStack(spacing: 4) {
-            Image(systemName: systemImage).font(.caption2)
-            Text(text).font(.caption.weight(.semibold)).lineLimit(1)
-            Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold)).opacity(0.5)
-        }
-        .padding(.horizontal, 11).padding(.vertical, 7)
-        .foregroundStyle(active ? AppColor.primary : .primary)
-        .background(active ? AppColor.primary.opacity(0.16) : Color(.secondarySystemBackground), in: Capsule())
+        dxFilterChipLabel(text, systemImage: systemImage, active: active)
     }
 
     @ViewBuilder private func filterRow(_ title: String, on: Bool) -> some View {

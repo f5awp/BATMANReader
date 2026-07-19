@@ -316,6 +316,10 @@ struct InboxView: View {
     @State private var suggestedDetail: TradePackage?   // tapped Suggested → Trade-Solutions calendar view
     @State private var sugShifts: Set<ShiftAvailabilityType> = []  // Suggested lane shift-type filter
     @State private var sugQuals: Set<String> = []                  // Suggested lane qual filter
+    @State private var sugGiveDates: Set<String> = []              // Trade Date filter (days you'd give)
+    @State private var sugTakeDates: Set<String> = []              // Give-back Date filter (days you'd get)
+    @State private var sugSheet: SugFilterSheet?
+    private enum SugFilterSheet: Int, Identifiable { case give, take, shifts, quals; var id: Int { rawValue } }
     @State private var filter = 1   // 1 Search · 2 ECB (manual Finder) · 3 Qual Swap — auto-matches live in Auto-Matches
 
     private var myID: String { SettingsManager.shared.username }
@@ -447,26 +451,19 @@ struct InboxView: View {
         let proposedPeers = Set(allProposed.map { $0.fromID == myID ? $0.toID : $0.fromID })
         return radar.suggestedMatches.filter { !proposedPeers.contains($0.peerID) }
     }
-    /// After applying the shift/qual filter chips.
+    /// After applying the Trade Date / Give-back Date / Shift / Qual filter chips.
     private var suggestedMatches: [MatchStore.SuggestedMatch] {
         suggestedBase.filter { m in
             (sugShifts.isEmpty || !m.shiftTypes.isDisjoint(with: sugShifts))
                 && (sugQuals.isEmpty || !m.quals.isDisjoint(with: sugQuals))
+                && (sugGiveDates.isEmpty || m.giveDayIDs.contains(where: sugGiveDates.contains))
+                && (sugTakeDates.isEmpty || m.takeDayIDs.contains(where: sugTakeDates.contains))
         }
     }
     private var sugAvailShifts: [ShiftAvailabilityType] {
         ShiftAvailabilityType.allCases.filter { s in suggestedBase.contains { $0.shiftTypes.contains(s) } }
     }
     private var sugAvailQuals: [String] { Set(suggestedBase.flatMap { $0.quals }).sorted() }
-
-    private func inboxFilterChip(_ label: String, on: Bool, tint: Color, _ action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(label).font(.dsBadge)
-                .padding(.horizontal, 10).padding(.vertical, 5)
-                .background(on ? tint.opacity(DS.pillFill) : Color(.tertiarySystemFill), in: Capsule())
-                .foregroundStyle(on ? tint : Color.secondary)
-        }.buttonStyle(.plain)
-    }
 
     /// Auto-Matches lane: ONE divided list — everything the radar proposed for you (Proposed), then everything
     /// it found that you could still propose (Suggested). All methods (Day / ECB / Both) live here — one place.
@@ -498,29 +495,31 @@ struct InboxView: View {
                 .refreshable { await radar.recompute() }
         } else {
             List {
-                if sugAvailShifts.count > 1 || !sugAvailQuals.isEmpty {
-                    Section {
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 8) {
-                                ForEach(sugAvailShifts, id: \.self) { s in
-                                    inboxFilterChip(s.rawValue, on: sugShifts.contains(s), tint: AppColor.primary) {
-                                        if sugShifts.contains(s) { sugShifts.remove(s) } else { sugShifts.insert(s) }
-                                    }
-                                }
-                                ForEach(sugAvailQuals, id: \.self) { q in
-                                    inboxFilterChip(q, on: sugQuals.contains(q), tint: AppColor.special) {
-                                        if sugQuals.contains(q) { sugQuals.remove(q) } else { sugQuals.insert(q) }
-                                    }
-                                }
-                                if !sugShifts.isEmpty || !sugQuals.isEmpty {
-                                    Button { sugShifts = []; sugQuals = [] } label: {
-                                        Label("Clear", systemImage: "xmark.circle.fill").font(.caption)
-                                    }.buttonStyle(.plain).foregroundStyle(.secondary)
-                                }
-                            }
+                Section {
+                    DXFilterChipRow {
+                        Button { sugSheet = .give } label: {
+                            dxFilterChipLabel(sugGiveDates.isEmpty ? "Trade Date" : "\(sugGiveDates.count) trade date\(sugGiveDates.count == 1 ? "" : "s")",
+                                              systemImage: "calendar", active: !sugGiveDates.isEmpty)
+                        }.buttonStyle(.plain)
+                        Button { sugSheet = .take } label: {
+                            dxFilterChipLabel(sugTakeDates.isEmpty ? "Give-back Date" : "\(sugTakeDates.count) give-back",
+                                              systemImage: "calendar.badge.clock", active: !sugTakeDates.isEmpty)
+                        }.buttonStyle(.plain)
+                        if sugAvailShifts.count > 1 {
+                            Button { sugSheet = .shifts } label: {
+                                dxFilterChipLabel(sugShifts.isEmpty ? "Shift" : sugShifts.map(\.rawValue).sorted().joined(separator: "/"),
+                                                  systemImage: "clock", active: !sugShifts.isEmpty)
+                            }.buttonStyle(.plain)
                         }
-                    } header: { Text("Filter") }
-                }
+                        if !sugAvailQuals.isEmpty {
+                            Button { sugSheet = .quals } label: {
+                                dxFilterChipLabel(sugQuals.isEmpty ? "Qual" : sugQuals.sorted().joined(separator: "/"),
+                                                  systemImage: "q.square", active: !sugQuals.isEmpty)
+                            }.buttonStyle(.plain)
+                        }
+                    }
+                    .listRowInsets(EdgeInsets()).listRowBackground(Color.clear)
+                } header: { Text("Filter") }
                 Section {
                     if suggested.isEmpty {
                         Text("No suggestions match these filters.").font(.caption).foregroundStyle(.secondary)
@@ -536,6 +535,22 @@ struct InboxView: View {
             // Tap a Suggested match → the Trade-Solutions calendar view (PackageDetailView); propose → Requests.
             .fullScreenCover(item: $suggestedDetail) { pkg in
                 PackageDetailView(package: pkg, onPropose: { p in Task { await proposeSuggested(p) } }, onExecute: {})
+            }
+            .sheet(item: $sugSheet) { which in
+                switch which {
+                case .give: DXDateFilterSheet(title: "Trade Date", isoDays: $sugGiveDates)
+                case .take: DXDateFilterSheet(title: "Give-back Date", isoDays: $sugTakeDates)
+                case .shifts:
+                    MultiSelectSheet(title: "Shift types",
+                                     options: sugAvailShifts.map { ($0.rawValue, $0.rawValue) },
+                                     selected: Binding(get: { Set(sugShifts.map(\.rawValue)) },
+                                                       set: { sugShifts = Set($0.compactMap(ShiftAvailabilityType.init(rawValue:))) }),
+                                     onApply: {})
+                case .quals:
+                    MultiSelectSheet(title: "Desk quals",
+                                     options: sugAvailQuals.map { ($0, "\($0) — \(DispatcherDirectory.qualName($0))") },
+                                     selected: $sugQuals, onApply: {})
+                }
             }
         }
     }

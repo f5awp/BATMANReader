@@ -27,7 +27,7 @@ struct FindTradesFilterBar: View {
         let f = DateFormatter(); f.dateFormat = "MMM d"; return f
     }()
     private var dateLabel: String {
-        guard hasDates else { return "Give-back dates" }
+        guard hasDates else { return "Give-back Date" }
         let s = filter.dateStart.map(Self.chipFmt.string(from:))
         let e = filter.dateEnd.map(Self.chipFmt.string(from:))
         switch (s, e) {
@@ -191,7 +191,7 @@ struct GiveBackDatesSheet: View {
                 Spacer(minLength: 0)
             }
             .padding()
-            .navigationTitle("Give-back dates")
+            .navigationTitle("Give-back Date")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
