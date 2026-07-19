@@ -223,7 +223,11 @@ struct ContentView: View {
             // per app update (build changed). This intentionally IGNORES the "show update notes" toggle the
             // FIRST time a new build runs — a genuinely new version always surfaces once — then `onClose`
             // records the build so it never repeats; the toggle still governs re-opening it later.
-            if hasOnboarded, settings.lastSeenChangelogBuild != AppInfo.build {
+            // …but NOT while the Welcome cover is (about to be) up — presenting the What's New sheet over the
+            // full-screen cover collapses the tour (it flashes, dismisses, then What's New appears). When the
+            // Welcome will show, IT pops What's New on finish instead. So only auto-show here when it won't.
+            let welcomeWillShow = (settings.showWelcomeOnLaunch && !walkthroughDismissed) || tourReplayRequested
+            if hasOnboarded, settings.lastSeenChangelogBuild != AppInfo.build, !welcomeWillShow {
                 showChangelog = true
             }
 
