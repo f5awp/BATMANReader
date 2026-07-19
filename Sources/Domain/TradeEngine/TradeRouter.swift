@@ -748,52 +748,55 @@ enum TradeRouter {
         let myProfile = TradeProfileStore.shared.myProfile()
         let mySeeking = DayIntentStore.shared.seekingDayIDs           // days I MARKED to trade away (give intents)
         let myWantToWork = DayIntentStore.shared.wantToWorkDayIDs     // days I MARKED to pick up (receive intents)
-        let maps = ctx.maps
         let profile = ctx.profile(for: workerID, name: name)
 
-        // Soft-rank exploratory view: build BOTH sides on PHYSICAL feasibility only — `ignoreOwnBlacklist`
-        // drops MY soft prefs on the receive side, `peerCoverSoftGates:false` drops the PEER's on the give
-        // side (their profile may be a fabricated Bookends-Only default). Hard gates (rest/qual/must-be-off/
-        // relief) still apply. Nothing eligible is hidden; preferences drive ORDER, not a filter.
-        let plan = TradeMatcher.twoWayExploreCore(
-            withWorker: workerID, name: name, windowStart: ctx.start, windowEnd: ctx.end,
-            mySeeking: mySeeking, theirSeeking: profile.seekingDayIDs,
-            myProfile: myProfile, theirProfile: profile, ignoreOwnBlacklist: true,
-            peerCoverSoftGates: false,
-            myEntries: ctx.mineEntries, peerEntries: Array((maps[workerID] ?? [:]).values))
+        // The plan build + per-leg ranking is pure CPU (isAnchored / wouldPickUp per leg). Run it OFF the main
+        // actor so tapping a dispatcher's Find Trades never blocks the UI — everything captured is Sendable.
+        return await Task.detached(priority: .userInitiated) {
+            let maps = ctx.maps
+            // Soft-rank exploratory view: build BOTH sides on PHYSICAL feasibility only — `ignoreOwnBlacklist`
+            // drops MY soft prefs on the receive side, `peerCoverSoftGates:false` drops the PEER's on the give
+            // side. Hard gates (rest/qual/must-be-off/relief) still apply; prefs drive ORDER + the blacklist filter.
+            let plan = TradeMatcher.twoWayExploreCore(
+                withWorker: workerID, name: name, windowStart: ctx.start, windowEnd: ctx.end,
+                mySeeking: mySeeking, theirSeeking: profile.seekingDayIDs,
+                myProfile: myProfile, theirProfile: profile, ignoreOwnBlacklist: true,
+                peerCoverSoftGates: false,
+                myEntries: ctx.mineEntries, peerEntries: Array((maps[workerID] ?? [:]).values))
 
-        // Rank BOTH sides through the ONE universal ranker (`rankLegs`), the SAME objective Trade Solutions
-        // uses. "You give": my day → the PEER receives it (giver = me), so the tier keys off MY clean-give-away.
-        // "You get": the peer's day → I receive it (receiver = me), so the tier keys off whether I'd pick it up
-        // under my soft prefs (blacklist/openness/…). The exploratory view caps the unpreferred band at 5.
-        let giveRanked = TradeRouter.rankLegs(
-            plan.iGive.filter { giveDayIDs.contains($0.dayID) },
-            giverID: selfID, receiverID: workerID, maps: maps, quals: ctx.qualsDict, priors: ctx.priors,
-            start: ctx.start, selfID: selfID, myProfile: myProfile, mySeeking: mySeeking, myWantToWork: myWantToWork,
-            profilesByID: ctx.profilesByID, inferred: ctx.inferred, capUnpreferred: 5)
-        let takeRanked = TradeRouter.rankLegs(
-            plan.iTake,
-            giverID: workerID, receiverID: selfID, maps: maps, quals: ctx.qualsDict, priors: ctx.priors,
-            start: ctx.start, selfID: selfID, myProfile: myProfile, mySeeking: mySeeking, myWantToWork: myWantToWork,
-            profilesByID: ctx.profilesByID, inferred: ctx.inferred, capUnpreferred: 5)
-        let canTake   = giveRanked.legs.map(\.dayID)
-        let givesBack = takeRanked.legs.map(\.dayID)
+            // Rank BOTH sides through the ONE universal ranker (`rankLegs`), the SAME objective Trade Solutions
+            // uses. "You give": my day → the PEER receives it (giver = me), so the tier keys off MY clean-give-away.
+            // "You get": the peer's day → I receive it (receiver = me), so the tier keys off whether I'd pick it up
+            // under my soft prefs (blacklist/openness/…). The exploratory view caps the unpreferred band at 5.
+            let giveRanked = TradeRouter.rankLegs(
+                plan.iGive.filter { giveDayIDs.contains($0.dayID) },
+                giverID: selfID, receiverID: workerID, maps: maps, quals: ctx.qualsDict, priors: ctx.priors,
+                start: ctx.start, selfID: selfID, myProfile: myProfile, mySeeking: mySeeking, myWantToWork: myWantToWork,
+                profilesByID: ctx.profilesByID, inferred: ctx.inferred, capUnpreferred: 5)
+            let takeRanked = TradeRouter.rankLegs(
+                plan.iTake,
+                giverID: workerID, receiverID: selfID, maps: maps, quals: ctx.qualsDict, priors: ctx.priors,
+                start: ctx.start, selfID: selfID, myProfile: myProfile, mySeeking: mySeeking, myWantToWork: myWantToWork,
+                profilesByID: ctx.profilesByID, inferred: ctx.inferred, capUnpreferred: 5)
+            let canTake   = giveRanked.legs.map(\.dayID)
+            let givesBack = takeRanked.legs.map(\.dayID)
 
-        // Largest balanced k-for-k. Each side is tier-first, so the default pick is the mutually-good swap;
-        // the ranked alternates below it degrade to one-sided intent, then fit, then unpreferred.
-        let k = min(canTake.count, givesBack.count)
-        guard k >= 1 else { return nil }
-        let giveCap = min(canTake.count, max(maxOptions, k))
-        let takeCap = min(givesBack.count, max(maxOptions, k))
-        let assignment = PackageAssignment(workerID: workerID, name: name,
-                                           giveDayIDs: Array(canTake.prefix(k)),
-                                           takeDayIDs: Array(givesBack.prefix(k)),
-                                           takeOptions: Array(givesBack.prefix(takeCap)),
-                                           giveOptions: Array(canTake.prefix(giveCap)),
-                                           takeOptionTiers: Array(takeRanked.tiers.prefix(takeCap)),
-                                           giveOptionTiers: Array(giveRanked.tiers.prefix(giveCap)))
-        return TradePackage(id: "find-\(workerID)", methodology: .greedy, assignments: [assignment],
-                            route: nil, urgency: 0, isOptimal: true)
+            // Largest balanced k-for-k. Each side is tier-first, so the default pick is the mutually-good swap;
+            // the ranked alternates below it degrade to one-sided intent, then fit, then unpreferred.
+            let k = min(canTake.count, givesBack.count)
+            guard k >= 1 else { return nil }
+            let giveCap = min(canTake.count, max(maxOptions, k))
+            let takeCap = min(givesBack.count, max(maxOptions, k))
+            let assignment = PackageAssignment(workerID: workerID, name: name,
+                                               giveDayIDs: Array(canTake.prefix(k)),
+                                               takeDayIDs: Array(givesBack.prefix(k)),
+                                               takeOptions: Array(givesBack.prefix(takeCap)),
+                                               giveOptions: Array(canTake.prefix(giveCap)),
+                                               takeOptionTiers: Array(takeRanked.tiers.prefix(takeCap)),
+                                               giveOptionTiers: Array(giveRanked.tiers.prefix(giveCap)))
+            return TradePackage(id: "find-\(workerID)", methodology: .greedy, assignments: [assignment],
+                                route: nil, urgency: 0, isOptimal: true)
+        }.value
     }
 
     // MARK: - Intents marketplace (DISTINCT from packages — intent-for-intent, intent-first ranking)
