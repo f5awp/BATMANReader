@@ -309,10 +309,12 @@ final class EventKitManager {
     }
 
     private func buildPersonalNotes(for shift: Shift) -> String {
+        // NOTE: don't put the raw shift time here — iOS Calendar's data detectors read a "0500–1400" digit
+        // string as a phone number and render it as a tappable call link. The event is already time-positioned
+        // (Calendar shows start–end natively), so the time line is redundant anyway.
         var lines = [
             "Role: \(shift.role.rawValue)",
-            "Desk: \(shift.desk.isEmpty ? "TBD" : shift.desk)",
-            "\(shift.startTimeString)–\(shift.endTimeString)"
+            "Desk: \(shift.desk.isEmpty ? "TBD" : shift.desk)"
         ]
         if let lc = shift.leaveCode, !lc.isEmpty { lines.append("Leave: \(lc)") }
         lines.append("Added by DX Trader")
