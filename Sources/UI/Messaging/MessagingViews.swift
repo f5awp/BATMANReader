@@ -218,13 +218,23 @@ struct MatchLaneRow: View {
 /// A Suggested match row — a real trade exists but needs you to pick day(s). Tap → the two-way calendar.
 struct SuggestedRow: View {
     let match: MatchStore.SuggestedMatch
+    var proposedCount: Int = 0   // how many of this suggestion's give-days are already proposed to the peer
+    private var remaining: Int { max(1, match.giveDayIDs.count - proposedCount) }
     var body: some View {
         HStack(spacing: 10) {
             Avatar(name: match.peerName, id: match.peerID, size: 30)
             VStack(alignment: .leading, spacing: 2) {
                 Text(match.peerName).font(.dsCardTitle)
-                Text("Give \(match.giveDayIDs.count) · they'd trade \(match.takeDayIDs.count) — you pick")
-                    .font(.dsCardMeta).foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    Text("Give \(remaining) · they'd trade \(match.takeDayIDs.count) — you pick")
+                        .font(.dsCardMeta).foregroundStyle(.secondary)
+                    if proposedCount > 0 {
+                        Text("\(proposedCount) sent").font(.dsBadge)
+                            .padding(.horizontal, 6).padding(.vertical, 1)
+                            .background(AppColor.success.opacity(DS.pillFill), in: Capsule())
+                            .foregroundStyle(AppColor.success)
+                    }
+                }
             }
             Spacer()
             Image(systemName: "calendar.badge.plus").font(.subheadline).foregroundStyle(AppColor.primary)
@@ -448,11 +458,11 @@ struct InboxView: View {
     }
     /// SUGGESTED (SSOT from MatchStore) — 3-/2-mutual, minus any peer already in Proposed (one-section rule).
     private var suggestedBase: [MatchStore.SuggestedMatch] {
-        // Hide a suggestion only when I've already proposed THAT peer on one of THOSE give-days (auto or
-        // manual, via the shared proposedGiveDays SSOT) — the SAME per-peer/per-day rule as the Trade List's
-        // "Sent" gate, so the two surfaces track together while a different day with the same peer stays open.
+        // Keep a suggestion until ALL of its give-days are already proposed to that peer (auto or manual, via
+        // the shared proposedGiveDays SSOT). A partially-proposed multi-day suggestion stays visible for its
+        // remaining days; opening it offers only those (openSuggested), and the row flags how many are sent.
         radar.suggestedMatches.filter { m in
-            Set(m.giveDayIDs).isDisjoint(with: store.proposedGiveDays(to: m.peerID))
+            !Set(m.giveDayIDs).isSubset(of: store.proposedGiveDays(to: m.peerID))
         }
     }
     /// After applying the Trade Date / Give-back Date / Shift / Qual filter chips.
@@ -529,8 +539,11 @@ struct InboxView: View {
                         Text("No suggestions match these filters.").font(.caption).foregroundStyle(.secondary)
                     } else {
                         ForEach(suggested) { m in
-                            Button { Task { await openSuggested(m) } } label: { SuggestedRow(match: m) }
-                                .buttonStyle(.plain)
+                            Button { Task { await openSuggested(m) } } label: {
+                                SuggestedRow(match: m,
+                                             proposedCount: Set(m.giveDayIDs).intersection(store.proposedGiveDays(to: m.peerID)).count)
+                            }
+                            .buttonStyle(.plain)
                         }
                     }
                 } header: { Text("You pick the days — opens the calendar view") }
@@ -563,9 +576,14 @@ struct InboxView: View {
     /// give/take days the radar validated) instead of re-running the roster search — the old search often
     /// returned no 2-person package for that peer, so the tap silently did nothing.
     private func openSuggested(_ m: MatchStore.SuggestedMatch) async {
+        // Only offer the give-days I haven't already proposed to this peer — so re-opening a partially-proposed
+        // suggestion proposes the remaining days, never a duplicate. (Falls back to all if somehow none remain.)
+        let proposed = store.proposedGiveDays(to: m.peerID)
+        let remaining = m.giveDayIDs.filter { !proposed.contains($0) }
+        let gives = remaining.isEmpty ? m.giveDayIDs : remaining
         let a = PackageAssignment(workerID: m.peerID, name: m.peerName,
-                                  giveDayIDs: m.giveDayIDs,
-                                  takeDayIDs: Array(m.takeDayIDs.prefix(max(1, m.giveDayIDs.count))),
+                                  giveDayIDs: gives,
+                                  takeDayIDs: Array(m.takeDayIDs.prefix(max(1, gives.count))),
                                   takeOptions: m.takeDayIDs)
         suggestedDetail = TradePackage(id: "sug-\(m.peerID)", methodology: .greedy, assignments: [a], route: nil)
     }
