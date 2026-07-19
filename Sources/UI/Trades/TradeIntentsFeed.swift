@@ -1160,19 +1160,13 @@ struct PackageDetailView: View {
     }
 
     // MARK: Rank-tier dividers
-    // A day's rank tier (0 both-marked · 1 one-marked · 2 fits · 3 unpreferred), looked up from the
-    // assignment's parallel tier arrays. nil when the package carries no tier data (then no dividers show).
-    private var firstAssign: PackageAssignment? { package.assignments.first }
-    private func giveTier(_ dayID: String) -> Int? {
-        guard let a = firstAssign, let i = a.giveOptions.firstIndex(of: dayID),
-              a.giveOptionTiers.indices.contains(i) else { return nil }
-        return a.giveOptionTiers[i]
-    }
-    private func takeTier(_ dayID: String) -> Int? {
-        guard let a = firstAssign, let i = a.takeOptions.firstIndex(of: dayID),
-              a.takeOptionTiers.indices.contains(i) else { return nil }
-        return a.takeOptionTiers[i]
-    }
+    // A day's rank tier (0 both-marked · 1 one-marked · 2 fits · 3 unpreferred), computed by the engine for
+    // THIS package (via TradeRouter.optionTiers) so EVERY package view draws the `|` dividers the same way,
+    // regardless of which matcher path built the package. Empty until `load()` fills them (then no dividers).
+    @State private var giveTierMap: [String: Int] = [:]
+    @State private var takeTierMap: [String: Int] = [:]
+    private func giveTier(_ dayID: String) -> Int? { giveTierMap[dayID] }
+    private func takeTier(_ dayID: String) -> Int? { takeTierMap[dayID] }
     private func stepTier(_ s: Step) -> Int? { s.fromID == myID ? giveTier(s.dayID) : takeTier(s.dayID) }
     /// A thin vertical rule dropped between two chips that belong to different rank tiers.
     private var tierDivider: some View {
@@ -1635,6 +1629,10 @@ struct PackageDetailView: View {
             selectionSeeded = true
         }
         select(0)
+        // Per-day rank tiers for the `|` dividers — computed by the engine for THIS package (all views).
+        let tiers = await TradeRouter.optionTiers(for: package, myID: myID)
+        giveTierMap = tiers.give
+        takeTierMap = tiers.take
     }
 }
 

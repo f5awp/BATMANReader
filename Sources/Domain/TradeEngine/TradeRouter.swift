@@ -1444,6 +1444,80 @@ enum TradeRouter {
     /// won't take HARD-demotes to tier 3, overriding intent: a blacklisted day never ranks above the fold.
     /// `capUnpreferred` soft-limits tier 3 to N days (exploratory single-peer view). Returns the ordered legs
     /// with a PARALLEL tier array for the divider UI.
+    /// The ONE tier-band rule, shared by the ranker and the per-package tier lookup. Chooser-centric:
+    /// `fits` = clean-give-away (GIVE) or would-pick-up (GET). 0 both-intent · 1 one-intent · 2 fits · 3 not.
+    /// On the GET side a non-fitting day drops to 3 even with intent (I won't take what my prefs forbid).
+    nonisolated static func bandTier(iAmGiver: Bool, intentLevel: Int, fits: Bool) -> Int {
+        if iAmGiver {
+            switch intentLevel { case 2: return 0; case 1: return 1; default: return fits ? 2 : 3 }
+        }
+        if !fits { return 3 }
+        switch intentLevel { case 2: return 0; case 1: return 1; default: return 2 }
+    }
+
+    /// The tier band for ONE option day of a 2-person trade, using the SAME rule as the ranker. `giverID`
+    /// owns the day (my day on a give leg, the peer's on a take leg); `receiverID` picks it up. nil when the
+    /// day isn't in the giver's window schedule. Powers the `|` dividers for EVERY package view.
+    nonisolated private static func dayTier(dayID: String, giverID: String, receiverID: String, selfID: String,
+                                            maps: [String: DayMap], quals: [String: [String]],
+                                            priors: [String: Double], start: Date, myProfile: TradeProfile,
+                                            mySeeking: Set<String>, myWantToWork: Set<String>,
+                                            profilesByID: [String: TradeProfile],
+                                            inferred: [String: InferredPrefs.Result]) -> Int? {
+        guard let entry = maps[giverID]?[dayID], let date = TradeMatcher.dayDate(fromISO: dayID) else { return nil }
+        let cal = Calendar.current
+        let f = legFeatures(giverID: giverID, receiverID: receiverID, day: dayID, desk: entry.desk,
+                            receiverQuals: quals[receiverID] ?? [], maps: maps, priors: priors, selfID: selfID,
+                            start: start, mySeeking: mySeeking, myWantToWork: myWantToWork, profilesByID: profilesByID)
+        let iAmGiver = giverID == selfID
+        let fits: Bool
+        if iAmGiver {
+            fits = TradeMatcher.isCleanGiveAway(day: date, map: maps[selfID] ?? [:], cal: cal)
+        } else {
+            let rp: TradeProfile = receiverID == selfID ? myProfile
+                : (profilesByID[receiverID] ?? (inferred[receiverID].map {
+                    TradeProfile.defaultForUnpublished(workerID: receiverID, name: "",
+                                                       inferredShiftTypes: $0.shiftTypes, inferredRegions: $0.regions,
+                                                       blacklistWeekends: !$0.worksWeekend)
+                  } ?? TradeProfile.defaultForUnpublished(workerID: receiverID, name: "")))
+            fits = rp.wouldPickUp(onDay: dayID, weekday: cal.component(.weekday, from: date), desk: entry.desk,
+                                  shiftType: ShiftAvailabilityType.infer(fromStartHour: entry.startHour).rawValue,
+                                  region: DeskRules.region(forDesk: entry.desk).rawValue, isBookend: f.bookend)
+        }
+        return bandTier(iAmGiver: iAmGiver, intentLevel: f.intentLevel, fits: fits)
+    }
+
+    /// Per-day tier maps for a 2-person package — `give` keyed by MY give days, `take` by the peer's give-back
+    /// days — so ANY package view can draw the `|` tier dividers regardless of which engine path built it (no
+    /// per-construction-site plumbing). Empty for circular/loop packages. Cheap: MatchContext is cached.
+    @MainActor
+    static func optionTiers(for pkg: TradePackage, myID: String) async -> (give: [String: Int], take: [String: Int]) {
+        guard !pkg.isCircular, let a = pkg.assignments.first else { return ([:], [:]) }
+        let ctx = await MatchContext.build(selfID: myID)
+        let myProfile = TradeProfileStore.shared.myProfile()
+        let mySeeking = DayIntentStore.shared.seekingDayIDs
+        let myWantToWork = DayIntentStore.shared.wantToWorkDayIDs
+        let peerID = a.workerID
+        let giveDays = Array(Set(a.giveDayIDs + a.giveOptions))
+        let takeDays = Array(Set(a.takeDayIDs + a.takeOptions))
+        return await Task.detached(priority: .userInitiated) {
+            func tiers(_ days: [String], giver: String, receiver: String) -> [String: Int] {
+                var out: [String: Int] = [:]
+                for d in days {
+                    if let t = dayTier(dayID: d, giverID: giver, receiverID: receiver, selfID: myID,
+                                       maps: ctx.maps, quals: ctx.qualsDict, priors: ctx.priors, start: ctx.start,
+                                       myProfile: myProfile, mySeeking: mySeeking, myWantToWork: myWantToWork,
+                                       profilesByID: ctx.profilesByID, inferred: ctx.inferred) {
+                        out[d] = t
+                    }
+                }
+                return out
+            }
+            return (tiers(giveDays, giver: myID, receiver: peerID),
+                    tiers(takeDays, giver: peerID, receiver: myID))
+        }.value
+    }
+
     // `private`: the signature uses the file-private `DayMap` typealias, so it can't be internal.
     nonisolated private static func rankLegs(_ legs: [TwoWayLeg], giverID: String, receiverID: String,
                                              maps: [String: DayMap], quals: [String: [String]],
@@ -1507,24 +1581,11 @@ enum TradeRouter {
                                 receiverQuals: quals[receiverID] ?? [], maps: maps, priors: priors,
                                 selfID: selfID, start: start, mySeeking: mySeeking, myWantToWork: myWantToWork,
                                 profilesByID: profilesByID)
-            let tier: Int
-            if iAmGiver {
-                // GIVE side: suits me = a clean give-away on my CURRENT schedule (a neighbour day is off).
-                let clean = TradeMatcher.isCleanGiveAway(day: l.date, map: maps[selfID] ?? [:], cal: cal)
-                switch f.intentLevel {
-                case 2:  tier = 0
-                case 1:  tier = 1
-                default: tier = clean ? 2 : 3
-                }
-            } else {
-                // GET side (or a peer receiver): the receiver must actually want it under their soft prefs.
-                // A day I won't pick up (blacklist/openness/…) drops to the bottom, overriding any intent.
-                if !fitsPickUp(receiverProfile, l) { tier = 3 }
-                else if f.intentLevel == 2 { tier = 0 }
-                else if f.intentLevel == 1 { tier = 1 }
-                else { tier = 2 }
-            }
-            return (l, tier)
+            // GIVE side: suits me = a clean give-away on my CURRENT schedule (a neighbour day is off).
+            // GET side: suits me = I'd actually pick it up under my soft prefs.
+            let fits = iAmGiver ? TradeMatcher.isCleanGiveAway(day: l.date, map: maps[selfID] ?? [:], cal: cal)
+                                : fitsPickUp(receiverProfile, l)
+            return (l, bandTier(iAmGiver: iAmGiver, intentLevel: f.intentLevel, fits: fits))
         }
         let sorted = scored.sorted { a, b in
             if a.tier != b.tier { return a.tier < b.tier }        // intents/fit highest, groups dividers
