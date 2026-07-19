@@ -515,8 +515,10 @@ struct SearchFilter: Equatable, Sendable {
     var engine: Engine = .both
     var maxPeople: Int = 4          // 1…4 distinct participants (incl. you)
     var requiredWorkerID: String?   // when set, only solutions that INCLUDE this person
-    var dateStart: Date?            // only solutions where EVERY moved day is on/after this date
+    var dateStart: Date?            // range mode: only solutions where EVERY moved day is on/after this date
     var dateEnd: Date?              // …and on/before this date
+    var dates: Set<String>? = nil   // "specific days" mode: ISO days you'll accept back (NOT collapsed to a
+                                    // range) — a package qualifies if it can return one of these days
     var receiveTypes: Set<ShiftAvailabilityType> = []  // days you PICK UP must be one of these (empty = any)
     var deskQuals: Set<String> = [] // only trades involving desks requiring one of these quals (empty = any)
     /// Lucky one-time OPENNESS override for MY OWN side of this search (nil = use my saved openness). Lets
@@ -541,7 +543,7 @@ struct SearchFilter: Equatable, Sendable {
         if engine != .both { parts.append(engine == .minCost ? "Min-Cost" : "N-Way") }
         if maxPeople != 4 { parts.append("≤\(maxPeople)") }
         if let r = requiredWorkerID { parts.append("with \(nameFor(r))") }
-        if dateStart != nil || dateEnd != nil { parts.append("dates") }
+        if dateStart != nil || dateEnd != nil || !(dates?.isEmpty ?? true) { parts.append("dates") }
         if !receiveTypes.isEmpty { parts.append(receiveTypes.map(\.rawValue).sorted().joined(separator: "/")) }
         if !deskQuals.isEmpty { parts.append(deskQuals.sorted().joined(separator: "/") + " desks") }
         if let o = myOpennessOverride { parts.append(o == .all ? "open to all" : "bookends") }
@@ -572,12 +574,15 @@ struct SearchFilter: Equatable, Sendable {
         return packages.filter { p in
             if p.peopleCount > maxPeople { return false }
             if let req = requiredWorkerID, !contains(req, p) { return false }
-            if lo != nil || hi != nil {
-                // The date range is the window you want to trade INTO — so it constrains the days you'd
-                // RECEIVE (your take-backs), NOT the days you give away. A single-date range therefore
-                // matches a single-day trade (give 1, receive 1 that day). Give-days are your selection.
-                let received: [String] = p.route.map { r in r.legs.filter { $0.toID == selfID }.map(\.dayID) }
-                    ?? p.assignments.flatMap(\.takeDayIDs)
+            // The date filter constrains the days you'd RECEIVE (your take-backs), not the days you give.
+            let received: [String] = p.route.map { r in r.legs.filter { $0.toID == selfID }.map(\.dayID) }
+                ?? p.assignments.flatMap(\.takeDayIDs)
+            if let dates, !dates.isEmpty {
+                // Specific days: keep a package that can return one of the chosen days (default take OR an
+                // alternate take-option). NOT a min→max envelope — Jul 29 + Aug 28 means exactly those.
+                let candidates = Set(received).union(p.assignments.flatMap(\.takeOptions))
+                if candidates.isDisjoint(with: dates) { return false }
+            } else if lo != nil || hi != nil {
                 guard !received.isEmpty else { return false }
                 if let lo, received.contains(where: { $0 < lo }) { return false }
                 if let hi, received.contains(where: { $0 > hi }) { return false }

@@ -21,13 +21,14 @@ struct FindTradesFilterBar: View {
     @State private var activeSheet: FilterSheet?
     private enum FilterSheet: Int, Identifiable { case dates, connection, quals, shifts; var id: Int { rawValue } }
 
-    private var hasDates: Bool { filter.dateStart != nil || filter.dateEnd != nil }
+    private var hasDates: Bool { filter.dateStart != nil || filter.dateEnd != nil || !(filter.dates?.isEmpty ?? true) }
 
     private static let chipFmt: DateFormatter = {
         let f = DateFormatter(); f.dateFormat = "MMM d"; return f
     }()
     private var dateLabel: String {
         guard hasDates else { return "Give-back Date" }
+        if let d = filter.dates, !d.isEmpty { return "\(d.count) date\(d.count == 1 ? "" : "s")" }
         let s = filter.dateStart.map(Self.chipFmt.string(from:))
         let e = filter.dateEnd.map(Self.chipFmt.string(from:))
         switch (s, e) {
@@ -156,8 +157,12 @@ struct GiveBackDatesSheet: View {
         _filter = filter; self.onApply = onApply
         let cal = Calendar.current
         let f = filter.wrappedValue
+        let isoF = DateFormatter(); isoF.dateFormat = "yyyy-MM-dd"
         var set = Set<DateComponents>()
-        if let s = f.dateStart, let e = f.dateEnd {
+        if let specific = f.dates, !specific.isEmpty {
+            // Specific-days mode: prefill the tapped days from the stored ISO set.
+            for iso in specific { if let d = isoF.date(from: iso) { set.insert(cal.dateComponents([.year, .month, .day], from: d)) } }
+        } else if let s = f.dateStart, let e = f.dateEnd {
             var d = cal.startOfDay(for: s); let end = cal.startOfDay(for: e); var guardN = 0
             while d <= end, guardN < 400 { set.insert(cal.dateComponents([.year, .month, .day], from: d))
                 d = cal.date(byAdding: .day, value: 1, to: d) ?? end; guardN += 1 }
@@ -165,7 +170,7 @@ struct GiveBackDatesSheet: View {
         _picked = State(initialValue: set)
         _from = State(initialValue: f.dateStart ?? Date())
         _to = State(initialValue: f.dateEnd ?? f.dateStart ?? Date())
-        _mode = State(initialValue: 0)
+        _mode = State(initialValue: !(f.dates?.isEmpty ?? true) ? 1 : 0)
     }
 
     var body: some View {
@@ -195,7 +200,7 @@ struct GiveBackDatesSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Clear") { filter.dateStart = nil; filter.dateEnd = nil; onApply(); dismiss() }
+                    Button("Clear") { filter.dateStart = nil; filter.dateEnd = nil; filter.dates = nil; onApply(); dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) { DXCloseButton { apply(); dismiss() } }
             }
@@ -206,12 +211,13 @@ struct GiveBackDatesSheet: View {
     private func apply() {
         let cal = Calendar.current
         if mode == 0 {
+            filter.dates = nil                                  // range mode clears the specific-days set
             filter.dateStart = cal.startOfDay(for: min(from, to))
             filter.dateEnd = cal.startOfDay(for: max(from, to))
         } else {
-            let dates = picked.compactMap { cal.date(from: $0) }.sorted()
-            filter.dateStart = dates.first.map { cal.startOfDay(for: $0) }
-            filter.dateEnd = dates.last.map { cal.startOfDay(for: $0) }
+            filter.dateStart = nil; filter.dateEnd = nil        // specific mode: store the exact days, NOT a range
+            let iso = Set(picked.compactMap { cal.date(from: $0) }.map { SearchFilter.iso($0) })
+            filter.dates = iso.isEmpty ? nil : iso
         }
         onApply()
     }

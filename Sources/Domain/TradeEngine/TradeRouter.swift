@@ -747,19 +747,25 @@ enum TradeRouter {
             giverID: selfID, receiverID: workerID, maps: maps, quals: qualsDict, priors: priors,
             start: ctx.start, selfID: selfID, mySeeking: mySeeking, myWantToWork: myWantToWork,
             profilesByID: ctx.profilesByID).map(\.dayID)
+        // This is an EXPLORATORY "trades with just this person" view — surface every reciprocal day (don't
+        // hard-drop non-bookend returns even if I'm Bookends-Only), so the user sees the full option set.
+        _ = myBookendsOnly
         let givesBack = modelRankedLegs(
             cleanReceiveLegs(plan.iTake.filter { wouldTake(myProfile, $0) },
-                             wantToWork: myWantToWork, bookendsOnly: myBookendsOnly),
+                             wantToWork: myWantToWork, bookendsOnly: false),
             giverID: workerID, receiverID: selfID, maps: maps, quals: qualsDict, priors: priors,
             start: ctx.start, selfID: selfID, mySeeking: mySeeking, myWantToWork: myWantToWork,
             profilesByID: ctx.profilesByID).map(\.dayID)
 
+        // Allow a PARTIAL balanced swap: if the peer can take more of my days than they can hand back (or
+        // vice-versa), do the largest even k-for-k rather than rejecting outright (the old guard returned nil).
         let cover = Array(giveDayIDs).filter { canTake.contains($0) }
-        guard !cover.isEmpty, givesBack.count >= cover.count else { return nil }
+        let k = min(cover.count, givesBack.count)
+        guard k >= 1 else { return nil }
         let assignment = PackageAssignment(workerID: workerID, name: name,
-                                           giveDayIDs: cover,
-                                           takeDayIDs: Array(givesBack.prefix(cover.count)),
-                                           takeOptions: Array(givesBack.prefix(max(maxOptions, cover.count))))
+                                           giveDayIDs: Array(cover.prefix(k)),
+                                           takeDayIDs: Array(givesBack.prefix(k)),
+                                           takeOptions: Array(givesBack.prefix(max(maxOptions, k))))
         return TradePackage(id: "find-\(workerID)", methodology: .greedy, assignments: [assignment],
                             route: nil, urgency: 0, isOptimal: true)
     }

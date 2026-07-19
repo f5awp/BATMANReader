@@ -555,12 +555,15 @@ struct InboxView: View {
         }
     }
 
-    /// Build the tapped peer's best day-for-day swap and open the calendar view (matches the day detail).
+    /// Open the tapped suggestion's two-way calendar. Built DIRECTLY from the match (which already carries the
+    /// give/take days the radar validated) instead of re-running the roster search — the old search often
+    /// returned no 2-person package for that peer, so the tap silently did nothing.
     private func openSuggested(_ m: MatchStore.SuggestedMatch) async {
-        let today = Calendar.current.startOfDay(for: Date())
-        let mine = ShiftStore.shared.shifts.filter { !$0.isOff && $0.date >= today }
-        let pkgs = await TradeRouter.packages(forGiveShifts: mine, excluding: myID)
-        suggestedDetail = pkgs.first { $0.usesCompactCard && $0.assignments.first?.workerID == m.peerID }
+        let a = PackageAssignment(workerID: m.peerID, name: m.peerName,
+                                  giveDayIDs: m.giveDayIDs,
+                                  takeDayIDs: Array(m.takeDayIDs.prefix(max(1, m.giveDayIDs.count))),
+                                  takeOptions: m.takeDayIDs)
+        suggestedDetail = TradePackage(id: "sug-\(m.peerID)", methodology: .greedy, assignments: [a], route: nil)
     }
     private func proposeSuggested(_ pkg: TradePackage) async {
         for a in pkg.assignments {
@@ -1234,8 +1237,10 @@ struct ThreadView: View {
                                      who: r.responderID == myID ? "You" : r.responderName,
                                      what: r.statusValue.label.lowercased(), when: r.createdAt, note: r.note)
                             // A counter carries a re-picked package → show it as a card, not just text (Stage 8).
+                            // When the OTHER side countered my proposal, it also arrives as a new pending request
+                            // in this same thread/loop — that's what you accept (canAct guides you there).
                             if r.statusValue == .countered, let days = r.acceptedDayIDs, !days.isEmpty {
-                                counterPackageCard(days: days)
+                                counterPackageCard(days: days, canAct: r.responderID != myID && counterRequest(inLoop: request.groupKey) != nil)
                             }
                         }
                     }
@@ -1512,19 +1517,35 @@ struct ThreadView: View {
     }
 
     /// A counter-offer's re-picked package, rendered as a card in the thread (Stage 8).
-    private func counterPackageCard(days: [String]) -> some View {
-        HStack(alignment: .top, spacing: 8) {
-            Image(systemName: "arrow.uturn.left.circle.fill").foregroundStyle(AppColor.primary)
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Counter package").font(.caption.weight(.bold)).foregroundStyle(AppColor.primary)
-                Text(DayFmt.list(days)).font(.caption).foregroundStyle(.primary)
+    /// The reciprocal counter-request (a counter also arrives as a new pending request in the same loop,
+    /// addressed to me — that's the one I accept). nil when there's nothing pending for me.
+    private func counterRequest(inLoop loop: String) -> TradeRequest? {
+        store.requests.first { (r: TradeRequest) -> Bool in
+            r.groupKey == loop && r.toID == myID && r.fromID != myID
+        }
+    }
+
+    private func counterPackageCard(days: [String], canAct: Bool = false) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 12)
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "arrow.uturn.left.circle.fill").foregroundStyle(AppColor.primary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Counter package").font(.caption.weight(.bold)).foregroundStyle(AppColor.primary)
+                    Text(DayFmt.list(days)).font(.caption).foregroundStyle(.primary)
+                }
+                Spacer(minLength: 0)
             }
-            Spacer(minLength: 0)
+            // The counter came back as a new pending request in this same thread — point the proposer to it.
+            if canAct {
+                Text("They countered — accept it on their new request below in this thread.")
+                    .font(.caption2.weight(.semibold)).foregroundStyle(AppColor.primary)
+            }
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 12).fill(AppColor.primary.opacity(0.10)))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(AppColor.primary.opacity(0.3), lineWidth: 1))
+        .background(shape.fill(AppColor.primary.opacity(0.10)))
+        .overlay(shape.stroke(AppColor.primary.opacity(0.3), lineWidth: 1))
     }
 
     /// The sender posted an "ECB CONFIRMED" response → they're submitting the form.
