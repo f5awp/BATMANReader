@@ -736,14 +736,19 @@ enum TradeRouter {
                                     region: DeskRules.region(forDesk: leg.desk).rawValue, isBookend: leg.bookend)
         }
 
+        // Exploratory: build the days I could GIVE this peer on PHYSICAL feasibility only — an unconfigured
+        // peer's fabricated Bookends-Only default profile must not hide feasible swaps. They decide willingness
+        // when the proposal arrives. (My receive side below still honors MY real rules.)
         let plan = TradeMatcher.twoWayExploreCore(
             withWorker: workerID, name: name, windowStart: ctx.start, windowEnd: ctx.end,
             mySeeking: mySeeking, theirSeeking: profile.seekingDayIDs,
             myProfile: myProfile, theirProfile: profile, ignoreOwnBlacklist: false,
+            peerCoverSoftGates: false,
             myEntries: ctx.mineEntries, peerEntries: Array((maps[workerID] ?? [:]).values))
 
+        // No second willingness re-gate here (the peer's soft gate is intentionally skipped above).
         let canTake = modelRankedLegs(
-            plan.iGive.filter { giveDayIDs.contains($0.dayID) && wouldTake(profile, $0) },
+            plan.iGive.filter { giveDayIDs.contains($0.dayID) },
             giverID: selfID, receiverID: workerID, maps: maps, quals: qualsDict, priors: priors,
             start: ctx.start, selfID: selfID, mySeeking: mySeeking, myWantToWork: myWantToWork,
             profilesByID: ctx.profilesByID).map(\.dayID)

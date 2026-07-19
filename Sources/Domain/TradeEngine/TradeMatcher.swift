@@ -533,6 +533,11 @@ enum TradeMatcher {
                               mySeeking: Set<String>, theirSeeking: Set<String>,
                               myProfile: TradeProfile, theirProfile: TradeProfile,
                               ignoreOwnBlacklist: Bool,
+                              // When false, the days I could GIVE the peer are gated PHYSICALLY only (rest/qual/
+                              // rested), NOT by the peer's willingness. Used by the single-dispatcher exploratory
+                              // "Find Trades" so a not-yet-configured peer's fabricated Bookends-Only default
+                              // profile doesn't hide every feasible swap. Default true = unchanged everywhere else.
+                              peerCoverSoftGates: Bool = true,
                               myEntries: [RosterEntry], peerEntries: [RosterEntry]) -> TwoWayPlan {
         let cal = Calendar.current
         let pEntries = peerEntries
@@ -560,7 +565,7 @@ enum TradeMatcher {
             let check = TradeEligibility.canCover(
                 coverDayID: me.day, coverDay: day, desk: me.desk, startHour: me.startHour,
                 coverMap: pMap, coverQuals: pe.quals, coverProfile: theirProfile,
-                options: .full, cal: cal)
+                options: peerCoverSoftGates ? .full : .physicalOnly, cal: cal)
             guard check.eligible else { continue }
             let leg = TwoWayLeg(dayID: me.day, date: day, desk: me.desk, startHour: me.startHour,
                                 bookend: check.isBookend, wanted: mySeeking.contains(me.day))
