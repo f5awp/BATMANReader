@@ -66,14 +66,20 @@ struct DayTradeListPane: View {
     @State private var dateTo = Date()
     @State private var specificDates: Set<DateComponents> = []
     @State private var shiftFilter: Set<ShiftAvailabilityType> = []   // filter by the shift you'd work
-    @State private var qualFilter: Set<String> = []                    // filter by the pickup desk's qual
-    @State private var legTypeByPeer: [String: ShiftAvailabilityType] = [:]   // peerID → shift type of the leg
-    @State private var legQualByPeer: [String: String] = [:]           // peerID → required qual of the leg's desk
+    @State private var qualFilter: Set<String> = []                    // filter by the worked desk's qual
+    @State private var dayType: [String: ShiftAvailabilityType] = [:]  // "peerID|dayID" → that shift's type
+    @State private var dayQual: [String: String] = [:]                 // "peerID|dayID" → desk's required qual
     @State private var tlSheet: TLFilterSheet?
     private enum TLFilterSheet: Int, Identifiable { case dates, shifts, quals; var id: Int { rawValue } }
 
+    /// The days I'd actually WORK in a package (off-day pickup = the promoted take; trade-away = the returns).
+    private func workedDays(_ a: PackageAssignment) -> [String] {
+        target.isOff ? a.takeDayIDs : (a.takeOptions.isEmpty ? a.takeDayIDs : a.takeOptions)
+    }
     /// Quals present among the shown legs — the qual chip's option list.
-    private var availableQuals: [String] { Set(legQualByPeer.values).sorted() }
+    private var availableQuals: [String] {
+        Set(packages.flatMap { p in p.assignments.flatMap { a in workedDays(a).compactMap { dayQual["\(a.workerID)|\($0)"] } } }).sorted()
+    }
 
     private static let isoF: DateFormatter = { let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; return f }()
     /// The allowed ISO days from the filter — a contiguous range OR a set of specific dates. nil = filter off.
@@ -100,9 +106,16 @@ struct DayTradeListPane: View {
                 }
                 if !flex.contains(where: allowed.contains) { return false }
             }
-            let peer = pkg.assignments.first?.workerID
-            if !shiftFilter.isEmpty, let p = peer, let t = legTypeByPeer[p], !shiftFilter.contains(t) { return false }
-            if !qualFilter.isEmpty, let p = peer, let q = legQualByPeer[p], !qualFilter.contains(q) { return false }
+            // Shift / Qual apply to the days I'd WORK (both day types), resolved per (peer, day) from the
+            // roster. A package passes if ANY worked day matches; unknown-info days never wrongly hide it.
+            if !shiftFilter.isEmpty {
+                let types = pkg.assignments.flatMap { a in workedDays(a).compactMap { dayType["\(a.workerID)|\($0)"] } }
+                if !types.isEmpty, !types.contains(where: shiftFilter.contains) { return false }
+            }
+            if !qualFilter.isEmpty {
+                let quals = pkg.assignments.flatMap { a in workedDays(a).compactMap { dayQual["\(a.workerID)|\($0)"] } }
+                if !quals.isEmpty, !quals.contains(where: qualFilter.contains) { return false }
+            }
             return true
         }
     }
@@ -258,7 +271,7 @@ struct DayTradeListPane: View {
     /// one recompute; then packages() explores the reciprocal swaps.
     private func reload(fullRadar: Bool) async {
         loading = true
-        legTypeByPeer = [:]; legQualByPeer = [:]
+        dayType = [:]; dayQual = [:]
         if fullRadar || !radar.hasComputed { await radar.recompute(scope: .local) }
         let me = SettingsManager.shared.username
         if target.isOff {
@@ -275,11 +288,6 @@ struct DayTradeListPane: View {
             let scope = DayIntentStore.shared.acceptScope(forDay: target.dayID)
             let pickupByPeer = Dictionary(radar.rows(forDay: target.dayID).pickups.map { ($0.peerID, $0) },
                                           uniquingKeysWith: { a, _ in a })
-            // Per-peer leg info (the shift you'd pick up) powers the Shift + Qual filters.
-            for (pid, row) in pickupByPeer {
-                legTypeByPeer[pid] = .infer(fromStartHour: row.startHour)
-                if let q = DeskRules.requiredQual(forDesk: row.desk) { legQualByPeer[pid] = q }
-            }
             packages = pkgs.compactMap { pkg -> TradePackage? in
                 guard pkg.usesCompactCard, let a = pkg.assignments.first else { return nil }
                 let opts = a.takeOptions.isEmpty ? a.takeDayIDs : a.takeOptions
@@ -298,6 +306,16 @@ struct DayTradeListPane: View {
                 packages = pkgs.filter { $0.usesCompactCard }.sorted { $0.rankScore > $1.rankScore }
             } else { packages = [] }
         }
+        // Resolve shift-type + desk-qual for every peer's worked days (off-day pickup AND trade-away returns)
+        // so the Shift / Qual chips filter both day types. Keyed "peerID|dayID" from the peer's roster.
+        var dt: [String: ShiftAvailabilityType] = [:]; var dq: [String: String] = [:]
+        for wid in Set(packages.flatMap { $0.assignments.map(\.workerID) }) {
+            for e in await RosterStore.shared.schedule(forWorker: wid) where !e.isOff {
+                dt["\(wid)|\(e.day)"] = .infer(fromStartHour: e.startHour)
+                if let q = DeskRules.requiredQual(forDesk: e.desk) { dq["\(wid)|\(e.day)"] = q }
+            }
+        }
+        dayType = dt; dayQual = dq
         loading = false
     }
 
