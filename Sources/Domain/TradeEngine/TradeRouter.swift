@@ -736,39 +736,40 @@ enum TradeRouter {
                                     region: DeskRules.region(forDesk: leg.desk).rawValue, isBookend: leg.bookend)
         }
 
-        // Exploratory: build the days I could GIVE this peer on PHYSICAL feasibility only — an unconfigured
-        // peer's fabricated Bookends-Only default profile must not hide feasible swaps. They decide willingness
-        // when the proposal arrives. (My receive side below still honors MY real rules.)
+        // Soft-rank exploratory view: build BOTH sides on PHYSICAL feasibility only — `ignoreOwnBlacklist`
+        // drops MY soft prefs on the receive side, `peerCoverSoftGates:false` drops the PEER's on the give
+        // side (their profile may be a fabricated Bookends-Only default). Hard gates (rest/qual/must-be-off/
+        // relief) still apply. Nothing eligible is hidden; preferences drive ORDER, not a filter.
         let plan = TradeMatcher.twoWayExploreCore(
             withWorker: workerID, name: name, windowStart: ctx.start, windowEnd: ctx.end,
             mySeeking: mySeeking, theirSeeking: profile.seekingDayIDs,
-            myProfile: myProfile, theirProfile: profile, ignoreOwnBlacklist: false,
+            myProfile: myProfile, theirProfile: profile, ignoreOwnBlacklist: true,
             peerCoverSoftGates: false,
             myEntries: ctx.mineEntries, peerEntries: Array((maps[workerID] ?? [:]).values))
+        _ = myBookendsOnly
 
-        // No second willingness re-gate here (the peer's soft gate is intentionally skipped above).
-        let canTake = modelRankedLegs(
+        // "You give" = my days the peer could work; days THEIR prefs accept rank first (one-way beneficial → them).
+        let giveRanked = modelRankedLegs(
             plan.iGive.filter { giveDayIDs.contains($0.dayID) },
             giverID: selfID, receiverID: workerID, maps: maps, quals: qualsDict, priors: priors,
             start: ctx.start, selfID: selfID, mySeeking: mySeeking, myWantToWork: myWantToWork,
-            profilesByID: ctx.profilesByID).map(\.dayID)
-        // This is an EXPLORATORY "trades with just this person" view — surface every reciprocal day (don't
-        // hard-drop non-bookend returns even if I'm Bookends-Only), so the user sees the full option set.
-        _ = myBookendsOnly
-        let givesBack = modelRankedLegs(
-            cleanReceiveLegs(plan.iTake.filter { wouldTake(myProfile, $0) },
-                             wantToWork: myWantToWork, bookendsOnly: false),
+            profilesByID: ctx.profilesByID)
+        let canTake = (giveRanked.filter { wouldTake(profile, $0) } + giveRanked.filter { !wouldTake(profile, $0) }).map(\.dayID)
+
+        // "You get" = the peer's days I could work; days MY prefs accept rank first (one-way beneficial → me).
+        let getRanked = modelRankedLegs(
+            plan.iTake,
             giverID: workerID, receiverID: selfID, maps: maps, quals: qualsDict, priors: priors,
             start: ctx.start, selfID: selfID, mySeeking: mySeeking, myWantToWork: myWantToWork,
-            profilesByID: ctx.profilesByID).map(\.dayID)
+            profilesByID: ctx.profilesByID)
+        let givesBack = (getRanked.filter { wouldTake(myProfile, $0) } + getRanked.filter { !wouldTake(myProfile, $0) }).map(\.dayID)
 
-        // Allow a PARTIAL balanced swap: if the peer can take more of my days than they can hand back (or
-        // vice-versa), do the largest even k-for-k rather than rejecting outright (the old guard returned nil).
-        let cover = Array(giveDayIDs).filter { canTake.contains($0) }
-        let k = min(cover.count, givesBack.count)
+        // Largest balanced k-for-k. Each side is pref-first, so the default pick is the mutually-good swap;
+        // the ranked alternates below it degrade to one-way, then physical-only.
+        let k = min(canTake.count, givesBack.count)
         guard k >= 1 else { return nil }
         let assignment = PackageAssignment(workerID: workerID, name: name,
-                                           giveDayIDs: Array(cover.prefix(k)),
+                                           giveDayIDs: Array(canTake.prefix(k)),
                                            takeDayIDs: Array(givesBack.prefix(k)),
                                            takeOptions: Array(givesBack.prefix(max(maxOptions, k))))
         return TradePackage(id: "find-\(workerID)", methodology: .greedy, assignments: [assignment],
