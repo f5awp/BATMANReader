@@ -1237,10 +1237,11 @@ struct ThreadView: View {
                                      who: r.responderID == myID ? "You" : r.responderName,
                                      what: r.statusValue.label.lowercased(), when: r.createdAt, note: r.note)
                             // A counter carries a re-picked package → show it as a card, not just text (Stage 8).
-                            // When the OTHER side countered my proposal, it also arrives as a new pending request
-                            // in this same thread/loop — that's what you accept (canAct guides you there).
+                            // When the OTHER side countered my proposal, accept/decline it RIGHT HERE — the card
+                            // acts on the reciprocal request (which holds the trimmed terms the commit path uses).
                             if r.statusValue == .countered, let days = r.acceptedDayIDs, !days.isEmpty {
-                                counterPackageCard(days: days, canAct: r.responderID != myID && counterRequest(inLoop: request.groupKey) != nil)
+                                counterPackageCard(days: days,
+                                                   counter: r.responderID != myID ? counterRequest(inLoop: request.groupKey) : nil)
                             }
                         }
                     }
@@ -1525,9 +1526,10 @@ struct ThreadView: View {
         }
     }
 
-    private func counterPackageCard(days: [String], canAct: Bool = false) -> some View {
+    private func counterPackageCard(days: [String], counter: TradeRequest? = nil) -> some View {
         let shape = RoundedRectangle(cornerRadius: 12)
-        return VStack(alignment: .leading, spacing: 6) {
+        let canAccept = counter.map { store.status(of: $0) == .pending } ?? false
+        return VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .top, spacing: 8) {
                 Image(systemName: "arrow.uturn.left.circle.fill").foregroundStyle(AppColor.primary)
                 VStack(alignment: .leading, spacing: 2) {
@@ -1536,16 +1538,31 @@ struct ThreadView: View {
                 }
                 Spacer(minLength: 0)
             }
-            // The counter came back as a new pending request in this same thread — point the proposer to it.
-            if canAct {
-                Text("They countered — accept it on their new request below in this thread.")
-                    .font(.caption2.weight(.semibold)).foregroundStyle(AppColor.primary)
-            }
+            if let counter, canAccept { counterActions(counter) }
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(shape.fill(AppColor.primary.opacity(0.10)))
         .overlay(shape.stroke(AppColor.primary.opacity(0.3), lineWidth: 1))
+    }
+
+    /// Accept / Decline the counter, right on its card. Acts on the reciprocal request (`counter`), whose
+    /// give/take days ARE the trimmed counter terms — so the commit path records exactly the countered subset.
+    @ViewBuilder private func counterActions(_ counter: TradeRequest) -> some View {
+        HStack(spacing: 8) {
+            Button {
+                Task { await store.respond(to: counter, status: .accepted, note: "Accepted the counter-offer.") }
+            } label: {
+                Text("Accept").font(.caption.weight(.bold)).frame(maxWidth: .infinity).padding(.vertical, 7)
+            }
+            .buttonStyle(.borderedProminent).controlSize(.small).tint(AppColor.success)
+            Button(role: .destructive) {
+                Task { await store.respond(to: counter, status: .declined, note: "Declined the counter-offer.") }
+            } label: {
+                Text("Decline").font(.caption.weight(.bold)).frame(maxWidth: .infinity).padding(.vertical, 7)
+            }
+            .buttonStyle(.bordered).controlSize(.small)
+        }
     }
 
     /// The sender posted an "ECB CONFIRMED" response → they're submitting the form.
