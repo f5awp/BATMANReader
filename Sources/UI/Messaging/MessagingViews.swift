@@ -494,19 +494,45 @@ struct InboxView: View {
     @ViewBuilder private var autoLane: some View {
         let ecbOffers = proposedECBOffers
         let other = proposedOther
-        if ecbOffers.isEmpty && other.isEmpty {
+        let archECB = archivedAutoECB
+        let arch = archivedAuto
+        let hasArchive = !archECB.isEmpty || !arch.isEmpty
+        if ecbOffers.isEmpty && other.isEmpty && !hasArchive {
             ContentUnavailableView("No Auto-Matches Yet", systemImage: "sparkle.magnifyingglass",
                 description: Text("When the app auto-sends a sure-thing trade for you it shows here. Pull to refresh the radar."))
                 .refreshable { await radar.recompute() }
         } else {
             List {
-                ForEach(ecbOffers, id: \.offerID) { offer in
-                    ecbOfferLink(offer)
+                if !ecbOffers.isEmpty || !other.isEmpty {
+                    Section {
+                        ForEach(ecbOffers, id: \.offerID) { ecbOfferLink($0) }
+                        ForEach(other) { row($0) }
+                    } header: { if hasArchive { Text("Active") } }
                 }
-                ForEach(other) { row($0) }
+                // Expired auto-matches keep a home here (they have no Requests-tab home) — history, not clutter.
+                if hasArchive {
+                    Section("Archived — expired") {
+                        ForEach(archECB, id: \.offerID) { ecbOfferLink($0) }
+                        ForEach(arch) { row($0) }
+                    }
+                }
             }
             .refreshable { await radar.recompute() }
         }
+    }
+
+    /// Expired auto-matched day-for-day / incoming trades — an archive home for the Auto lane.
+    private var archivedAuto: [TradeRequest] {
+        MessagingStore.dedupeLoops(allProposed.filter { !($0.isECB && $0.fromID == myID) })
+            .filter { store.status(of: $0) == .expired }
+            .sorted { $0.createdAt > $1.createdAt }
+    }
+    /// Expired auto-matched ECB offer folders (grouped by offerID), mirroring `proposedECBOffers`.
+    private var archivedAutoECB: [(offerID: String, requests: [TradeRequest])] {
+        let ecb = allProposed.filter { $0.isECB && $0.fromID == myID && $0.offerID != nil && store.status(of: $0) == .expired }
+        return Dictionary(grouping: ecb, by: { $0.offerID! })
+            .map { ($0.key, $0.value.sorted { $0.toName < $1.toName }) }
+            .sorted { ($0.requests.first?.createdAt ?? .distantPast) > ($1.requests.first?.createdAt ?? .distantPast) }
     }
 
     /// SUGGESTED lane — radar found a trade you'd initiate; tap to open the two-way calendar and propose.
