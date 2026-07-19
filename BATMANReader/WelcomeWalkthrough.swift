@@ -162,30 +162,37 @@ struct WelcomeWalkthrough: View {
             Text("Welcome to DX Trader")
                 .font(.system(size: 30, weight: .heavy))
                 .foregroundColor(WT.text)
-            Text("It reads the BATMAN schedule for you and finds trades that actually work. Do everything from Home — then dig deeper in the Trades tab. Here's the two-minute tour.")
+            Text("It reads the BATMAN schedule for you and finds trades that actually work. Here's the two-minute tour.")
                 .font(.system(size: 14.5)).lineSpacing(3)
                 .foregroundColor(WT.dim)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 300)
-            VStack(spacing: 9) {
-                chip("Everything from Home")
-                chip("Trade Inbox · Channels & Messages · ECB")
-                chip("Compact view when you want it")
-                chip("Dig deeper in the Trades tab")
-            }.padding(.top, 8)
+            VStack(alignment: .leading, spacing: 10) {
+                welcomeFeature("bolt.fill", WT.blue, "Find Trades Immediately")
+                welcomeFeature("dollarsign.circle.fill", WT.gold, "Keep Track of your ECB")
+                welcomeFeature("bubble.left.and.bubble.right.fill", WT.teal, "Chat with your fellow Dispatchers or privately message them")
+                welcomeFeature("sparkles", WT.violet, "Find Complex Trades You've Never Thought Of")
+            }
+            .frame(maxWidth: 320)
+            .padding(.top, 8)
             Spacer()
         }
         .frame(maxWidth: .infinity)
         .padding(.horizontal, 30)
     }
 
-    private func chip(_ t: String) -> some View {
-        Text(t)
-            .font(.system(size: 13, weight: .semibold))
-            .foregroundColor(WT.text)
-            .padding(.horizontal, 18).padding(.vertical, 8)
-            .background(Capsule().fill(WT.card))
-            .overlay(Capsule().stroke(WT.stroke, lineWidth: 1))
+    private func welcomeFeature(_ symbol: String, _ color: Color, _ text: String) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: symbol)
+                .font(.system(size: 15, weight: .semibold)).foregroundColor(color)
+                .frame(width: 32, height: 32)
+                .background(RoundedRectangle(cornerRadius: 9).fill(color.opacity(0.13)))
+                .overlay(RoundedRectangle(cornerRadius: 9).stroke(color.opacity(0.33), lineWidth: 1))
+            Text(text)
+                .font(.system(size: 13.5, weight: .semibold)).foregroundColor(WT.text)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
     }
 
     // MARK: Cards 2–9 — screenshot + callouts
