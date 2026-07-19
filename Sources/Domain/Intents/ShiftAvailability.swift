@@ -110,9 +110,17 @@ struct AcceptScope: Codable, Sendable, Hashable {
     func accepts(shiftType: ShiftAvailabilityType, desk: String, dayID: String) -> Bool {
         if isOpen { return true }
         if let dates, !dates.isEmpty, !dates.contains(dayID) { return false }
+        return acceptsLeg(shiftType: shiftType, desk: desk)
+    }
+
+    /// HARD gate on a leg's shift-type + qual + desk (no date facet — callers apply the date facet to the
+    /// correct leg). Qual is STRICT: if you scoped quals, the desk must REQUIRE one of them — a desk with no
+    /// required qual (or a different one) is rejected, so "Latin only" never surfaces a Domestic desk.
+    func acceptsLeg(shiftType: ShiftAvailabilityType, desk: String) -> Bool {
         if !shiftTypes.isEmpty, !shiftTypes.contains(shiftType) { return false }
-        // Qual scope: the return desk must need one of the chosen quals (desks with no specific qual pass).
-        if !quals.isEmpty, let dq = DeskRules.requiredQual(forDesk: desk), !quals.contains(dq) { return false }
+        if !quals.isEmpty {
+            guard let dq = DeskRules.requiredQual(forDesk: desk), quals.contains(dq) else { return false }
+        }
         if let desks, !desks.isEmpty, !desks.contains(desk) { return false }
         return true
     }

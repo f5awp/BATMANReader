@@ -9,92 +9,14 @@ import SwiftUI
 /// The essential Trade Settings, embeddable in onboarding flows — same controls as Trade Settings, and
 /// every change publishes immediately. Used by `WelcomeView` (page 3) and the `WelcomeWalkthrough` finale.
 struct WelcomeTradePrefs: View {
-    @Bindable private var settings = SettingsManager.shared
-
     var body: some View {
+        // Reuse the EXACT Trade Settings sections so onboarding matches the Trade Settings tab one-to-one —
+        // same layout, (i) info bubbles, and openness/blacklist/ECB/qual-swap/relief controls — and every
+        // change publishes + syncs the same way (TradeSettingsSections owns its own publish + qual load).
         Form {
-            Section {
-                Text("Set these so you only get trades you'd actually take. You can change everything anytime in Trade Settings.")
-                    .font(.subheadline).foregroundStyle(.secondary)
-            }
-            Section {
-                Picker("Accepting", selection: openness) {
-                    ForEach(TradeOpenness.allCases, id: \.self) { Text($0.label).tag($0) }
-                }
-                Toggle("Mercenary mode (take any qualifying shift)", isOn: mercenary)
-            } header: { Text("Openness") } footer: {
-                Text("Bookends-only offers you a pickup only when it attaches to your existing days off.")
-            }
-            Section("Status (optional, public)") {
-                TextField("e.g. Open to bookends this month", text: $settings.statusBroadcast, axis: .vertical)
-                    .lineLimit(1...3)
-            }
-            Section {
-                pillFlow(ShiftAvailabilityType.allCases.map(\.rawValue),
-                         isOn: { settings.blacklistedShiftTypes.contains($0) },
-                         enabled: { _ in true },
-                         toggle: { toggleSet(&settings.blacklistedShiftTypes, $0) },
-                         label: { $0 })
-            } header: { Text("Blacklisted shift types") } footer: { Text("Tap a type to stop being offered those shifts.") }
-            Section {
-                pillFlow(DeskRegion.allCases.map(\.rawValue),
-                         isOn: { settings.blacklistedRegions.contains($0) },
-                         enabled: { DeskRules.isQualified(quals: settings.cachedQuals, forRegion: DeskRegion(rawValue: $0) ?? .domestic) },
-                         toggle: { toggleSet(&settings.blacklistedRegions, $0) },
-                         label: { $0 })
-            } header: { Text("Blacklisted regions") } footer: { Text("Grayed regions need a qualification you don't hold.") }
-            Section {
-                pillFlow(TradeSettingsSections.weekdayPills.map { String($0.day) },
-                         isOn: { settings.blacklistedWeekdays.contains(Int($0) ?? 0) },
-                         enabled: { _ in true },
-                         toggle: { toggleSet(&settings.blacklistedWeekdays, Int($0) ?? 0) },
-                         label: { d in TradeSettingsSections.weekdayPills.first { String($0.day) == d }?.letter ?? d })
-            } header: { Text("Blackout days") } footer: {
-                Text("More options — desks, qual-swap values, relief — live in Trade Settings.")
-            }
+            TradeSettingsSections()
         }
         .scrollContentBackground(.hidden)
-        .task {
-            guard settings.cachedQuals.isEmpty, !settings.username.isEmpty else { return }
-            for _ in 0..<20 {
-                let q = await RosterStore.shared.schedule(forWorker: settings.username).first?.quals ?? []
-                if !q.isEmpty { settings.cachedQuals = q; return }
-                try? await Task.sleep(nanoseconds: 400_000_000)
-            }
-        }
-    }
-
-    private func pillFlow(_ values: [String], isOn: @escaping (String) -> Bool,
-                          enabled: @escaping (String) -> Bool, toggle: @escaping (String) -> Void,
-                          label: @escaping (String) -> String) -> some View {
-        FlowLayout(spacing: 8) {
-            ForEach(values, id: \.self) { v in
-                BlacklistPill(label: label(v), selected: isOn(v), enabled: enabled(v)) { toggle(v) }
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 2)
-    }
-    private func publishPrefs() { settings.markPrefsChanged(); Task { await TradeProfileStore.shared.publishMine() } }
-    private func toggleSet<T: Hashable>(_ set: inout Set<T>, _ value: T) {
-        if set.contains(value) { set.remove(value) } else { set.insert(value) }
-        publishPrefs()
-    }
-    private var openness: Binding<TradeOpenness> {
-        Binding(get: { TradeOpenness(rawValue: settings.tradeOpenness) ?? .bookends },
-                set: { level in
-                    settings.tradeOpenness = level.rawValue
-                    DayIntentStore.shared.applyOpenness(level, shifts: ShiftStore.shared.shifts)
-                    publishPrefs()
-                })
-    }
-    private var mercenary: Binding<Bool> {
-        Binding(get: { settings.isMercenaryMode },
-                set: { on in
-                    settings.isMercenaryMode = on
-                    let level = TradeOpenness(rawValue: settings.tradeOpenness) ?? .bookends
-                    DayIntentStore.shared.applyMercenary(on, openness: level, shifts: ShiftStore.shared.shifts)
-                    publishPrefs()
-                })
     }
 }
 

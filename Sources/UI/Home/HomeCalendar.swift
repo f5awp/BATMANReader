@@ -854,6 +854,7 @@ struct DayIntentEditor: View {
     @State private var noteText = ""
     @State private var notePrivate = false
     @State private var saving = false
+    @State private var loaded = false   // load() runs ONCE — re-running on tab switch wiped in-progress edits
     @State private var tradeKind: TradeKind = .both          // Match Radar: how this day is offered
     @State private var acceptTypes: Set<ShiftAvailabilityType> = []  // shift types accepted in return
     @State private var limitDates = false                    // restrict the return to specific dates
@@ -879,20 +880,27 @@ struct DayIntentEditor: View {
         (!target.isOff && working == .dontWantToWork) || (target.isOff && off == .wantToWork)
     }
 
-    /// The public/private day note — coworkers see the PUBLIC text on trade cards (day rows, package cards,
-    /// inbox threads) for this day. "Make Private" keeps it device-only.
+    /// The public/private day-note FIELDS — coworkers see the PUBLIC text on trade cards (day rows, package
+    /// cards, inbox threads). "Make Private" keeps it device-only. Reused inside the Trade options group and,
+    /// when there are no trade options, as its own section.
+    @ViewBuilder private var noteFields: some View {
+        HStack {
+            TextField("Short note", text: $noteText)
+                .onChange(of: noteText) { _, v in if v.count > 50 { noteText = String(v.prefix(50)) } }
+            CharCounter(text: noteText, limit: 50)
+        }
+        Toggle("Make Private", isOn: $notePrivate)
+    }
+
+    /// Standalone Note section (used when there are no trade options to attach it to). Explanation under (i).
     @ViewBuilder private var noteSection: some View {
         Section {
-            HStack {
-                TextField("Short note", text: $noteText)
-                    .onChange(of: noteText) { _, v in if v.count > 50 { noteText = String(v.prefix(50)) } }
-                CharCounter(text: noteText, limit: 50)
-            }
-            Toggle("Make Private", isOn: $notePrivate)
+            noteFields
         } header: {
-            Text("Note (≤ 50 chars)")
-        } footer: {
-            Text("Public by default — coworkers see it on the trade cards for this day. Turn on Make Private to keep it to yourself.")
+            HStack(spacing: 6) {
+                Text("Note (≤ 50 chars)")
+                InfoBubble(text: "A short public note coworkers see on the trade card for this day. Turn on Make Private to keep it device-only.")
+            }
         }
     }
 
@@ -999,15 +1007,15 @@ struct DayIntentEditor: View {
                                 }
                             }
                         }
+                        // The note lives in the SAME group as the trade options — public, shows on the trade card.
+                        Text("Note").font(.caption).foregroundStyle(.secondary)
+                        noteFields
                     } header: {
-                        Text("Trade options")
-                    } footer: {
-                        Text("Day-for-day swaps a shift; ECB trades for points. The scope pills are optional 1-time overrides of your defaults — limit what you'll accept by shift type, qual, or date (leave off for any).")
+                        HStack(spacing: 6) {
+                            Text("Trade options")
+                            InfoBubble(text: "Day-for-day swaps a shift; ECB trades for points. The scope pills are optional 1-time overrides — limit what you'll accept by shift type, qual, or date (leave off for any). The note is public and shows on the trade card.")
+                        }
                     }
-
-                    // Note sits at the END of the trade-options group so coworkers see WHY you're trading on
-                    // the trade cards. Public by default; "Make Private" keeps it device-only.
-                    noteSection
                 }
 
                 Section {
@@ -1016,14 +1024,20 @@ struct DayIntentEditor: View {
                             .font(.caption.weight(.semibold)).foregroundStyle(BrickPalette.warning)
                     }
                     Toggle("Significant day", isOn: $significant)
-                } footer: {
-                    Text("Flags a personal milestone — marks the date with a pink dot on your calendar and raises its priority when the app ranks trades that would cover it, so a shift you're giving away on an important day gets covered first. It doesn't block trading on that day.")
+                } header: {
+                    HStack(spacing: 6) {
+                        Text("Significant day")
+                        InfoBubble(text: "Flags a personal milestone — shows a pink star in the top-right corner of the date, and raises the day's priority when the app ranks trades that would cover it, so a shift you're giving away on an important day gets covered first. It doesn't block trading.")
+                    }
                 }
 
                 Section {
                     Toggle("Carryover Vacation", isOn: $carryover)
-                } footer: {
-                    Text("Marks this day as a vacation (you're off) and tells others — use it for a carryover vacation that isn't printed in the posted schedule.")
+                } header: {
+                    HStack(spacing: 6) {
+                        Text("Carryover Vacation")
+                        InfoBubble(text: "Takes this shift OFF your schedule — and everyone else sees you as off that day — and makes it ineligible for trading. Use it for a carryover vacation that isn't printed in the posted BATMAN schedule.")
+                    }
                 }
 
                 // When trade options aren't visible (e.g. a Keep/Blackout day), the Note is its own section.
@@ -1046,7 +1060,12 @@ struct DayIntentEditor: View {
                     Button("Save") { Task { await save() } }.disabled(saving)
                 }
             }
-            .onAppear(perform: load)
+            // Load ONCE — the Info tab re-fires .onAppear each time you switch back to it, which used to
+            // overwrite your in-progress edits with the stored (default) values.
+            .onAppear { if !loaded { load(); loaded = true } }
+            // Persist when leaving the Info tab (e.g. switching to Trade List) so the store reflects your
+            // trade options BEFORE the Trade List recomputes — and nothing is lost on tab switch.
+            .onDisappear { persistOptions() }
         }
     }
 
@@ -1071,8 +1090,11 @@ struct DayIntentEditor: View {
         }
     }
 
-    private func save() async {
-        saving = true
+    /// Write the current form state to the store. Called on Save AND on leaving the Info tab, so the Trade
+    /// List (and the calendar) always reflect the options you set — no data loss on a tab switch. Only runs
+    /// once loaded, so it can't clobber the store with default @State before load() populates it.
+    private func persistOptions() {
+        guard loaded else { return }
         if target.isOff { intents.setOffIntent(off, forDay: target.dayID) }
         else { intents.setWorkingIntent(working, forDay: target.dayID) }
         intents.setTopology(significant ? .personalMilestone : nil, forDay: target.dayID)
@@ -1106,6 +1128,11 @@ struct DayIntentEditor: View {
         intents.setNote(trimmed.isEmpty ? nil
                         : DayNote(dayID: target.dayID, message: trimmed, reason: nil, isPrivate: notePrivate),
                         forDay: target.dayID)
+    }
+
+    private func save() async {
+        saving = true
+        persistOptions()
         saving = false
         dismiss()
     }

@@ -35,8 +35,31 @@ enum ReleaseNotes {
     static let all: [ReleaseNote] = [
 
         ReleaseNote(
+            version: "v2.4 (Build 2)",
+            headline: "A clearer calendar and notifications you control — matches now pop as an orange disc right on the date, holidays and watched days get their own marks, and every trade alert has its own switch (with the auto-match push naming the date and dispatcher, and one tap to jump there).",
+            bullets: [
+                ReleaseBullet(icon: "☰", color: brand, title: "See your matches for a day",
+                    body: "Tap a date and open Trade List to see everyone you could trade with that day — coworkers who'd take a shift you want off, or whose shift you could pick up on a day off."),
+                ReleaseBullet(icon: "✎", color: violet, title: "Dial in your trade options",
+                    body: "Mark a day Want to Trade or Want to Work, then set exactly how: day-for-day, ECB, or either; the ECB amount and whether it's an IOU paid on a later date; the shift types and quals you'll accept back; specific give-back dates; and a note that shows up on the trade card for everyone."),
+                ReleaseBullet(icon: "⟳", color: green, title: "Auto-match off your intents",
+                    body: "With Auto-match on, the trade options you set ARE your standing offers — the app sends the swap to matching coworkers for you. When one lands you get a push naming the date and dispatcher — “An Auto-Match has been found for Sat, Sep 6 with …!” — tap it to jump to that day's Trade List."),
+                ReleaseBullet(icon: "●", color: orange, title: "Matches jump off the calendar",
+                    body: "A day with a possible trade now shows a bold orange disc behind the date — the most visible mark on the calendar, so opportunities are impossible to miss."),
+                ReleaseBullet(icon: "★", color: gold, title: "Holidays & high-demand days",
+                    body: "High-demand and holiday dates show a star in the top-right corner. And a Midnight shift now counts toward the holiday it works INTO — Labor Day is the Sept 6 MID (into the 7th), not the Sept 7 MID."),
+                ReleaseBullet(icon: "!", color: blue, title: "Watched days at a glance",
+                    body: "Days you're watching show a blue “!” in the top-left corner — distinct from the match disc, so a watched day with no match still reads clearly."),
+                ReleaseBullet(icon: "☰", color: teal, title: "Notifications you control",
+                    body: "New on/off switches for auto-matches, trade requests & ECB offers, qual swaps, responses to your trades, and messages. A periodic Match Summary tells you how many matches and suggestions you have per date, in place of a ping for every watched day."),
+                ReleaseBullet(icon: "✦", color: gray, title: "Fewer, smarter pings",
+                    body: "When several coworkers respond to one offer you get a single alert, not one each — and the “mutual match” / “your offer was sent” pings are gone, since the auto-match push already covers it."),
+            ]
+        ),
+
+        ReleaseNote(
             version: "v2.4",
-            headline: "Match Radar, rebuilt around one simple idea — the app only auto-sends a trade when there's nothing for you to decide, and hands you the rest. Clearer AUTO vs Suggested, trade method now gates matches, ECB posts to your ledger on receipt, and one Find Trades screen for everything else.",
+            headline: "Match Radar, rebuilt around one simple idea — the app only auto-sends a trade when there's nothing for you to decide, and hands you the rest. Plus 1:1 Direct Messages, a full Dispatcher directory, ECB force-through, and one unified Settings.",
             bullets: [
                 ReleaseBullet(icon: "⟳", color: violet, title: "AUTO — only sure things",
                     body: "The Trade Inbox's AUTO tab now auto-sends a trade ONLY when there's no choice to make: a swap you and a coworker BOTH fully want, or an ECB where you shed a shift for points. Everything else no longer goes out on its own."),
@@ -50,6 +73,14 @@ enum ReleaseNotes {
                     body: "The old Intents and Trade Solutions tabs are now one Find Trades screen: search a date range, or switch to build from your marked days. Multi-person and qual-swap solutions live here."),
                 ReleaseBullet(icon: "▤", color: brand, title: "Clearer trade cards",
                     body: "A trade card shows each person's note for the day, a Day / ECB / Day + ECB badge, and — when several coworkers respond to one offer — lets you choose who you actually trade with."),
+                ReleaseBullet(icon: "✉", color: blue, title: "Direct Messages",
+                    body: "The trade channel is now “Channels & Messages” — DM any dispatcher one-to-one from the new Messages tab or their Dispatcher card, with photos and reactions, separate from the group channels."),
+                ReleaseBullet(icon: "◧", color: teal, title: "Dispatcher directory",
+                    body: "Dispatcher is now the default tab in Trades: search the whole directory, filter by qual or committee, expand a card for contact info and quals, and tap Message or Find Trades."),
+                ReleaseBullet(icon: "✦", color: gold, title: "ECB force-through & floor",
+                    body: "ECB Accounting adds a Force-through so a trade the other side hasn't confirmed still counts in YOUR books (yours only). And Minimum Accepted ECB now blocks a low auto-match from reaching you, not just hides it."),
+                ReleaseBullet(icon: "⚙", color: gray, title: "One Settings screen",
+                    body: "Trade, App, and Account settings are one screen (opens on Trade), with tighter spacing, clearer ECB and qual-swap controls, and the Colors & Legend key moved into the ⋯ menu."),
             ]
         ),
 

@@ -100,7 +100,7 @@ struct DayTradeListPane: View {
                         Label("Watch Day", systemImage: "bell")
                     }
                 } footer: {
-                    Text("Marks this day with a blue dot and alerts you the moment a new shift you can pick up appears on it — checked each time you open the app. (The green star is separate: it means a match already exists here.)")
+                    Text("Flags this day with a blue “!” in its top-left corner so it's easy to spot, and keeps it front-and-center in your daily summary. New and existing matches roll up in your periodic Match Summary (Settings › Notifications). The orange disc on a date means a match already exists there.")
                 }
 
                 if loading {
@@ -186,10 +186,22 @@ struct DayTradeListPane: View {
             let today = Calendar.current.startOfDay(for: Date())
             let mine = ShiftStore.shared.shifts.filter { !$0.isOff && $0.date >= today }
             let pkgs = await TradeRouter.packages(forGiveShifts: mine, excluding: me)
+            // HARD accept-scope gate for pickups: the engine keys scope to give-days, so an off-day pickup
+            // isn't gated there. Apply THIS off day's scope to the shift I'd actually pick up (the peer's
+            // shift on this date, from the radar rows): shift-type + qual/desk gate the pickup; the date facet
+            // scopes the give-back day(s).
+            let scope = DayIntentStore.shared.acceptScope(forDay: target.dayID)
+            let pickupByPeer = Dictionary(radar.rows(forDay: target.dayID).pickups.map { ($0.peerID, $0) },
+                                          uniquingKeysWith: { a, _ in a })
             packages = pkgs.compactMap { pkg -> TradePackage? in
                 guard pkg.usesCompactCard, let a = pkg.assignments.first else { return nil }
                 let opts = a.takeOptions.isEmpty ? a.takeDayIDs : a.takeOptions
                 guard opts.contains(target.dayID) else { return nil }
+                if !scope.isOpen, let row = pickupByPeer[a.workerID] {
+                    let type = ShiftAvailabilityType.infer(fromStartHour: row.startHour)
+                    guard scope.acceptsLeg(shiftType: type, desk: row.desk) else { return nil }
+                    if let dates = scope.dates, !dates.isEmpty, !a.giveDayIDs.contains(where: dates.contains) { return nil }
+                }
                 return Self.promoteTake(pkg, to: target.dayID)
             }.sorted { $0.rankScore > $1.rankScore }
         } else {

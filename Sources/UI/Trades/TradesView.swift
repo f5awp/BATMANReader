@@ -30,9 +30,9 @@ struct TradesView: View {
 
                 if segment == 0 {
                     Picker("Find mode", selection: $findMode) {
-                        Text("Date Range").tag(0)
+                        Text("Complex Intents").tag(2)   // leftmost
+                        Text("Date Range").tag(0)        // default selection
                         Text("ECB").tag(1)
-                        Text("Complex Intents").tag(2)
                     }
                     .pickerStyle(.segmented)
                     .padding(.horizontal).padding(.bottom, 6)

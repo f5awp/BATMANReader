@@ -359,8 +359,17 @@ enum TradeRouter {
                 .map(\.dayID)
             // The days I'll RECEIVE back. If I'm Bookends Only, non-bookend islands are dropped
             // (cleanReceiveLegs filter); otherwise kept. Order is model-ranked (was bookend-first/soonest).
+            // Match Radar §8: gate returns by THIS call's give-days' accept-scope ("Trade options"). The
+            // core's own prune keys to every coverable day (inert when any is unscoped), so a single-day
+            // Trade List — where `giveDayIDs` is just that day — is where the day's scope actually bites; a
+            // multi-give search stays open per the "any unscoped give ⇒ open" rule. Cheap and inert when unset.
             let givesBack = TradeRouter.modelRankedLegs(
-                TradeRouter.cleanReceiveLegs(plan.iTake.filter { wouldTake(myProfile, $0) },
+                TradeRouter.cleanReceiveLegs(plan.iTake.filter { leg in
+                    wouldTake(myProfile, leg)
+                        && AcceptScope.acceptsUnderAny(myProfile.acceptScopeByDay, giveDayIDs: Array(giveDayIDs),
+                                                       shiftType: .infer(fromStartHour: leg.startHour),
+                                                       desk: leg.desk, dayID: leg.dayID)
+                },
                                              wantToWork: myWantToWork, bookendsOnly: myBookendsOnly),
                 giverID: cand.workerID, receiverID: selfID,
                 maps: maps, quals: qualsDict, priors: priors, start: start, selfID: selfID,

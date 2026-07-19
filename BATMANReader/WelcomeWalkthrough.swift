@@ -9,7 +9,8 @@
 //   }
 //
 // Asset catalog image names expected (drag the JPGs in and name them exactly):
-//   wt-home, wt-intents, wt-solutions, wt-menu, wt-package, wt-ecb-queue, wt-ecb-ledger
+//   wt-home, wt-compact, wt-intents, wt-trade-options, wt-tradelist, wt-solutions, wt-menu,
+//   wt-dispatcher, wt-package, wt-ecb-queue, wt-ecb-ledger, wt-channels
 
 import SwiftUI
 
@@ -50,7 +51,15 @@ struct WelcomeWalkthrough: View {
     @State private var index = 0
     @State private var consent = [false, false, false]
 
-    private let last = 11 // 12 cards, 0-indexed
+    private let last = 16 // 17 cards, 0-indexed
+
+    init(onFinish: @escaping () -> Void) {
+        self.onFinish = onFinish
+        // If consent was already recorded (e.g. replaying the tour), keep the boxes checked so it never has
+        // to be re-agreed. The original timestamp is preserved — recordConsent only stamps on first agree.
+        let done = SettingsManager.shared.consentAcceptedAt != nil
+        _consent = State(initialValue: [done, done, done])
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -58,16 +67,21 @@ struct WelcomeWalkthrough: View {
             TabView(selection: $index) {
                 welcomeCard.tag(0)
                 homeCard.tag(1)
-                intentsCard.tag(2)
-                legendCard.tag(3)
-                findsCard.tag(4)
-                menuCard.tag(5)
-                respondCard.tag(6)
-                ecbCard.tag(7)
-                ledgerCard.tag(8)
-                setCard.tag(9)
-                prefsCard.tag(10)
-                consentCard.tag(11)
+                compactCard.tag(2)
+                intentsCard.tag(3)
+                tradeOptionsCard.tag(4)
+                tradeListCard.tag(5)
+                ledgerCard.tag(6)
+                channelsCard.tag(7)
+                legendCard.tag(8)
+                menuCard.tag(9)
+                findsCard.tag(10)
+                ecbCard.tag(11)
+                dispatcherCard.tag(12)
+                respondCard.tag(13)
+                setCard.tag(14)
+                prefsCard.tag(15)
+                consentCard.tag(16)
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
             .animation(.easeInOut(duration: 0.3), value: index)
@@ -117,13 +131,18 @@ struct WelcomeWalkthrough: View {
                 }
             }
             Spacer()
-            Button(index == last ? "Get Started" : "Continue") {
+            // Compact circular arrow — with 17 page dots the old "Continue" pill squished the dot rail.
+            Button {
                 withAnimation { index = min(last, index + 1) }
+            } label: {
+                Image(systemName: "arrow.right")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundColor(.white)
+                    .frame(width: 44, height: 44)
+                    .background(Circle().fill(WT.blue))
             }
-            .font(.system(size: 15, weight: .bold))
-            .foregroundColor(.white)
-            .padding(.horizontal, 24).padding(.vertical, 11)
-            .background(Capsule().fill(WT.blue))
+            .buttonStyle(.plain)
+            .accessibilityLabel("Continue")
             .opacity(index == last ? 0 : 1) // last card has its own gated button
         }
         .padding(.horizontal, 24)
@@ -143,15 +162,16 @@ struct WelcomeWalkthrough: View {
             Text("Welcome to DX Trader")
                 .font(.system(size: 30, weight: .heavy))
                 .foregroundColor(WT.text)
-            Text("It reads the BATMAN schedule for you — shifts, days off, vacation, quals — then finds shift trades that actually work. Here's the two-minute tour.")
+            Text("It reads the BATMAN schedule for you and finds trades that actually work. Do everything from Home — then dig deeper in the Trades tab. Here's the two-minute tour.")
                 .font(.system(size: 14.5)).lineSpacing(3)
                 .foregroundColor(WT.dim)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 300)
             VStack(spacing: 9) {
-                chip("Your schedule, read for you")
-                chip("Real trades, ranked best-first")
-                chip("Built by one of us")
+                chip("Everything from Home")
+                chip("Trade Inbox · Channels & Messages · ECB")
+                chip("Compact view when you want it")
+                chip("Dig deeper in the Trades tab")
             }.padding(.top, 8)
             Spacer()
         }
@@ -172,50 +192,88 @@ struct WelcomeWalkthrough: View {
 
     private var homeCard: some View {
         ScreenshotCard(
-            title: "Home is your schedule",
-            subtitle: "Your months appear on their own, straight from the BATMAN schedule — kept current automatically.",
+            title: "Everything from Home",
+            subtitle: "Home does it all — your schedule, your intents, and the top-bar hubs: Trade Inbox, Channels & Messages, ECB Accounting, and a Compact view. It stays current automatically.",
             image: "wt-home",
             callouts: [
-                Callout(id: 1, x: 0.20, y: 0.15, caption: "Mark Intents — everything starts here"),
-                Callout(id: 2, x: 0.50, y: 0.45, caption: "Each day shows your shift and desk — \"AM 32\""),
-                Callout(id: 3, x: 0.40, y: 0.78, caption: "Violet = days you're offering to trade away"),
+                Callout(id: 1, x: 0.72, y: 0.092, caption: "Top bar: Trade Inbox · Channels & Messages · ECB · ⋯"),
+                Callout(id: 2, x: 0.22, y: 0.152, caption: "Mark Intents — paint days, then set Day or ECB terms"),
+                Callout(id: 3, x: 0.365, y: 0.493, caption: "Tap any colored day to open its Trade List & matches"),
+            ])
+    }
+
+    private var compactCard: some View {
+        ScreenshotCard(
+            title: "Compact view when you want it",
+            subtitle: "Tap the compact icon to switch to a continuous, denser calendar — more months at a glance for planning ahead. Same colors, same marks.",
+            image: "wt-compact",
+            callouts: [
+                Callout(id: 1, x: 0.82, y: 0.152, caption: "Tap the compact icon for a continuous, denser calendar"),
+                Callout(id: 2, x: 0.07, y: 0.545, caption: "Months flow inline — SEP · OCT · NOV — scroll to plan ahead"),
+                Callout(id: 3, x: 0.90, y: 0.39, caption: "Same colors and marks, just tighter cells"),
             ])
     }
 
     private var intentsCard: some View {
         ScreenshotCard(
-            title: "Tell it what you want",
-            subtitle: "Paint your days: trade away, want to work, keep, or must-be-off. Keep and must-be-off are never crossed.",
+            title: "Mark Your Intents",
+            subtitle: "Choose what each day is: trade away, want to work, keep, or must-be-off. Keep and must-be-off are never crossed.",
             image: "wt-intents",
             callouts: [
-                Callout(id: 1, x: 0.50, y: 0.22, caption: "Off-day brushes: Blackout ↔ Want to Work"),
-                Callout(id: 2, x: 0.38, y: 0.27, caption: "Go finer than whole-day: AM / PM / MID"),
-                Callout(id: 3, x: 0.50, y: 0.35, caption: "Save glows, then publishes your marks to the group"),
+                Callout(id: 1, x: 0.27, y: 0.222, caption: "Choose Working / Off, then Want to Trade or Keep"),
+                Callout(id: 2, x: 0.19, y: 0.277, caption: "Choose Day-for-Day or ECB"),
+                Callout(id: 3, x: 0.50, y: 0.365, caption: "Save publishes your marks to the group"),
             ])
     }
 
     private var findsCard: some View {
         ScreenshotCard(
-            title: "It finds real trades",
-            subtitle: "The app searches the whole roster and shows only trades that pass every rule — best ones on top.",
+            title: "Find Trades Searches Further",
+            subtitle: "Go beyond a single day — search the whole roster by complex intents, a date range, or ECB out. It shows only trades that pass every rule, best ones on top.",
             image: "wt-solutions",
             callouts: [
-                Callout(id: 1, x: 0.50, y: 0.38, caption: "Two-person, multi-person, even circular loops"),
-                Callout(id: 2, x: 0.81, y: 0.365, caption: "🔥 = you both marked it · 📖 = keeps days off together"),
-                Callout(id: 3, x: 0.19, y: 0.515, caption: "Propose sends it straight to their Inbox"),
+                Callout(id: 1, x: 0.30, y: 0.103, caption: "Find by Complex Intents, Date Range, or ECB"),
+                Callout(id: 2, x: 0.34, y: 0.53, caption: "Ranked swaps — fewest people first, best on top"),
+                Callout(id: 3, x: 0.88, y: 0.53, caption: "Send proposes it straight to their Inbox"),
             ])
     }
 
     private var menuCard: some View {
-        ScreenshotCard(
-            title: "More in the ⋯ menu",
-            subtitle: "Power tools on the Trade Solutions calendar, one tap away.",
-            image: "wt-menu",
-            callouts: [
-                Callout(id: 1, x: 0.48, y: 0.275, caption: "I'm Feeling Lucky — the deep search, with filters: max people, force-include, dates, desks"),
-                Callout(id: 2, x: 0.48, y: 0.33, caption: "Look up a dispatcher — start from a person, not a day"),
-                Callout(id: 3, x: 0.48, y: 0.387, caption: "Email to dispatch DL — one tap drafts the old-style email for folks not on the app yet"),
-            ])
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Dig deeper in the Trades tab")
+                .font(.system(size: 22, weight: .heavy)).foregroundColor(WT.text)
+            Text("Home covers the everyday — mark days, see matches, propose. When you need more, the Trades tab goes further.")
+                .font(.system(size: 13.5)).lineSpacing(2.5).foregroundColor(WT.dim)
+            VStack(alignment: .leading, spacing: 10) {
+                feature("person.crop.circle", WT.teal, "Find a Dispatcher",
+                        "Look someone up for their info and quals, find trades with just them, or send a direct message.")
+                feature("slider.horizontal.3", WT.violet, "Complex searches",
+                        "Search a date range, build from your marked intents, or send ECB out — with granular filters for shift type, qual, and dates.")
+                feature("person.3.fill", WT.gold, "Go wide",
+                        "Multi-person and circular solutions — up to four dispatchers deep — when a straight two-way isn't there.")
+            }
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 22).padding(.top, 14)
+    }
+
+    private func feature(_ symbol: String, _ color: Color, _ title: String, _ body: String) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: symbol)
+                .font(.system(size: 15, weight: .semibold)).foregroundColor(color)
+                .frame(width: 34, height: 34)
+                .background(RoundedRectangle(cornerRadius: 10).fill(color.opacity(0.13)))
+                .overlay(RoundedRectangle(cornerRadius: 10).stroke(color.opacity(0.33), lineWidth: 1))
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title).font(.system(size: 14.5, weight: .bold)).foregroundColor(WT.text)
+                Text(body).font(.system(size: 12.5)).lineSpacing(2).foregroundColor(WT.dim)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 14).padding(.vertical, 12)
+        .background(RoundedRectangle(cornerRadius: 14).fill(WT.card))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(WT.stroke, lineWidth: 1))
     }
 
     private var respondCard: some View {
@@ -232,13 +290,13 @@ struct WelcomeWalkthrough: View {
 
     private var ecbCard: some View {
         ScreenshotCard(
-            title: "ECB, made fair",
-            subtitle: "Give a shift away one-way for ECB credit — claimed in a first-come queue everyone can see.",
+            title: "Broadcast your ECB Requests",
+            subtitle: "Give a shift away one-way for ECB credit — broadcast it to a first-come queue everyone can see and claim.",
             image: "wt-ecb-queue",
             callouts: [
-                Callout(id: 1, x: 0.22, y: 0.215, caption: "Set the ECB you're offering"),
-                Callout(id: 2, x: 0.50, y: 0.295, caption: "Only people who can actually cover are offered"),
-                Callout(id: 3, x: 0.50, y: 0.80, caption: "Send to bookends, everyone, or the people you pick"),
+                Callout(id: 1, x: 0.25, y: 0.127, caption: "Set the ECB you're offering — and an optional IOU date"),
+                Callout(id: 2, x: 0.30, y: 0.47, caption: "Only people who can actually cover are shown"),
+                Callout(id: 3, x: 0.30, y: 0.80, caption: "Send to bookends, everyone, or the people you pick"),
             ])
     }
 
@@ -251,6 +309,57 @@ struct WelcomeWalkthrough: View {
                 Callout(id: 1, x: 0.18, y: 0.23, caption: "Available now — cleared credit, capped at 144"),
                 Callout(id: 2, x: 0.41, y: 0.23, caption: "Projected — once scheduled ECB and IOUs land"),
                 Callout(id: 3, x: 0.50, y: 0.62, caption: "Lines wait as \"awaiting confirm\" until the credit lands"),
+            ])
+    }
+
+    // MARK: New screenshot cards (v2.6) — trade options, trade list, dispatcher, channels
+
+    private var tradeOptionsCard: some View {
+        ScreenshotCard(
+            title: "Specify and Search By Day",
+            subtitle: "Tune exactly how a day trades — Day-for-Day or ECB, an optional later pay date (IOU), and what you'll accept back by shift type, qual, or date range — then search matches right here.",
+            image: "wt-trade-options",
+            callouts: [
+                Callout(id: 1, x: 0.27, y: 0.355, caption: "Trade as Day-for-Day, ECB, or Either"),
+                Callout(id: 2, x: 0.55, y: 0.455, caption: "Offer ECB — and set a later pay date (IOU)"),
+                Callout(id: 3, x: 0.28, y: 0.60, caption: "Scope it: accept only these shift types, quals, or dates"),
+                Callout(id: 4, x: 0.62, y: 0.955, caption: "Tap Trade List to search matches for this day"),
+            ])
+    }
+
+    private var tradeListCard: some View {
+        ScreenshotCard(
+            title: "Match ⇄ Match",
+            subtitle: "Matches are built specifically from your trade-option selections — so you see only the people who fit, strongest first, and propose right from the list.",
+            image: "wt-tradelist",
+            callouts: [
+                Callout(id: 1, x: 0.72, y: 0.223, caption: "Filter by return date to narrow the list"),
+                Callout(id: 2, x: 0.34, y: 0.36, caption: "Only people who fit your selections — strongest first"),
+                Callout(id: 3, x: 0.87, y: 0.36, caption: "🔥 you both marked it · 📖 keeps days off · tap to propose"),
+            ])
+    }
+
+    private var dispatcherCard: some View {
+        ScreenshotCard(
+            title: "Find a Dispatcher",
+            subtitle: "Look anyone up and see all their info — quals, contact, seniority. Then find trades with just them, or send a direct message.",
+            image: "wt-dispatcher",
+            callouts: [
+                Callout(id: 1, x: 0.42, y: 0.55, caption: "Tap anyone to see all their info — quals, phone, email, seniority"),
+                Callout(id: 2, x: 0.25, y: 0.715, caption: "Find Trades — search swaps with just this person"),
+                Callout(id: 3, x: 0.72, y: 0.715, caption: "Message — direct-message them about a trade"),
+            ])
+    }
+
+    private var channelsCard: some View {
+        ScreenshotCard(
+            title: "Channels & Messages",
+            subtitle: "Talk to the whole group in channels, or direct-message your fellow dispatchers about a trade — or anything else.",
+            image: "wt-channels",
+            callouts: [
+                Callout(id: 1, x: 0.27, y: 0.163, caption: "Channels for the group · Messages for 1:1"),
+                Callout(id: 2, x: 0.50, y: 0.225, caption: "Channels: #general · #trades · #feedback"),
+                Callout(id: 3, x: 0.72, y: 0.163, caption: "Direct-message a fellow dispatcher about a trade"),
             ])
     }
 
@@ -270,14 +379,18 @@ struct WelcomeWalkthrough: View {
             }
             sectionLabel("MARKS & BADGES").padding(.top, 6)
             VStack(alignment: .leading, spacing: 8) {
-                mark("APM", WT.gold, "Gold pills — shifts you'd work on an off day")
-                mark("✕", WT.red, "Shift type you've blacked out")
-                mark("★", WT.orange, "High-demand day — marked automatically")
-                mark("★", WT.pink, "Personal milestone day")
-                mark("🔥", WT.orange, "Both of you marked the day — strongest match")
-                mark("📖", WT.green, "Bookend — pickup touches your days off")
-                mark("Q", WT.gold, "Needs a third-person qual bridge")
-                mark("●", WT.blue, "Blue / orange dot — public / private note")
+                mark("circle.fill", WT.orange, "Match — bold orange disc behind the date (most visible)")
+                mark("star.fill", WT.gold, "High-demand / holiday — top-right star (a MID counts for the night-before holiday)")
+                mark("star.fill", WT.pink, "Personal milestone — pink top-right star")
+                mark("exclamationmark.circle.fill", WT.blue, "Watching this day — top-left")
+                mark("a.circle.fill", WT.gold, "Availability pills — shifts you'd work on an off day")
+                mark("xmark", WT.red, "Shift type you've blacked out")
+                mark("flame.fill", WT.orange, "Both of you marked the day — strongest match")
+                mark("book.fill", WT.green, "Bookend — pickup touches your days off")
+                mark("q.square.fill", WT.gold, "Needs a third-person qual bridge")
+                mark("note.text", WT.blue, "Note — blue (public) / orange (private)")
+                mark("arrow.left.arrow.right", WT.blue, "Day-for-day trade — swap a shift for a shift")
+                mark("dollarsign.circle.fill", WT.gold, "ECB trade — give a shift away for points")
             }
             Spacer()
         }
@@ -293,9 +406,12 @@ struct WelcomeWalkthrough: View {
             Text(t).font(.system(size: 12.5)).foregroundColor(WT.dim)
         }
     }
-    private func mark(_ g: String, _ c: Color, _ t: String) -> some View {
+    /// `symbol` is an SF Symbol name, rendered in the mark's color.
+    private func mark(_ symbol: String, _ c: Color, _ t: String) -> some View {
         HStack(spacing: 10) {
-            Text(g).font(.system(size: 13, weight: .heavy)).foregroundColor(c).frame(width: 34, alignment: .leading)
+            Image(systemName: symbol)
+                .font(.system(size: 14, weight: .semibold)).foregroundColor(c)
+                .frame(width: 26, alignment: .center)
             Text(t).font(.system(size: 12.5)).foregroundColor(WT.dim)
         }
     }
@@ -343,8 +459,17 @@ struct WelcomeWalkthrough: View {
                 .font(.system(size: 22, weight: .heavy)).foregroundColor(WT.text)
             Text("So you only see trades you'd actually take — change any of this anytime in Trade Settings.")
                 .font(.system(size: 13.5)).lineSpacing(2.5).foregroundColor(WT.dim)
-            WelcomeTradePrefs()
-                .clipShape(RoundedRectangle(cornerRadius: 14))
+            // LAZY: the embedded Trade Settings form is heavy (loads quals + applies openness across every
+            // shift). TabView builds all pages up front, so building it eagerly hitched the tour at launch.
+            // Only build it once the user is on/near this page (index 15 of the 0–16 flow).
+            if index >= 14 {
+                WelcomeTradePrefs()
+                    .clipShape(RoundedRectangle(cornerRadius: 14))
+            } else {
+                RoundedRectangle(cornerRadius: 14).fill(WT.card)
+                    .overlay(RoundedRectangle(cornerRadius: 14).stroke(WT.stroke, lineWidth: 1))
+                    .frame(maxWidth: .infinity).frame(minHeight: 320)
+            }
         }
         .padding(.horizontal, 22).padding(.top, 14).padding(.bottom, 8)
     }
@@ -367,7 +492,8 @@ struct WelcomeWalkthrough: View {
             }.padding(.top, 4)
             Button {
                 if allAgreed {
-                    SettingsManager.shared.recordConsent()   // stamp the on-device consent record (time + version)
+                    // Stamp the consent record (time + version) only the FIRST time — replays keep the original.
+                    if SettingsManager.shared.consentAcceptedAt == nil { SettingsManager.shared.recordConsent() }
                     onFinish()
                 }
             } label: {
