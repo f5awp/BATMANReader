@@ -366,7 +366,8 @@ enum TradeRouter {
                 plan.iGive.filter { giveDayIDs.contains($0.dayID) && wouldTake(profile, $0) },
                 giverID: selfID, receiverID: cand.workerID,
                 maps: maps, quals: qualsDict, priors: priors, start: start, selfID: selfID,
-                myProfile: myProfile, mySeeking: mySeeking, myWantToWork: myWantToWork, profilesByID: ctx.profilesByID)
+                myProfile: myProfile, mySeeking: mySeeking, myWantToWork: myWantToWork,
+                profilesByID: ctx.profilesByID, inferred: ctx.inferred)
             let canTake = canTakeRanked.legs.map(\.dayID)
             var canTakeTiers: [String: Int] = [:]
             for (i, l) in canTakeRanked.legs.enumerated() { canTakeTiers[l.dayID] = canTakeRanked.tiers[i] }
@@ -386,7 +387,8 @@ enum TradeRouter {
                                              wantToWork: myWantToWork, bookendsOnly: myBookendsOnly),
                 giverID: cand.workerID, receiverID: selfID,
                 maps: maps, quals: qualsDict, priors: priors, start: start, selfID: selfID,
-                myProfile: myProfile, mySeeking: mySeeking, myWantToWork: myWantToWork, profilesByID: ctx.profilesByID)
+                myProfile: myProfile, mySeeking: mySeeking, myWantToWork: myWantToWork,
+                profilesByID: ctx.profilesByID, inferred: ctx.inferred)
             let givesBack = givesBackRanked.legs.map(\.dayID).filter(inReceiveWindow)   // honor the receive window
             var givesBackTiers: [String: Int] = [:]
             for (i, l) in givesBackRanked.legs.enumerated() { givesBackTiers[l.dayID] = givesBackRanked.tiers[i] }
@@ -478,7 +480,8 @@ enum TradeRouter {
                                                  wantToWork: myWantToWork, bookendsOnly: myBookendsOnly),
                     giverID: cand.workerID, receiverID: selfID,
                     maps: maps, quals: qualsDict, priors: priors, start: start, selfID: selfID,
-                    myProfile: myProfile, mySeeking: mySeeking, myWantToWork: myWantToWork, profilesByID: ctx.profilesByID)
+                    myProfile: myProfile, mySeeking: mySeeking, myWantToWork: myWantToWork,
+                    profilesByID: ctx.profilesByID, inferred: ctx.inferred)
                     .map(\.dayID).filter(inReceiveWindow)
                 guard !givesBack.isEmpty else { continue }
                 // A bridge must exist, else it's a true dead end — don't surface it. (buildQualSwapLeg = nil.)
@@ -767,12 +770,12 @@ enum TradeRouter {
             plan.iGive.filter { giveDayIDs.contains($0.dayID) },
             giverID: selfID, receiverID: workerID, maps: maps, quals: ctx.qualsDict, priors: ctx.priors,
             start: ctx.start, selfID: selfID, myProfile: myProfile, mySeeking: mySeeking, myWantToWork: myWantToWork,
-            profilesByID: ctx.profilesByID, capUnpreferred: 5)
+            profilesByID: ctx.profilesByID, inferred: ctx.inferred, capUnpreferred: 5)
         let takeRanked = TradeRouter.rankLegs(
             plan.iTake,
             giverID: workerID, receiverID: selfID, maps: maps, quals: ctx.qualsDict, priors: ctx.priors,
             start: ctx.start, selfID: selfID, myProfile: myProfile, mySeeking: mySeeking, myWantToWork: myWantToWork,
-            profilesByID: ctx.profilesByID, capUnpreferred: 5)
+            profilesByID: ctx.profilesByID, inferred: ctx.inferred, capUnpreferred: 5)
         let canTake   = giveRanked.legs.map(\.dayID)
         let givesBack = takeRanked.legs.map(\.dayID)
 
@@ -1213,11 +1216,13 @@ enum TradeRouter {
                 let myTakeable = modelRankedLegs(plan.iGive.filter { wouldTake(profile, $0) },
                     giverID: selfID, receiverID: cand.workerID,
                     maps: maps, quals: qualsDict, priors: priors, start: start, selfID: selfID,
-                    myProfile: myProfile, mySeeking: mySeeking, myWantToWork: myWantToWork, profilesByID: profilesByID)
+                    myProfile: myProfile, mySeeking: mySeeking, myWantToWork: myWantToWork,
+                    profilesByID: profilesByID, inferred: ctx.inferred)
                 let theirTakeable = modelRankedLegs(plan.iTake.filter { wouldTake(myProfile, $0) },
                     giverID: cand.workerID, receiverID: selfID,
                     maps: maps, quals: qualsDict, priors: priors, start: start, selfID: selfID,
-                    myProfile: myProfile, mySeeking: mySeeking, myWantToWork: myWantToWork, profilesByID: profilesByID)
+                    myProfile: myProfile, mySeeking: mySeeking, myWantToWork: myWantToWork,
+                    profilesByID: profilesByID, inferred: ctx.inferred)
                 let pairing = IntentPairing(
                     myGiveMarked:    myTakeable.filter { $0.wanted }.map(\.dayID),
                     myGivePref:      myTakeable.filter { !$0.wanted }.map(\.dayID),
@@ -1443,23 +1448,39 @@ enum TradeRouter {
                                              myProfile: TradeProfile,
                                              mySeeking: Set<String>, myWantToWork: Set<String>,
                                              profilesByID: [String: TradeProfile],
+                                             inferred: [String: InferredPrefs.Result] = [:],
                                              capUnpreferred: Int? = nil) -> (legs: [TwoWayLeg], tiers: [Int]) {
         let cal = Calendar.current
         let iAmGiver = giverID == selfID
-        let receiverProfile: TradeProfile = receiverID == selfID
-            ? myProfile
-            : (profilesByID[receiverID] ?? TradeProfile.defaultForUnpublished(workerID: receiverID, name: ""))
+        // Resolve the receiver's profile the SAME way the matcher does (MatchContext.profile): my real profile
+        // for the get side; a peer's published profile if any; else a Bookends-Only default HARD-RESTRICTED to
+        // their inferred last-60-day behavior (shift types / regions / weekends), so a robot peer is judged on
+        // what they actually work — not an empty, permissive default.
+        let receiverProfile: TradeProfile
+        if receiverID == selfID {
+            receiverProfile = myProfile
+        } else if let p = profilesByID[receiverID] {
+            receiverProfile = p
+        } else if let inf = inferred[receiverID] {
+            receiverProfile = TradeProfile.defaultForUnpublished(workerID: receiverID, name: "",
+                                                                 inferredShiftTypes: inf.shiftTypes,
+                                                                 inferredRegions: inf.regions,
+                                                                 blacklistWeekends: !inf.worksWeekend)
+        } else {
+            receiverProfile = TradeProfile.defaultForUnpublished(workerID: receiverID, name: "")
+        }
         func fitsPickUp(_ prof: TradeProfile, _ l: TwoWayLeg) -> Bool {
             prof.wouldPickUp(onDay: l.dayID, weekday: cal.component(.weekday, from: l.date),
                              desk: l.desk, shiftType: ShiftAvailabilityType.infer(fromStartHour: l.startHour).rawValue,
                              region: DeskRules.region(forDesk: l.desk).rawValue, isBookend: l.bookend)
         }
-        // HARD BLACKLIST: a day the RECEIVER would NEVER accept — a blacklisted weekday/desk/shift/region or a
-        // Must-Be-Off day — is REMOVED entirely (not just demoted). This is stronger than the soft prefs below,
-        // which only push a day into the bottom tier. On the GET side this drops my blacklisted receive-days;
-        // on the GIVE side it drops days the peer flatly refuses. (Soft openness/bookend stays a tier-3 alternate.)
+        // HARD BLACKLIST: a day the RECEIVER would NEVER accept — a blacklisted weekday / desk / shift-type /
+        // region, a blacklisted QUAL (the desk's required qual flagged 0 = never accept), or a Must-Be-Off day
+        // — is REMOVED entirely (not just demoted). Stronger than the soft prefs below, which only push a day
+        // into the bottom tier. Drops my blacklisted receive-days on GET, days the peer refuses on GIVE.
         func receiverHardBlocks(_ l: TwoWayLeg) -> Bool {
             if receiverProfile.mustBeOffDayIDs?.contains(l.dayID) == true { return true }
+            if let rq = DeskRules.requiredQual(forDesk: l.desk), receiverProfile.qualValues?[rq] == 0 { return true }
             return !receiverProfile.passesBlacklist(
                 weekday: cal.component(.weekday, from: l.date), desk: l.desk,
                 shiftType: ShiftAvailabilityType.infer(fromStartHour: l.startHour).rawValue,
@@ -1508,10 +1529,11 @@ enum TradeRouter {
                                             priors: [String: Double], start: Date, selfID: String,
                                             myProfile: TradeProfile,
                                             mySeeking: Set<String>, myWantToWork: Set<String>,
-                                            profilesByID: [String: TradeProfile]) -> [TwoWayLeg] {
+                                            profilesByID: [String: TradeProfile],
+                                            inferred: [String: InferredPrefs.Result] = [:]) -> [TwoWayLeg] {
         rankLegs(legs, giverID: giverID, receiverID: receiverID, maps: maps, quals: quals, priors: priors,
                  start: start, selfID: selfID, myProfile: myProfile, mySeeking: mySeeking, myWantToWork: myWantToWork,
-                 profilesByID: profilesByID).legs
+                 profilesByID: profilesByID, inferred: inferred).legs
     }
 
     /// How many of YOUR give-days this package covers (distinct days you hand off) — the PRIMARY ranking key.
