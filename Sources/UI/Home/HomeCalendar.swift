@@ -434,13 +434,16 @@ struct IntentCalendarView: View {
                 // §Match-Radar: MATCHES are the most-visible marker — a FILLED orange disc behind the date
                 // number (the number turns white for contrast). High-impact/holiday + personal-milestone days
                 // move to the TOP-RIGHT star; watch is the "!" top-left. Disc = "there's a trade here."
-                let hasMatch = MatchStore.shared.hasStar(dayID)
+                // SOLID disc = a mutual (2-intent+) match — both sides marked. TRANSLUCENT disc = a one-sided
+                // (1-intent) match — availability exists (you're open + someone willing) but not mutually marked.
+                let mutualMatch = !MatchStore.shared.matches(on: dayID).isEmpty
+                let hasMatch = mutualMatch || MatchStore.shared.hasStar(dayID)
                 if hasMatch {
-                    Circle().fill(AppColor.heat).frame(width: 24, height: 24)
+                    Circle().fill(AppColor.heat.opacity(mutualMatch ? 1.0 : 0.35)).frame(width: 24, height: 24)
                 }
                 Text("\(cal.component(.day, from: date))")
                     .font(isToday ? DXFont.dayNumber.weight(.heavy) : DXFont.dayNumber)
-                    .foregroundStyle(hasMatch ? Color.white
+                    .foregroundStyle(mutualMatch ? Color.white   // solid disc → white number; faint disc keeps normal
                                      : numberColor(dayID: dayID, isWorking: isWorking, hasShift: hasShift, date: date, shift: shift))
             }
             .frame(height: DXSpace.cellNumberH)
