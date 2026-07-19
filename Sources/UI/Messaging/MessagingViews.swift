@@ -350,8 +350,9 @@ struct InboxView: View {
 
     /// Deduped active (non-archived) requests filing under `tab` — drives the per-tab count badge.
     private func tabCount(_ tab: Int) -> Int {
+        // Exclude expired (now shown under Archived, not the active list) so the badge matches what's visible.
         let inThisTab = MessagingStore.active(store.requests, archived: store.archivedRequestIDs)
-            .filter { !$0.isAutoProposed && TradeInboxTab.index(for: $0, myID: myID) == tab }
+            .filter { !$0.isAutoProposed && store.status(of: $0) != .expired && TradeInboxTab.index(for: $0, myID: myID) == tab }
         return MessagingStore.dedupeLoops(inThisTab).count
     }
 
