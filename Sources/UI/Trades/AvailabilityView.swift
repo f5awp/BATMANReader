@@ -1963,7 +1963,7 @@ struct MiniScheduleGrid: View {
                 .lineLimit(1).minimumScaleFactor(0.6)
             Text(label.isEmpty ? " " : label)
                 .font(.footnote.weight(.heavy))
-                .foregroundStyle(filled ? .white : (working ? accent : .secondary))
+                .foregroundStyle(filled ? .white : (working ? .primary : .secondary))
                 .lineLimit(1).minimumScaleFactor(0.5)
         }
         .frame(maxWidth: .infinity, minHeight: fill ? 30 : 50, maxHeight: fill ? .infinity : nil)
@@ -1971,15 +1971,7 @@ struct MiniScheduleGrid: View {
         .background(background(key: key, working: working), in: RoundedRectangle(cornerRadius: 7))
         .dxGlaze(radius: 7)
         .overlay { border(key: key) }
-        // Small intent dot (top-trailing) so the intent COLOR reads at a glance without cluttering the
-        // cell; the named intent (Want to trade / Blackout / Want to work …) is in the tap popover.
-        .overlay(alignment: .topTrailing) {
-            if let info = intent(key) {
-                Circle().fill(info.color).frame(width: 7, height: 7)
-                    .overlay(Circle().stroke(.white.opacity(0.6), lineWidth: 0.5))
-                    .padding(2)
-            }
-        }
+        // (Intent now reads from the cell FILL — the old top-trailing dot is redundant and removed.)
         .opacity(inMonth ? 1 : 0.18)
         .contentShape(Rectangle())
         .onTapGesture { popDay = PopDay(id: key) }   // any day → the single grid popover
@@ -1987,8 +1979,12 @@ struct MiniScheduleGrid: View {
 
     private func background(key: String, working: Bool) -> Color {
         if loopDays.contains(key) { return BrickPalette.loopTrade.opacity(0.5) }  // 3rd-party handoff
-        if takeDays.contains(key) { return accent.opacity(0.5) }    // owner receives → own-color fill
-        return working ? accent.opacity(0.16) : Color(.systemGray5)
+        if takeDays.contains(key) { return accent.opacity(0.5) }    // owner receives → strong own-color fill
+        guard working else { return Color(.systemGray5) }           // off
+        // Working day → fill by the day's INTENT color (same language as Home: trade-away violet, keep green,
+        // blackout slate, want-work gold), falling back to a soft seat tint when the day has no marked intent.
+        if let info = intent(key) { return info.color.opacity(0.22) }
+        return accent.opacity(0.16)
     }
 
     private static let popoverDateF: DateFormatter = {
@@ -2064,6 +2060,9 @@ struct MiniScheduleGrid: View {
         if focusDay == key { shape.stroke(.primary, lineWidth: 3.5) }
         else if loopDays.contains(key) { shape.stroke(BrickPalette.loopTrade, lineWidth: 3) }
         else if giveDays.contains(key) { shape.stroke(accent, lineWidth: 3) }
+        // Thin seat-colored ring on a plain working day (blue = you, red = peer) so whose-calendar still reads
+        // now that the FILL carries intent color instead of the seat color.
+        else if !(days[key] ?? "").isEmpty { shape.stroke(accent.opacity(0.55), lineWidth: 1) }
     }
 }
 
