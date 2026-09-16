@@ -16,11 +16,16 @@ actor RosterModelActor {
     /// roster — the old generation stays fully intact and live until the facade swaps the reader pointer.
     /// Batched saves keep memory bounded during the (large) insert.
     func insertGeneration(_ workers: [ParsedWorker], version: Date) throws {
-        // The parser already bounds shifts to the rolling 15-month window.
+        // Insert into a LOCAL context that's recreated every batch. SwiftData keeps every inserted object
+        // registered in its context until the context is released, so reusing one context for the whole
+        // import would accumulate the entire roster in memory (a wide date window can be ~500k rows → OOM
+        // kill). Swapping in a fresh context after each save frees the just-saved batch. (`ModelContext`
+        // has no `reset()`, so recreation is the supported way to bound memory during a bulk import.)
+        var ctx = ModelContext(modelContainer)
         var inserted = 0
         for worker in workers {
             for shift in worker.shifts {
-                modelContext.insert(RosterShift(
+                ctx.insert(RosterShift(
                     workerID:   worker.id,
                     workerName: worker.name,
                     quals:      worker.quals,
@@ -32,10 +37,13 @@ actor RosterModelActor {
                     importedVersion: version
                 ))
                 inserted += 1
-                if inserted % 5_000 == 0 { try modelContext.save() }
+                if inserted % 5_000 == 0 {
+                    try ctx.save()
+                    ctx = ModelContext(modelContainer)   // fresh context releases the saved batch
+                }
             }
         }
-        try modelContext.save()
+        try ctx.save()
     }
 
     /// Removes every row that isn't the live generation. Runs AFTER the pointer swap, so it only ever
@@ -118,7 +126,7 @@ final class RosterStore {
     /// traded-in-pickup fix). When the stored value is older, we force a ONE-TIME re-ingest of the
     /// current master even if its version is unchanged — so parser fixes reach schedules that were
     /// already ingested by an older build (otherwise stale `isVacation` days persist forever).
-    private static let parserVersion = 2
+    private static let parserVersion = 3
     private var lastParserVersion: Int {
         get { UserDefaults.standard.integer(forKey: "batman.rosterParserVersion") }
         set { UserDefaults.standard.set(newValue, forKey: "batman.rosterParserVersion") }

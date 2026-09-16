@@ -133,10 +133,13 @@ final class ScheduleParser {
 
         let calendar = Calendar.current
         let now = calendar.component(.year, from: Date())
-        // Rolling 15-month read window: the current full calendar year, plus the
-        // prior December and the following Jan–Feb. Days outside it are ignored.
-        let windowLower = calendar.date(from: DateComponents(year: now - 1, month: 12, day: 1)) ?? .distantPast
-        let windowUpper = calendar.date(from: DateComponents(year: now + 1, month: 3,  day: 1)) ?? .distantFuture  // exclusive
+        // Rolling read window ANCHORED TO TODAY (not the calendar year) so it always slides
+        // forward with cushion: the prior 6 months of history plus the next 24 months. A newly
+        // posted annual schedule can run ~16 months out, so a forward cushion of 2 years keeps the
+        // whole thing in range no matter what month the master is uploaded. Days outside it are ignored.
+        let today = calendar.startOfDay(for: Date())
+        let windowLower = calendar.date(byAdding: .month, value: -6, to: today) ?? .distantPast
+        let windowUpper = calendar.date(byAdding: .month, value: 24, to: today) ?? .distantFuture  // exclusive
 
         var monthRow:   [String] = []
         var dayRow:     [String] = []
